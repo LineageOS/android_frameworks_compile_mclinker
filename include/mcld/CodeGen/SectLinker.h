@@ -104,4 +104,3 @@ namespace mcld
 } // namespace of MC Linker
 
 #endif
-

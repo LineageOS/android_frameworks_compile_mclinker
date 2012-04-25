@@ -68,4 +68,3 @@ struct NonConstIteratorTraits
 } // namespace of mcld
 
 #endif
-

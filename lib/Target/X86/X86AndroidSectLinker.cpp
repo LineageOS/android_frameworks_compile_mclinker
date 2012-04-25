@@ -29,7 +29,5 @@ X86AndroidSectLinker::X86AndroidSectLinker(SectLinkerOption &pOption,
 
 }
 
-X86AndroidSectLinker::~X86AndroidSectLinker()
-{
+X86AndroidSectLinker::~X86AndroidSectLinker() {
 }
-

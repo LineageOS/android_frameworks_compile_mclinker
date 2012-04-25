@@ -78,7 +78,7 @@ struct StringHash<JS> : public std::unary_function<const llvm::StringRef&, size_
 
     for(unsigned int i = 0; i < pKey.size(); ++i) {
        hash_val ^= ((hash_val << 5) + pKey[i] + (hash_val >> 2));
-    } 
+    }
     return hash_val;
   }
 };
@@ -123,7 +123,7 @@ struct StringHash<ELF> : public std::unary_function<const llvm::StringRef&, size
     for (unsigned int i = 0; i < pKey.size(); ++i) {
       hash_val = (hash_val << 4) + pKey[i];
       if((x = hash_val & 0xF0000000L) != 0)
-        hash_val ^= (x >> 24); 
+        hash_val ^= (x >> 24);
       hash_val &= ~x;
     }
     return hash_val;
@@ -140,7 +140,7 @@ struct StringHash<BKDR> : public std::unary_function<const llvm::StringRef&, siz
   {
     const size_t seed = 131;
     size_t hash_val = 0;
-      
+
     for(size_t i = 0; i < pKey.size(); ++i)
       hash_val = (hash_val * seed) + pKey[i];
     return hash_val;
@@ -248,13 +248,13 @@ struct StringHash<AP> : public std::unary_function<const llvm::StringRef&, size_
   size_t operator()(const llvm::StringRef& pKey) const
   {
     unsigned int hash_val = 0xAAAAAAAA;
-   
-    for(size_t i = 0; i < pKey.size(); ++i) {  
+
+    for(size_t i = 0; i < pKey.size(); ++i) {
       hash_val ^= ((i & 1) == 0)?
                           ((hash_val <<  7) ^ pKey[i] * (hash_val >> 3)):
                           (~((hash_val << 11) + (pKey[i] ^ (hash_val >> 5))));
     }
-   
+
     return hash_val;
   }
 };
@@ -286,4 +286,3 @@ struct StringCompare<char*> : public std::binary_function<const char*, const cha
 } // namespace of mcld
 
 #endif
-

@@ -222,4 +222,3 @@ StringUnorderedMapImpl::~StringUnorderedMapImpl()
 } // namespace of mcld
 
 #endif
-

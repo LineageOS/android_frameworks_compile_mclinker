@@ -529,4 +529,3 @@ bool ELFReader<32, true>::readRel(Input& pInput,
   }
   return true;
 }
-

@@ -57,7 +57,7 @@ public:
                             ResolveInfo::Binding pBinding,
                             ResolveInfo::SizeType pSize,
                             ResolveInfo::Visibility pVisibility = ResolveInfo::Default);
-  
+
   /// insertSymbol - insert a symbol and resolve the symbol immediately
   /// @param pOldInfo - if pOldInfo is not NULL, the old ResolveInfo being
   ///                   overriden is kept in pOldInfo.
@@ -108,4 +108,3 @@ private:
 } // namespace of mcld
 
 #endif
-

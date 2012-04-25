@@ -126,4 +126,3 @@ X86GOT::iterator X86GOT::getLastGOT0()
 
 const X86GOT::iterator X86GOT::getLastGOT0() const
 { return m_LastGOT0; }
-

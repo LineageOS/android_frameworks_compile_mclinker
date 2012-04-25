@@ -50,4 +50,3 @@ EntryFactory<HashEntryTy>::produce(const typename EntryFactory<HashEntryTy>::key
 {
   return new HashEntryTy(pKey);
 }
-

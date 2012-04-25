@@ -265,4 +265,3 @@ HashTable<HashEntryTy, HashFunctionTy, EntryFactoryTy>::end(
 {
   return const_chain_iterator();
 }
-

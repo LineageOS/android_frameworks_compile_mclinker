@@ -651,4 +651,3 @@ protected:
 } // namespace of mcld
 
 #endif
-

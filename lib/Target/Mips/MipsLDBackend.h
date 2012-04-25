@@ -186,7 +186,7 @@ private:
   bool isGOTSymbol(const LDSymbol& pSymbol) const;
   /// emitDynamicSymbol - emit dynamic symbol.
   void emitDynamicSymbol(llvm::ELF::Elf32_Sym& sym32,
-                         Output& pOutput, 
+                         Output& pOutput,
                          LDSymbol& pSymbol,
                          const Layout& pLayout,
                          char* strtab,
@@ -197,4 +197,3 @@ private:
 } // namespace of mcld
 
 #endif
-

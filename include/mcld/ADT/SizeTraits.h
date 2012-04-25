@@ -99,4 +99,3 @@ inline uint64_t bswap64(uint64_t pData)
 } // namespace of mcld
 
 #endif
-

@@ -145,4 +145,3 @@ size_t MipsGOT::getLocalNum() const
 {
   return m_pLocalNum;
 }
-

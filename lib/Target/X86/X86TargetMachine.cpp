@@ -31,4 +31,3 @@ mcld::X86TargetMachine::~X86TargetMachine()
 {
   delete m_pLDInfo;
 }
-
