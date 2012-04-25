@@ -247,4 +247,3 @@ uint64_t ARMPLT::emit(MemoryRegion& pRegion)
   }
   return result;
 }
-

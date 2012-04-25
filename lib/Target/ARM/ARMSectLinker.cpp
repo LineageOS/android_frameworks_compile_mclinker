@@ -44,4 +44,3 @@ extern "C" void LLVMInitializeARMSectLinker() {
   // Register the linker frontend
   mcld::TargetRegistry::RegisterSectLinker(TheARMTarget, createARMSectLinker);
 }
-

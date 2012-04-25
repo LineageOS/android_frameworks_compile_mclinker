@@ -30,4 +30,3 @@ mcld::ARMBaseTargetMachine::~ARMBaseTargetMachine()
 {
   delete m_pLDInfo;
 }
-

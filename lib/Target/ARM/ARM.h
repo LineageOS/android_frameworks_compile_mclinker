@@ -21,4 +21,3 @@ TargetLDBackend *createARMLDBackend(const llvm::Target&, const std::string&);
 } // namespace of mcld
 
 #endif
-

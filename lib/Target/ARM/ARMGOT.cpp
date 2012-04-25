@@ -182,4 +182,3 @@ uint64_t ARMGOT::emit(MemoryRegion& pRegion)
   }
   return result;
 }
-

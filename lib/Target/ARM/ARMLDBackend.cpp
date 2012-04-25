@@ -1015,4 +1015,3 @@ extern "C" void LLVMInitializeARMLDBackend() {
   // Register the linker backend
   mcld::TargetRegistry::RegisterTargetLDBackend(TheARMTarget, createARMLDBackend);
 }
-
