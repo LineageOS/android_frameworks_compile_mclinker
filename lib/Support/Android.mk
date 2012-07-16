@@ -3,15 +3,21 @@ LOCAL_PATH:= $(call my-dir)
 mcld_support_SRC_FILES := \
   CommandLine.cpp \
   Directory.cpp \
+  FileHandle.cpp  \
   FileSystem.cpp  \
+  HandleToArea.cpp  \
   LEB128.cpp  \
   MemoryArea.cpp  \
   MemoryAreaFactory.cpp \
   MemoryRegion.cpp  \
+  MsgHandling.cpp \
   Path.cpp  \
   RealPath.cpp  \
   RegionFactory.cpp \
-  TargetRegistry.cpp
+  Space.cpp \
+  SystemUtils.cpp \
+  TargetRegistry.cpp  \
+  raw_ostream.cpp
 
 # For the host
 # =====================================================

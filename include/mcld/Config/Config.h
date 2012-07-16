@@ -14,13 +14,16 @@
 #ifndef MCLD_CONFIG_H
 #define MCLD_CONFIG_H
 
-namespace mcld {
-namespace internal {
+#include <llvm/Config/llvm-config.h>
 
-static const char* version="0.2.10.1-18peaks";
+#ifdef LLVM_ON_UNIX
+# define MCLD_ON_UNIX 1
+#else
+// Assume on Win32 otherwise.
+# define MCLD_ON_WIN32 1
+#endif
 
-} // namespace of internal
-} // namespace of mcld
+#define MCLD_VERSION "LionHead - 1.3.18"
 
 #endif
 

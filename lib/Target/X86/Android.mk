@@ -1,7 +1,7 @@
 LOCAL_PATH:= $(call my-dir)
 
 mcld_x86_target_SRC_FILES := \
-  X86AndroidSectLinker.cpp  \
+  X86Diagnostic.cpp \
   X86ELFDynamic.cpp \
   X86ELFSectLinker.cpp  \
   X86GOT.cpp  \

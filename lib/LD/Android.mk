@@ -7,10 +7,21 @@ LOCAL_PATH:= $(call my-dir)
 mcld_ld_SRC_FILES := \
   ArchiveReader.cpp \
   BranchIsland.cpp  \
+  CIE.cpp \
+  DWARFLineInfo.cpp \
+  Diagnostic.cpp  \
+  DiagnosticEngine.cpp  \
+  DiagnosticInfos.cpp \
+  DiagnosticLineInfo.cpp  \
+  DiagnosticPrinter.cpp \
   DynObjReader.cpp  \
   DynObjWriter.cpp  \
   ELFSegment.cpp  \
   ELFSegmentFactory.cpp \
+  EhFrame.cpp \
+  EhFrameHdr.cpp  \
+  ExecWriter.cpp  \
+  FDE.cpp \
   Layout.cpp  \
   LDContext.cpp \
   LDFileFormat.cpp  \
@@ -19,6 +30,8 @@ mcld_ld_SRC_FILES := \
   LDSectionFactory.cpp  \
   LDSymbol.cpp  \
   LDWriter.cpp  \
+  MsgHandler.cpp  \
+  NamePool.cpp  \
   ObjectWriter.cpp  \
   Relocation.cpp  \
   RelocationFactory.cpp \
@@ -28,7 +41,7 @@ mcld_ld_SRC_FILES := \
   SectionMap.cpp  \
   SectionMerger.cpp \
   StaticResolver.cpp  \
-  StrSymPool.cpp
+  TextDiagnosticPrinter.cpp
 
 # For the host
 # =====================================================
@@ -65,6 +78,7 @@ mcld_ld_variant_SRC_FILES := \
   ELFDynObjReader.cpp \
   ELFDynObjWriter.cpp \
   ELFExecFileFormat.cpp \
+  ELFExecWriter.cpp \
   ELFFileFormat.cpp \
   ELFObjectReader.cpp \
   ELFObjectWriter.cpp \

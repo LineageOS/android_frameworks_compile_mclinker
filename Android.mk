@@ -8,6 +8,7 @@ include $(CLEAR_VARS)
 
 # MCLinker Libraries
 subdirs := \
+  lib/ADT \
   lib/CodeGen \
   lib/LD \
   lib/MC \

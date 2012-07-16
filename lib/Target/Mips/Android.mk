@@ -1,7 +1,7 @@
 LOCAL_PATH:= $(call my-dir)
 
 mcld_mips_target_SRC_FILES := \
-  MipsAndroidSectLinker.cpp \
+  MipsDiagnostic.cpp  \
   MipsELFDynamic.cpp  \
   MipsELFSectLinker.cpp \
   MipsGOT.cpp \

@@ -4,6 +4,7 @@ mcld_mc_SRC_FILES := \
   AttributeFactory.cpp  \
   ContextFactory.cpp  \
   InputFactory.cpp  \
+  InputTree.cpp \
   MCBitcodeInterceptor.cpp  \
   MCFragmentRef.cpp \
   MCLDAttribute.cpp \
@@ -12,13 +13,13 @@ mcld_mc_SRC_FILES := \
   MCLDFile.cpp  \
   MCLDInfo.cpp  \
   MCLDInput.cpp \
-  MCLDInputTree.cpp \
   MCLDOptions.cpp \
   MCLDOutput.cpp  \
   MCLinker.cpp  \
   MCRegionFragment.cpp  \
   SearchDirs.cpp  \
-  SymbolCategory.cpp
+  SymbolCategory.cpp  \
+  ZOption.cpp
 
 # For the host
 # =====================================================

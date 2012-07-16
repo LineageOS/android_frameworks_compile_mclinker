@@ -1,7 +1,7 @@
 LOCAL_PATH:= $(call my-dir)
 
 mcld_arm_target_SRC_FILES := \
-  ARMAndroidSectLinker.cpp  \
+  ARMDiagnostic.cpp \
   ARMELFDynamic.cpp \
   ARMELFSectLinker.cpp  \
   ARMGOT.cpp  \

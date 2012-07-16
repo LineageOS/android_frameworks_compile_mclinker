@@ -1,22 +1,14 @@
 LOCAL_PATH:= $(call my-dir)
 
-mcld_target_SRC_FILES := \
-  ELFDynamic.cpp  \
-  ELFSectLinker.cpp \
-  GNULDBackend.cpp  \
-  GOT.cpp \
-  OutputRelocSection.cpp  \
-  PLT.cpp \
-  Stub.cpp  \
-  Target.cpp  \
-  TargetLDBackend.cpp
+mcld_adt_SRC_FILES := \
+  StringEntry.cpp
 
 # For the host
 # =====================================================
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := $(mcld_target_SRC_FILES)
-LOCAL_MODULE:= libmcldTarget
+LOCAL_SRC_FILES := $(mcld_adt_SRC_FILES)
+LOCAL_MODULE:= libmcldADT
 
 LOCAL_MODULE_TAGS := optional
 
@@ -27,8 +19,8 @@ include $(BUILD_HOST_STATIC_LIBRARY)
 # =====================================================
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := $(mcld_target_SRC_FILES)
-LOCAL_MODULE:= libmcldTarget
+LOCAL_SRC_FILES := $(mcld_adt_SRC_FILES)
+LOCAL_MODULE:= libmcldADT
 
 LOCAL_MODULE_TAGS := optional
 
