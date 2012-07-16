@@ -15,23 +15,24 @@
 #include <llvm/ADT/Triple.h>
 
 #include <mcld/Support/FileSystem.h>
-#include <mcld/Support/MemoryAreaFactory.h>
 #include <mcld/MC/MCLDOutput.h>
 #include <mcld/MC/MCLDOptions.h>
-#include <mcld/MC/MCLDInputTree.h>
+#include <mcld/MC/InputTree.h>
 #include <mcld/MC/AttributeFactory.h>
 #include <mcld/MC/ContextFactory.h>
-#include <mcld/LD/StrSymPool.h>
+#include <mcld/LD/NamePool.h>
 
 #include <string>
 #include <cassert>
 
 namespace mcld
 {
+class Resolver;
 
 /** \class MCLDInfo
  *  \brief MCLDInfo is composed of argumments of MCLinker.
- *   options()        - the general options.
+ *   options()        - the general options
+ *   scripts()        - the script options
  *   inputs()         - the tree of inputs
  *   bitcode()        - the bitcode being linked
  *   output()         - the output file
@@ -54,6 +55,12 @@ public:
 
   const GeneralOptions& options() const
   { return m_Options; }
+
+  ScriptOptions& scripts()
+  { return m_Scripts; }
+
+  const ScriptOptions& scripts() const
+  { return m_Scripts; }
 
   void setBitcode(const Input& pInput);
   Input& bitcode();
@@ -90,33 +97,25 @@ public:
   const ContextFactory& contextFactory() const
   { return *m_pCntxtFactory; }
 
-  MemoryAreaFactory& memAreaFactory()
-  { return *m_pMemAreaFactory; }
-
-  const MemoryAreaFactory& memAreaFactory() const
-  { return *m_pMemAreaFactory; }
-
   const llvm::Triple& triple() const
   { return m_Triple; }
 
   static const char* version();
 
-  void setNamePool(StrSymPool& pPool)
-  { m_pStrSymPool = &pPool; }
-
-  StrSymPool& getStrSymPool() {
-    assert(NULL != m_pStrSymPool);
-    return *m_pStrSymPool;
+  NamePool& getNamePool() {
+    assert(NULL != m_pNamePool);
+    return *m_pNamePool;
   }
 
-  const StrSymPool& getStrSymPool() const {
-    assert(NULL != m_pStrSymPool);
-    return *m_pStrSymPool;
+  const NamePool& getNamePool() const {
+    assert(NULL != m_pNamePool);
+    return *m_pNamePool;
   }
 
 private:
   // -----  General Options  ----- //
   GeneralOptions m_Options;
+  ScriptOptions m_Scripts;
   InputTree *m_pInputTree;
   Input* m_pBitcode;
   Output* m_pOutput;
@@ -126,10 +125,10 @@ private:
   InputFactory *m_pInputFactory;
   AttributeFactory *m_pAttrFactory;
   ContextFactory *m_pCntxtFactory;
-  MemoryAreaFactory *m_pMemAreaFactory;
 
   // -----  string and symbols  ----- //
-  StrSymPool* m_pStrSymPool;
+  Resolver* m_pResolver;
+  NamePool* m_pNamePool;
 };
 
 } // namespace of mcld

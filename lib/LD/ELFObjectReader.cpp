@@ -8,13 +8,13 @@
 //===----------------------------------------------------------------------===//
 #include <llvm/Support/ELF.h>
 #include <llvm/ADT/Twine.h>
-#include <llvm/Support/ErrorHandling.h>
 #include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFReader.h>
 #include <mcld/MC/MCLDInput.h>
 #include <mcld/MC/MCLinker.h>
 #include <mcld/MC/MCRegionFragment.h>
 #include <mcld/Target/GNULDBackend.h>
+#include <mcld/Support/MsgHandling.h>
 
 #include <string>
 #include <cassert>
@@ -99,7 +99,14 @@ bool ELFObjectReader::readSections(Input& pInput)
                                        (*section)->getInfo());
 
         bool exist = false;
-        signatures().insert(signature->name(), exist);
+        if (0 == std::strlen(signature->name()) &&
+            ResolveInfo::Section == signature->type()) {
+          // if the signature is a section symbol in input object, we use the
+          // section name as group signature.
+          signatures().insert((*section)->name(), exist);
+        } else {
+          signatures().insert(signature->name(), exist);
+        }
 
         if (exist) {
           // if this is not the first time we see this group signature, then
@@ -132,28 +139,32 @@ bool ELFObjectReader::readSections(Input& pInput)
         break;
       }
       /** normal sections **/
-      // FIXME: support Debug, Exception and Version Kinds
-      case LDFileFormat::Debug:
-      case LDFileFormat::Exception:
+      // FIXME: support Version Kinds
       case LDFileFormat::Version:
       /** Fall through **/
       case LDFileFormat::Regular:
       case LDFileFormat::Note:
+      case LDFileFormat::Debug:
       case LDFileFormat::MetaData: {
         if (!m_pELFReader->readRegularSection(pInput, m_Linker, **section))
-          llvm::report_fatal_error(
-                                llvm::Twine("can not read regular section `") +
-                                (*section)->name() +
-                                llvm::Twine("'.\n"));
+          fatal(diag::err_cannot_read_section) << (*section)->name();
+        break;
+      }
+      case LDFileFormat::EhFrame: {
+        if (!m_pELFReader->readEhFrame(pInput, m_Linker, **section))
+          fatal(diag::err_cannot_read_section) <<(*section)->name();
+        break;
+      }
+      case LDFileFormat::GCCExceptTable: {
+        //if (!m_pELFReader->readExceptionSection(pInput, m_Linker, **section))
+        if (!m_pELFReader->readRegularSection(pInput, m_Linker, **section))
+          fatal(diag::err_cannot_read_section) << (*section)->name();
         break;
       }
       /** target dependent sections **/
       case LDFileFormat::Target: {
         if (!m_pELFReader->readTargetSection(pInput, m_Linker, **section))
-          llvm::report_fatal_error(
-                        llvm::Twine("can not read target dependentsection `") +
-                        (*section)->name() +
-                        llvm::Twine("'.\n"));
+          fatal(diag::err_cannot_read_target_section) << (*section)->name();
         break;
       }
       /** BSS sections **/
@@ -179,7 +190,14 @@ bool ELFObjectReader::readSections(Input& pInput)
       case LDFileFormat::Null:
       case LDFileFormat::NamePool:
         continue;
-
+      // warning
+      case LDFileFormat::EhFrameHdr:
+      default: {
+        warning(diag::warn_illegal_input_section) << (*section)->name()
+                                                  << pInput.name()
+                                                  << pInput.path();
+        break;
+      }
     }
   } // end of for all sections
 
@@ -192,9 +210,20 @@ bool ELFObjectReader::readSymbols(Input& pInput)
   assert(pInput.hasMemArea());
 
   LDSection* symtab_shdr = pInput.context()->getSection(".symtab");
+  if (NULL == symtab_shdr) {
+    note(diag::note_has_no_symtab) << pInput.name()
+                                   << pInput.path()
+                                   << ".symtab";
+    return true;
+  }
+
   LDSection* strtab_shdr = symtab_shdr->getLink();
-  if (NULL == symtab_shdr || NULL == strtab_shdr)
+  if (NULL == strtab_shdr) {
+    fatal(diag::fatal_cannot_read_strtab) << pInput.name()
+                                          << pInput.path()
+                                          << ".symtab";
     return false;
+  }
 
   MemoryRegion* symtab_region = pInput.memArea()->request(symtab_shdr->offset(),
                                                           symtab_shdr->size());

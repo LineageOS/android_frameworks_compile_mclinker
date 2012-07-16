@@ -190,7 +190,8 @@ bool ELFReader<32, true>::readSectionHeaders(Input& pInput,
   LinkInfoList::iterator info, infoEnd = link_info_list.end();
   for (info = link_info_list.begin(); info != infoEnd; ++info) {
     if (LDFileFormat::NamePool == info->section->kind() ||
-        LDFileFormat::Group == info->section->kind()) {
+        LDFileFormat::Group == info->section->kind() ||
+        LDFileFormat::Note == info->section->kind()) {
       info->section->setLink(pInput.context()->getSection(info->sh_link));
       continue;
     }
@@ -254,8 +255,8 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
 {
   // get number of symbols
   size_t entsize = pRegion.size()/sizeof(llvm::ELF::Elf32_Sym);
-  llvm::ELF::Elf32_Sym* symtab =
-                      reinterpret_cast<llvm::ELF::Elf32_Sym*>(pRegion.start());
+  const llvm::ELF::Elf32_Sym* symtab =
+                 reinterpret_cast<const llvm::ELF::Elf32_Sym*>(pRegion.start());
 
   uint32_t st_name  = 0x0;
   uint32_t st_value = 0x0;
@@ -292,9 +293,6 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
         st_shndx = llvm::ELF::SHN_UNDEF;
     }
 
-    // get ld_name
-    llvm::StringRef ld_name(pStrTab + st_name);
-
     // get ld_type
     ResolveInfo::Type ld_type = static_cast<ResolveInfo::Type>(st_info & 0xF);
 
@@ -315,6 +313,19 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
 
     // get ld_vis
     ResolveInfo::Visibility ld_vis = getSymVisibility(st_other);
+
+    // get ld_name
+    llvm::StringRef ld_name;
+    if (ResolveInfo::Section == ld_type) {
+      // Section symbol's st_name is the section index.
+      LDSection* section = pInput.context()->getSection(st_shndx);
+      assert(NULL != section && "get a invalid section");
+      ld_name = llvm::StringRef(section->name());
+    }
+    else {
+      ld_name = llvm::StringRef(pStrTab + st_name);
+    }
+
 
     // push into MCLinker
     LDSymbol* input_sym = NULL;
@@ -404,13 +415,13 @@ ResolveInfo* ELFReader<32, true>::readSymbol(Input& pInput,
   ResolveInfo::Visibility ld_vis = getSymVisibility(st_other);
 
   ResolveInfo* result =
-         pLDInfo.getStrSymPool().createSymbol(ld_name,
-                                              pInput.type() == Input::DynObj,
-                                              ld_type,
-                                              ld_desc,
-                                              ld_binding,
-                                              st_size,
-                                              ld_vis);
+         pLDInfo.getNamePool().createSymbol(ld_name,
+                                            (pInput.type() == Input::DynObj),
+                                            ld_type,
+                                            ld_desc,
+                                            ld_binding,
+                                            st_size,
+                                            ld_vis);
   // release regions
   pInput.memArea()->release(symbol_region);
   pInput.memArea()->release(strtab_region);
@@ -426,8 +437,8 @@ bool ELFReader<32, true>::readRela(Input& pInput,
 {
   // get the number of rela
   size_t entsize = pRegion.size() / sizeof(llvm::ELF::Elf32_Rela);
-  llvm::ELF::Elf32_Rela* relaTab =
-                     reinterpret_cast<llvm::ELF::Elf32_Rela*>(pRegion.start());
+  const llvm::ELF::Elf32_Rela* relaTab =
+                reinterpret_cast<const llvm::ELF::Elf32_Rela*>(pRegion.start());
 
   for (size_t idx=0; idx < entsize; ++idx) {
     uint32_t r_offset = 0x0;
@@ -447,13 +458,8 @@ bool ELFReader<32, true>::readRela(Input& pInput,
     uint8_t  r_type = static_cast<unsigned char>(r_info);
     uint32_t r_sym  = (r_info >> 8);
     LDSymbol* symbol = pInput.context()->getSymbol(r_sym);
-    if (NULL == symbol) {
-      llvm::report_fatal_error(llvm::Twine("invalid symbol index :") +
-                               llvm::Twine(r_sym) +
-                               llvm::Twine(" in file `") +
-                               pInput.path().native() +
-                               llvm::Twine("'.\n"));
-    }
+    if (NULL == symbol)
+      fatal(diag::err_cannot_read_symbol) << r_sym << pInput.path();
 
     ResolveInfo* resolve_info = symbol->resolveInfo();
 
@@ -461,16 +467,13 @@ bool ELFReader<32, true>::readRela(Input& pInput,
          pLinker.getLayout().getFragmentRef(*pSection.getLink(), r_offset);
 
     if (NULL == frag_ref) {
-      llvm::report_fatal_error(llvm::Twine("invalid sh_info: ") +
-                               llvm::Twine(pSection.getLink()->index()) +
-                               llvm::Twine(" of the relocation section `") +
-                               pSection.name() +
-                               llvm::Twine("' in file `") +
-                               pInput.path().native() +
-                               llvm::Twine(".\n"));
+      fatal(diag::err_cannot_read_relocated_section)
+                                << pSection.name()
+                                << pSection.getLink()->index()
+                                << pInput.path();
     }
 
-    pLinker.addRelocation(r_type, *symbol,  *resolve_info, *frag_ref, r_addend);
+    pLinker.addRelocation(r_type, *symbol,  *resolve_info, *frag_ref, pSection, r_addend);
   }
   return true;
 }
@@ -483,8 +486,8 @@ bool ELFReader<32, true>::readRel(Input& pInput,
 {
   // get the number of rel
   size_t entsize = pRegion.size() / sizeof(llvm::ELF::Elf32_Rel);
-  llvm::ELF::Elf32_Rel* relTab =
-                      reinterpret_cast<llvm::ELF::Elf32_Rel*>(pRegion.start());
+  const llvm::ELF::Elf32_Rel* relTab =
+                 reinterpret_cast<const llvm::ELF::Elf32_Rel*>(pRegion.start());
 
   for (size_t idx=0; idx < entsize; ++idx) {
     uint32_t r_offset = 0x0;
@@ -503,11 +506,7 @@ bool ELFReader<32, true>::readRel(Input& pInput,
 
     LDSymbol* symbol = pInput.context()->getSymbol(r_sym);
     if (NULL == symbol) {
-      llvm::report_fatal_error(llvm::Twine("invalid symbol index :") +
-                               llvm::Twine(r_sym) +
-                               llvm::Twine(" in file `") +
-                               pInput.path().native() +
-                               llvm::Twine("'.\n"));
+      fatal(diag::err_cannot_read_symbol) << r_sym << pInput.path();
     }
 
     ResolveInfo* resolve_info = symbol->resolveInfo();
@@ -516,16 +515,78 @@ bool ELFReader<32, true>::readRel(Input& pInput,
          pLinker.getLayout().getFragmentRef(*pSection.getLink(), r_offset);
 
     if (NULL == frag_ref) {
-      llvm::report_fatal_error(llvm::Twine("invalid sh_info: ") +
-                               llvm::Twine(pSection.getLink()->index()) +
-                               llvm::Twine(" of the relocation section `") +
-                               pSection.name() +
-                               llvm::Twine("' in file `") +
-                               pInput.path().native() +
-                               llvm::Twine(".\n"));
+      fatal(diag::err_cannot_read_relocated_section)
+                                << pSection.name()
+                                << pSection.getLink()->index()
+                                << pInput.path();
     }
 
-    pLinker.addRelocation(r_type, *symbol, *resolve_info, *frag_ref);
+    pLinker.addRelocation(r_type, *symbol, *resolve_info, *frag_ref, pSection);
   }
   return true;
 }
+
+/// readDynamic - read ELF .dynamic in input dynobj
+bool ELFReader<32, true>::readDynamic(Input& pInput) const
+{
+  assert(pInput.type() == Input::DynObj);
+  const LDSection* dynamic_sect = pInput.context()->getSection(".dynamic");
+  if (NULL == dynamic_sect) {
+    fatal(diag::err_cannot_read_section) << ".dynamic";
+  }
+  const LDSection* dynstr_sect = dynamic_sect->getLink();
+  if (NULL == dynstr_sect) {
+    fatal(diag::err_cannot_read_section) << ".dynstr";
+  }
+
+  MemoryRegion* dynamic_region =
+    pInput.memArea()->request(dynamic_sect->offset(), dynamic_sect->size());
+
+  MemoryRegion* dynstr_region =
+    pInput.memArea()->request(dynstr_sect->offset(), dynstr_sect->size());
+
+  assert(NULL != dynamic_region && NULL != dynstr_region);
+
+  const llvm::ELF::Elf32_Dyn* dynamic =
+    (llvm::ELF::Elf32_Dyn*) dynamic_region->start();
+  const char* dynstr = (const char*) dynstr_region->start();
+  bool hasSOName = false;
+  size_t numOfEntries = dynamic_sect->size() / sizeof(llvm::ELF::Elf32_Dyn);
+
+  for (size_t idx = 0; idx < numOfEntries; ++idx) {
+
+    llvm::ELF::Elf32_Sword d_tag = 0x0;
+    llvm::ELF::Elf32_Word d_val = 0x0;
+
+    if (llvm::sys::isLittleEndianHost()) {
+      d_tag = dynamic[idx].d_tag;
+      d_val = dynamic[idx].d_un.d_val;
+    } else {
+      d_tag = bswap32(dynamic[idx].d_tag);
+      d_val = bswap32(dynamic[idx].d_un.d_val);
+    }
+
+    switch (d_tag) {
+      case llvm::ELF::DT_SONAME:
+        assert(d_val < dynstr_sect->size());
+        pInput.setSOName(dynstr + d_val);
+        hasSOName = true;
+        break;
+      case llvm::ELF::DT_NEEDED:
+        // TODO:
+        break;
+      case llvm::ELF::DT_NULL:
+      default:
+        break;
+    }
+  }
+
+  // if there is no SONAME in .dynamic, then set it from input path
+  if (!hasSOName)
+    pInput.setSOName(pInput.path().native());
+
+  pInput.memArea()->release(dynamic_region);
+  pInput.memArea()->release(dynstr_region);
+  return true;
+}
+

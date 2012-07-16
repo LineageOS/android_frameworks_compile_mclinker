@@ -8,28 +8,19 @@
 //===----------------------------------------------------------------------===//
 #include <mcld/LD/StaticResolver.h>
 #include <mcld/LD/LDSymbol.h>
-#include <cassert>
+#include <mcld/Support/MsgHandling.h>
 
 using namespace mcld;
 
-
 //==========================
 // StaticResolver
-StaticResolver::StaticResolver()
-{
-}
-
 StaticResolver::~StaticResolver()
 {
 }
 
-StaticResolver::StaticResolver(const StaticResolver& pCopy)
-  : Resolver(pCopy) {
-}
-
-unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
-                                     const ResolveInfo& __restrict__ pNew,
-                                     bool &pOverride)
+bool StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
+                             const ResolveInfo& __restrict__ pNew,
+                             bool &pOverride) const
 {
 
   /* The state table itself.
@@ -41,13 +32,13 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
   static const enum LinkAction link_action[LAST_ORD][LAST_ORD] =
   {
     /* new\old  U       w_U     d_U    wd_U   D      w_D    d_D    wd_D   C      w_C,   Cs,    Is   */
-    /* U    */ {NOACT,  UND,    UND,   UND,   NOACT, NOACT, DUND,  DUNDW, NOACT, NOACT, NOACT, REFC },
-    /* w_U  */ {NOACT,  NOACT,  NOACT, WEAK,  NOACT, NOACT, DUND,  DUNDW, NOACT, NOACT, NOACT, REFC },
+    /* U    */ {NOACT,  UND,    UND,   UND,   NOACT, NOACT, DUND,  DUND,  NOACT, NOACT, NOACT, REFC },
+    /* w_U  */ {NOACT,  NOACT,  NOACT, WEAK,  NOACT, NOACT, DUNDW, DUNDW, NOACT, NOACT, NOACT, REFC },
     /* d_U  */ {NOACT,  NOACT,  NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, REFC },
     /* wd_U */ {NOACT,  NOACT,  NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, REFC },
     /* D    */ {DEF,    DEF,    DEF,   DEF,   MDEF,  DEF,   DEF,   DEF,   CDEF,  CDEF,  CDEF,  MDEF },
     /* w_D  */ {DEFW,   DEFW,   DEFW,  DEFW,  NOACT, NOACT, DEFW,  DEFW,  NOACT, NOACT, NOACT, NOACT},
-    /* d_D  */ {DEFD,   MDEFD,  DEFD,  DEFD,  NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, MDEF },
+    /* d_D  */ {MDEFD,  MDEFD,  DEFD,  DEFD,  NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, MDEF },
     /* wd_D */ {MDEFWD, MDEFWD, DEFWD, DEFWD, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT},
     /* C    */ {COM,    COM,    COM,   COM,   CREF,  COM,   COM,   COM,   MBIG,  COM,   BIG,   REFC },
     /* w_C  */ {COM,    COM,    COM,   COM,   NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, NOACT, REFC },
@@ -71,26 +62,23 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
   unsigned int col = getOrdinate(pOld);
 
   bool cycle = false;
-  unsigned int result = Resolver::Success;
   pOverride = false;
   ResolveInfo* old = &pOld;
   LinkAction action;
   do {
-    result = Resolver::Success;
     cycle = false;
     action = link_action[row][col];
 
     switch(action) {
       case FAIL: {       /* abort.  */
-        m_Mesg = std::string("internal error [StaticResolver.cpp:loc 86].\n") +
-                 std::string("Please report to `mclinker@googlegroups.com'.\n");
-        result = Resolver::Abort;
-        break;
+        fatal(diag::fail_sym_resolution)
+                << __FILE__ << __LINE__
+                << "mclinker@googlegroups.com";
+        return false;
       }
       case NOACT: {      /* no action.  */
         pOverride = false;
         old->overrideVisibility(pNew);
-        result = Resolver::Success;
         break;
       }
       case UND:          /* override by symbol undefined symbol.  */
@@ -102,7 +90,6 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
       case COM: {        /* override by symbol common defined.  */
         pOverride = true;
         old->override(pNew);
-        result = Resolver::Success;
         break;
       }
       case MDEFD:        /* mark symbol dynamic defined.  */
@@ -110,31 +97,22 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
         uint32_t binding = old->binding();
         old->override(pNew);
         old->setBinding(binding);
-        m_Mesg = std::string("symbol `") +
-                 old->name() +
-                 std::string("' uses the type, dynamic, size and type in the dynamic symbol.");
+        ignore(diag::mark_dynamic_defined) << old->name();
         pOverride = true;
-        result = Resolver::Warning;
         break;
       }
       case DUND:
       case DUNDW: {
-        if (old->binding() == ResolveInfo::Weak &&
-            pNew.binding() != ResolveInfo::Weak) {
-          old->setBinding(pNew.binding());
-        }
+        old->override(pNew);
         old->overrideVisibility(pNew);
+        old->setDynamic();
         pOverride = false;
-        result = Resolver::Success;
         break;
       }
       case CREF: {       /* Possibly warn about common reference to defined symbol.  */
         // A common symbol does not override a definition.
-        m_Mesg = std::string("common '") +
-                 pNew.name() +
-                 std::string("' overriden by previous definition.");
+        ignore(diag::comm_refer_to_define) << old->name();
         pOverride = false;
-        result = Resolver::Warning;
         break;
       }
       case CDEF: {       /* redefine existing common symbol.  */
@@ -142,12 +120,9 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
         // definition overrides.
         //
 	// NOTE: m_Mesg uses 'name' instead of `name' for being compatible to GNU ld.
-        m_Mesg = std::string("definition of '") +
-                 old->name() +
-                 std::string("' is overriding common.");
+        ignore(diag::redefine_common) << old->name();
         old->override(pNew);
         pOverride = true;
-        result = Resolver::Warning;
         break;
       }
       case BIG: {        /* override by symbol common using largest size.  */
@@ -156,7 +131,6 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
         old->overrideAttributes(pNew);
         old->overrideVisibility(pNew);
         pOverride = true;
-        result = Resolver::Success;
         break;
       }
       case MBIG: {       /* mark common symbol by larger size. */
@@ -164,22 +138,15 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
           old->setSize(pNew.size());
         old->overrideVisibility(pNew);
         pOverride = false;
-        result = Resolver::Success;
         break;
       }
       case CIND: {       /* mark indirect symbol from existing common symbol.  */
-         m_Mesg = std::string("indirect symbol `") +
-                  pNew.name()+
-                  std::string("' point to a common symbol.\n");
-         result = Resolver::Warning;
+         ignore(diag::indirect_refer_to_common) << old->name();
       }
       /* Fall through */
       case IND: {        /* override by indirect symbol.  */
-        if (0 == pNew.link()) {
-          m_Mesg = std::string("indirect symbol `") +
-                   pNew.name() +
-                   std::string("' point to a inexistent symbol.");
-          result = Resolver::Abort;
+        if (NULL == pNew.link()) {
+          fatal(diag::indirect_refer_to_inexist) << pNew.name();
           break;
         }
 
@@ -203,18 +170,12 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
       }
       /* Fall through */
       case MDEF: {       /* multiple definition error.  */
-        m_Mesg = std::string("multiple definitions of `") +
-                 pNew.name() +
-                 std::string("'.");
-        result = Resolver::Abort;
+        error(diag::multiple_definitions) << pNew.name();
         break;
       }
       case REFC: {       /* Mark indirect symbol referenced and then CYCLE.  */
-        if (0 == old->link()) {
-          m_Mesg = std::string("indirect symbol `") +
-                   old->name() +
-                   std::string("' point to a inexistent symbol.");
-          result = Resolver::Abort;
+        if (NULL == old->link()) {
+          fatal(diag::indirect_refer_to_inexist) << old->name();
           break;
         }
 
@@ -223,8 +184,12 @@ unsigned int StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
         cycle = true;
         break;
       }
+      default: {
+        error(diag::undefined_situation) << action << old->name() << pNew.name();
+        return false;
+      }
     } // end of the big switch (action)
   } while(cycle);
-  return result;
+  return true;
 }
 

@@ -231,10 +231,6 @@ bool mcld::LLVMTargetMachine::addPassesToEmitFile(PassManagerBase &pPM,
     pPM.add(createGCInfoDeleter()); // not in addPassesToMC
     break;
   }
-  case CGFT_ARCFile: {
-    assert(0 && "Output to archive file has not been supported yet!");
-    break;
-  }
   case CGFT_EXEFile: {
     if (pLinkerOpt == NULL)
       return true;
@@ -378,7 +374,7 @@ bool mcld::LLVMTargetMachine::addLinkerPasses(PassManagerBase &pPM,
     return true;
   pPM.add(printer);
 #endif
-  TargetLDBackend* ldBackend = getTarget().createLDBackend(*getTarget().get(), m_Triple);
+  TargetLDBackend* ldBackend = getTarget().createLDBackend(m_Triple);
   if (0 == ldBackend)
     return true;
 
@@ -410,3 +406,4 @@ bool mcld::LLVMTargetMachine::addLinkerPasses(PassManagerBase &pPM,
   pPM.add(funcPass);
   return false;
 }
+

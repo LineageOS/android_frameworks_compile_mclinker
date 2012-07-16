@@ -27,7 +27,7 @@ namespace mcld
  *  NodeFactory provides delegation of memory. Sometimes, we have to merge two
  *  NodeFactories, and NodeFactory::delegate() can move the memory from one
  *  NodeFactories to another.
- *
+ *  
  *  @see LinearAllocator
  */
 template<typename DataType>
@@ -95,3 +95,4 @@ private:
 } // namespace of mcld
 
 #endif
+

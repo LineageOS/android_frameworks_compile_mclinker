@@ -25,16 +25,40 @@ ELFSegmentFactory::~ELFSegmentFactory()
 /// produce - produce an empty ELF segment information.
 /// this function will create an ELF segment
 /// @param pType - p_type in ELF program header
-ELFSegment* ELFSegmentFactory::produce(uint32_t pType)
+ELFSegment* ELFSegmentFactory::produce(uint32_t pType, uint32_t pFlag)
 {
   ELFSegment* segment = allocate();
-  new (segment) ELFSegment(pType);
+  new (segment) ELFSegment(pType, pFlag);
   return segment;
 }
 
-/// destroy - destruct the ELF segment
-void ELFSegmentFactory::destroy(ELFSegment*& pSegment)
+ELFSegment*
+ELFSegmentFactory::find(uint32_t pType, uint32_t pFlagSet, uint32_t pFlagClear)
 {
-  deallocate(pSegment);
+  iterator segment, segEnd = end();
+  for (segment = begin(); segment != segEnd; ++segment) {
+    if ((*segment).type() == pType &&
+        ((*segment).flag() & pFlagSet) == pFlagSet &&
+        ((*segment).flag() & pFlagClear) == 0x0) {
+      return &(*segment);
+    }
+  }
+  return NULL;
+}
+
+const ELFSegment*
+ELFSegmentFactory::find(uint32_t pType,
+                        uint32_t pFlagSet,
+                        uint32_t pFlagClear) const
+{
+  const_iterator segment, segEnd = end();
+  for (segment = begin(); segment != segEnd; ++segment) {
+    if ((*segment).type() == pType &&
+        ((*segment).flag() & pFlagSet) == pFlagSet &&
+        ((*segment).flag() & pFlagClear) == 0x0) {
+      return &(*segment);
+    }
+  }
+  return NULL;
 }
 

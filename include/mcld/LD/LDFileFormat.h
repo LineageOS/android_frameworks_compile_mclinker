@@ -35,7 +35,9 @@ public:
     Relocation,
     Debug,
     Target,
-    Exception,
+    EhFrame,
+    EhFrameHdr,
+    GCCExceptTable,
     Version,
     Note,
     MetaData,
@@ -110,3 +112,4 @@ protected:
 } // namespace of mcld
 
 #endif
+

@@ -6,11 +6,11 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <llvm/Support/ELF.h>
 #include <mcld/LD/ELFDynObjFileFormat.h>
 #include <mcld/LD/LDFileFormat.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/MC/MCLinker.h>
-#include <llvm/Support/ELF.h>
 #include <mcld/Target/GNULDBackend.h>
 
 using namespace mcld;
@@ -77,5 +77,10 @@ void ELFDynObjFileFormat::initObjectType(MCLinker& pLinker)
                                            llvm::ELF::SHT_PROGBITS,
                                            llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
                                            f_Backend.bitclass() / 8);
+  f_pEhFrameHdr     = &pLinker.getOrCreateOutputSectHdr(".eh_frame_hdr",
+                                              LDFileFormat::EhFrameHdr,
+                                              llvm::ELF::SHT_PROGBITS,
+                                              llvm::ELF::SHF_ALLOC,
+                                              0x4);
 }
 

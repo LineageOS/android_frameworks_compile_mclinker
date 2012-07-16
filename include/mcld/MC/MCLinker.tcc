@@ -18,10 +18,19 @@ LDSymbol* MCLinker::addSymbol(const llvm::StringRef& pName,
                               MCFragmentRef* pFragmentRef,
                               ResolveInfo::Visibility pVisibility)
 {
-  // These if/else should be optimized by compiler.
-  // This function is defined for clarity.
+  llvm::StringRef symbol_name = pName;
+  if (!getLDInfo().scripts().renameMap().empty() &&
+      ResolveInfo::Undefined == pDesc) {
+    // If the renameMap is not empty, some symbols should be renamed.
+    // --wrap and --portable defines the symbol rename map.
+    ScriptOptions::SymbolRenameMap::iterator renameSym
+                                = getLDInfo().scripts().renameMap().find(pName);
+    if (renameSym != getLDInfo().scripts().renameMap().end())
+      symbol_name = renameSym.getEntry()->value();
+  }
+
   if (FROM == Input::DynObj)
-    return addSymbolFromDynObj(pName,
+    return addSymbolFromDynObj(symbol_name,
                                pType,
                                pDesc,
                                pBinding,
@@ -31,7 +40,7 @@ LDSymbol* MCLinker::addSymbol(const llvm::StringRef& pName,
                                pVisibility);
 
   if (FROM == Input::Object)
-    return addSymbolFromObject(pName,
+    return addSymbolFromObject(symbol_name,
                                pType,
                                pDesc,
                                pBinding,

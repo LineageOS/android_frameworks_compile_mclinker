@@ -43,7 +43,7 @@ public:
   void initTargetSections(MCLinker& pLinker);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(MCLinker& pLinker);
+  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
   /// initRelocFactory - create and initialize RelocationFactory.
   bool initRelocFactory(const MCLinker& pLinker);
@@ -58,7 +58,8 @@ public:
                       const LDSymbol& pInputSym,
                       MCLinker& pLinker,
                       const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                      const Output& pOutput,
+                      const LDSection& pSection);
 
   uint32_t machine() const;
 
@@ -74,6 +75,8 @@ public:
   bool isLittleEndian() const;
 
   unsigned int bitclass() const;
+
+  uint64_t defaultTextSegmentAddr() const;
 
   /// preLayout - Backend can do any needed modification before layout
   void doPreLayout(const Output& pOutput,
@@ -107,11 +110,13 @@ public:
   /// @param pOutput - the output file
   /// @param pSection - the given LDSection
   /// @param pInfo - all options in the command line.
+  /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
   uint64_t emitSectionData(const Output& pOutput,
                            const LDSection& pSection,
                            const MCLDInfo& pInfo,
+                           const Layout& pLayout,
                            MemoryRegion& pRegion) const;
 
   /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
@@ -128,12 +133,11 @@ public:
 
   /// getTargetSectionOrder - compute the layout order of ARM target sections
   unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr) const;
+                                     const LDSection& pSectHdr,
+                                     const MCLDInfo& pInfo) const;
 
   /// finalizeSymbol - finalize the symbol value
-  /// If the symbol's reserved field is not zero, MCLinker will call back this
-  /// function to ask the final value of the symbol
-  bool finalizeSymbol(LDSymbol& pSymbol) const;
+  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
   /// allocateCommonSymbols - allocate common symbols in the corresponding
   /// sections.
@@ -152,13 +156,8 @@ private:
                       const MCLDInfo& pLDInfo,
                       const Output& pOutput);
 
-  bool isSymbolNeedsPLT(ResolveInfo& pSym, const Output& pOutput) const;
-  bool isSymbolNeedsDynRel(ResolveInfo& pSym, const Output& pOutput) const;
-
   void createGOT(MCLinker& pLinker, const Output& pOutput);
   void createRelDyn(MCLinker& pLinker, const Output& pOutput);
-
-  ELFFileFormat* getOutputFormat(const Output& pOutput) const;
 
   /// updateAddend - update addend value of the relocation if the
   /// the target symbol is a section symbol. Addend is the offset
@@ -178,12 +177,11 @@ private:
   LDSymbol* m_pGOTSymbol;
   LDSymbol* m_pGpDispSymbol;
 
-  std::vector<LDSymbol*> m_LocalGOTSyms;
   std::vector<LDSymbol*> m_GlobalGOTSyms;
 
 private:
-  /// isGOTSymbol - return true if the symbol is the GOT entry.
-  bool isGOTSymbol(const LDSymbol& pSymbol) const;
+  /// isGlobalGOTSymbol - return true if the symbol is the global GOT entry.
+  bool isGlobalGOTSymbol(const LDSymbol& pSymbol) const;
   /// emitDynamicSymbol - emit dynamic symbol.
   void emitDynamicSymbol(llvm::ELF::Elf32_Sym& sym32,
                          Output& pOutput,
@@ -197,3 +195,4 @@ private:
 } // namespace of mcld
 
 #endif
+

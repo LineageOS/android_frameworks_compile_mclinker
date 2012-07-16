@@ -18,7 +18,7 @@
 namespace mcld
 {
 
-class StrSymPool;
+class NamePool;
 
 /** \class StaticResolver
  */
@@ -75,7 +75,7 @@ private:
     w_D  = ResolveInfo::weak_flag   | ResolveInfo::regular_flag | ResolveInfo::define_flag,
     d_D  = ResolveInfo::global_flag | ResolveInfo::dynamic_flag | ResolveInfo::define_flag,
     wd_D = ResolveInfo::weak_flag   | ResolveInfo::dynamic_flag | ResolveInfo::define_flag,
-    C    = ResolveInfo::global_flag | ResolveInfo::regular_flag | ResolveInfo::common_flag,
+    C    = ResolveInfo::global_flag | ResolveInfo::regular_flag | ResolveInfo::common_flag, 
     w_C  = ResolveInfo::weak_flag   | ResolveInfo::regular_flag | ResolveInfo::common_flag,
     d_C  = ResolveInfo::global_flag | ResolveInfo::dynamic_flag | ResolveInfo::common_flag,
     wd_C = ResolveInfo::weak_flag   | ResolveInfo::dynamic_flag | ResolveInfo::common_flag,
@@ -103,23 +103,15 @@ private:
   };
 
 public:
-  StaticResolver();
-
-  StaticResolver(const StaticResolver& pCopy);
-
   virtual ~StaticResolver();
 
   /// shouldOverride - Can resolver override the symbol pOld by the symbol pNew?
-  /// @return the action should be taken.
+  /// @return successfully resolved, return true; otherwise, return false.
   /// @param pOld the symbol which may be overridden.
   /// @param pNew the symbol which is used to replace pOld
-  virtual unsigned int resolve(ResolveInfo & __restrict__ pOld,
-                               const ResolveInfo & __restrict__ pNew,
-                               bool &pOverride);
-
-  StaticResolver* doClone() const {
-    return new StaticResolver(*this);
-  }
+  virtual bool resolve(ResolveInfo & __restrict__ pOld,
+                       const ResolveInfo & __restrict__ pNew,
+                       bool &pOverride) const;
 
 private:
   inline unsigned int getOrdinate(const ResolveInfo& pInfo) const {
@@ -142,3 +134,4 @@ private:
 } // namespace of mcld
 
 #endif
+

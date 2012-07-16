@@ -11,6 +11,7 @@
 
 #include "X86ELFDynamic.h"
 #include "X86GOT.h"
+#include "X86GOTPLT.h"
 #include "X86PLT.h"
 #include <mcld/LD/LDSection.h>
 #include <mcld/Target/GNULDBackend.h>
@@ -82,6 +83,10 @@ public:
 
   const X86GOT& getGOT() const;
 
+  X86GOTPLT& getGOTPLT();
+
+  const X86GOTPLT& getGOTPLT() const;
+
   X86PLT& getPLT();
 
   const X86PLT& getPLT() const;
@@ -120,11 +125,13 @@ public:
   /// @param pOutput - the output file
   /// @param pSection - the given LDSection
   /// @param pInfo - all options in the command line.
+  /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
   uint64_t emitSectionData(const Output& pOutput,
                            const LDSection& pSection,
                            const MCLDInfo& pInfo,
+                           const Layout& pLayout,
                            MemoryRegion& pRegion) const;
 
   /// OSABI - the value of e_ident[EI_OSABI]
@@ -142,6 +149,9 @@ public:
   uint64_t flags() const
   { return 0x0; }
 
+  uint64_t defaultTextSegmentAddr() const
+  { return 0x08048000; }
+
   /// initTargetSectionMap - initialize target dependent section mapping
   bool initTargetSectionMap(SectionMap& pSectionMap);
 
@@ -150,7 +160,7 @@ public:
 
   void initTargetSections(MCLinker& pLinker);
 
-  void initTargetSymbols(MCLinker& pLinker);
+  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
   /// scanRelocation - determine the empty entries are needed or not and create
   /// the empty entries if needed.
@@ -162,7 +172,8 @@ public:
                       const LDSymbol& pInputSym,
                       MCLinker& pLinker,
                       const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                      const Output& pOutput,
+                      const LDSection& pSection);
 
   OutputRelocSection& getRelDyn();
 
@@ -174,21 +185,11 @@ public:
 
   /// getTargetSectionOrder - compute the layout order of X86 target sections
   unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr) const;
+                                     const LDSection& pSectHdr,
+                                     const MCLDInfo& pInfo) const;
 
-  /// finalizeSymbol - finalize the symbol value
-  /// If the symbol's reserved field is not zero, MCLinker will call back this
-  /// function to ask the final value of the symbol
-  bool finalizeSymbol(LDSymbol& pSymbol) const;
-
-  /// allocateCommonSymbols - allocate common symbols in the corresponding
-  /// sections.
-  bool allocateCommonSymbols(const MCLDInfo& pLDInfo, MCLinker& pLinker) const;
-
-public:
-  bool isSymbolPreemptible(const ResolveInfo& pSym,
-                           const MCLDInfo& pLDInfo,
-                           const Output& pOutput) const;
+  /// finalizeTargetSymbols - finalize the symbol value
+  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
 private:
   void scanLocalReloc(Relocation& pReloc,
@@ -203,28 +204,30 @@ private:
                        const MCLDInfo& pLDInfo,
                        const Output& pOutput);
 
-  bool isSymbolNeedsPLT(const ResolveInfo& pSym,
-                        const MCLDInfo& pLDInfo,
-                        const Output& pOutput) const;
+  /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
+  /// @param pSym - A resolved copy symbol that defined in BSS section
+  void addCopyReloc(ResolveInfo& pSym);
 
-  bool isSymbolNeedsDynRel(const ResolveInfo& pSym,
-                           const Output& pOutput,
-                           bool isAbsReloc) const;
+  /// defineSymbolforCopyReloc - allocate a space in BSS section and
+  /// and force define the copy of pSym to BSS section
+  /// @return the output LDSymbol of the copy symbol
+  LDSymbol& defineSymbolforCopyReloc(MCLinker& pLinker,
+                                     const ResolveInfo& pSym);
 
   void updateAddend(Relocation& pReloc,
                     const LDSymbol& pInputSym,
                     const Layout& pLayout) const;
 
   void createX86GOT(MCLinker& pLinker, const Output& pOutput);
+  void createX86GOTPLT(MCLinker& pLinker, const Output& pOutput);
   void createX86PLTandRelPLT(MCLinker& pLinker, const Output& pOutput);
   void createX86RelDyn(MCLinker& pLinker, const Output& pOutput);
-
-  ELFFileFormat* getOutputFormat(const Output& pOutput) const;
 
 private:
   RelocationFactory* m_pRelocFactory;
   X86GOT* m_pGOT;
   X86PLT* m_pPLT;
+  X86GOTPLT* m_pGOTPLT;
   /// m_RelDyn - dynamic relocation table of .rel.dyn
   OutputRelocSection* m_pRelDyn;
   /// m_RelPLT - dynamic relocation table of .rel.plt
@@ -254,3 +257,4 @@ private:
 } // namespace of mcld
 
 #endif
+

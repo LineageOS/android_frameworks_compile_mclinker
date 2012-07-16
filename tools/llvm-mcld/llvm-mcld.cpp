@@ -11,7 +11,14 @@
 #include <mcld/Support/TargetRegistry.h>
 #include <mcld/Support/CommandLine.h>
 #include <mcld/Support/DerivedPositionDependentOptions.h>
+#include <mcld/Support/Path.h>
 #include <mcld/Support/RealPath.h>
+#include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/FileSystem.h>
+#include <mcld/Support/raw_ostream.h>
+#include <mcld/LD/DiagnosticLineInfo.h>
+#include <mcld/LD/TextDiagnosticPrinter.h>
+#include <mcld/MC/MCLDInfo.h>
 #include <mcld/CodeGen/SectLinkerOption.h>
 
 #include <llvm/Module.h>
@@ -26,9 +33,11 @@
 #include <llvm/Support/Host.h>
 #include <llvm/Support/IRReader.h>
 #include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/Signals.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/ToolOutputFile.h>
+#include <llvm/Support/Process.h>
 #include <llvm/Target/TargetData.h>
 #include <llvm/Target/TargetMachine.h>
 
@@ -48,21 +57,10 @@ int unit_test( int argc, char* argv[] )
 
 #endif
 
-
 // General options for llc.  Other pass-specific options are specified
 // within the corresponding llc passes, and target-specific options
 // and back-end code generation options are specified with the target machine.
 //
-static cl::opt<std::string>
-InputFilename("dB",
-              cl::desc("set default bitcode"),
-              cl::value_desc("bitcode"));
-
-static cl::opt<std::string>
-OutputFilename("o",
-               cl::desc("Output filename"),
-               cl::value_desc("filename"));
-
 // Determine optimization level.
 static cl::opt<char>
 OptLevel("O",
@@ -90,21 +88,6 @@ MAttrs("mattr",
   cl::desc("Target specific attributes (-mattr=help for details)"),
   cl::value_desc("a1,+a2,-a3,..."));
 
-static cl::opt<Reloc::Model>
-RelocModel("relocation-model",
-             cl::desc("Choose relocation model"),
-             cl::init(Reloc::Default),
-             cl::values(
-            clEnumValN(Reloc::Default, "default",
-                       "Target default relocation model"),
-            clEnumValN(Reloc::Static, "static",
-                       "Non-relocatable code"),
-            clEnumValN(Reloc::PIC_, "pic",
-                       "Fully relocatable, position independent code"),
-            clEnumValN(Reloc::DynamicNoPIC, "dynamic-no-pic",
-                       "Relocatable external references, non-relocatable code"),
-            clEnumValEnd));
-
 static cl::opt<llvm::CodeModel::Model>
 CMModel("code-model",
         cl::desc("Choose code model"),
@@ -120,24 +103,6 @@ CMModel("code-model",
                    clEnumValN(CodeModel::Large, "large",
                               "Large code model"),
                    clEnumValEnd));
-
-cl::opt<mcld::CodeGenFileType>
-FileType("filetype", cl::init(mcld::CGFT_EXEFile),
-  cl::desc("Choose a file type (not all types are supported by all targets):"),
-  cl::values(
-       clEnumValN(mcld::CGFT_ASMFile, "asm",
-                  "Emit an assembly ('.s') file"),
-       clEnumValN(mcld::CGFT_OBJFile, "obj",
-                  "Emit a relocatable object ('.o') file"),
-       clEnumValN(mcld::CGFT_ARCFile, "arc",
-                  "Emit an archive ('.a') file"),
-       clEnumValN(mcld::CGFT_DSOFile, "dso",
-                  "Emit an dynamic shared object ('.so') file"),
-       clEnumValN(mcld::CGFT_EXEFile, "exe",
-                  "Emit a executable ('.exe') file"),
-       clEnumValN(mcld::CGFT_NULLFile, "null",
-                  "Emit nothing, for performance testing"),
-       clEnumValEnd));
 
 cl::opt<bool> NoVerify("disable-verify", cl::Hidden,
                        cl::desc("Do not verify input module"));
@@ -276,6 +241,21 @@ SegmentedStacks("segmented-stacks",
 //===----------------------------------------------------------------------===//
 // General Options
 static cl::opt<mcld::sys::fs::Path, false, llvm::cl::parser<mcld::sys::fs::Path> >
+ArgBitcodeFilename("dB",
+              cl::desc("set default bitcode"),
+              cl::value_desc("bitcode"));
+
+static cl::opt<mcld::sys::fs::Path, false, llvm::cl::parser<mcld::sys::fs::Path> >
+ArgOutputFilename("o",
+               cl::desc("Output filename"),
+               cl::value_desc("filename"));
+
+static cl::alias
+AliasOutputFilename("output",
+                    cl::desc("alias for -o"),
+                    cl::aliasopt(ArgOutputFilename));
+
+static cl::opt<mcld::sys::fs::Path, false, llvm::cl::parser<mcld::sys::fs::Path> >
 ArgSysRoot("sysroot",
            cl::desc("Use directory as the location of the sysroot, overriding the configure-time default."),
            cl::value_desc("directory"),
@@ -302,14 +282,25 @@ ArgTraceAlias("trace",
               cl::desc("alias for -t"),
               cl::aliasopt(ArgTrace));
 
-static cl::opt<bool>
-ArgVerbose("V",
-          cl::desc("Display the version number for ld and list the linker emulations supported."));
+static cl::opt<int>
+ArgVerbose("verbose",
+           cl::init(-1),
+           cl::desc("Display the version number for ld and list the linker emulations supported."));
 
-static cl::alias
-ArgVerboseAlias("verbose",
-                cl::desc("alias for -V"),
-                cl::aliasopt(ArgVerbose));
+static cl::opt<bool>
+ArgVersion("V",
+           cl::init(false),
+           cl::desc("Display the version number for MCLinker."));
+
+static cl::opt<int>
+ArgMaxErrorNum("error-limit",
+               cl::init(-1),
+               cl::desc("limits the maximum number of erros."));
+
+static cl::opt<int>
+ArgMaxWarnNum("warning-limit",
+               cl::init(-1),
+               cl::desc("limits the maximum number of warnings."));
 
 static cl::opt<std::string>
 ArgEntry("e",
@@ -327,10 +318,115 @@ ArgBsymbolic("Bsymbolic",
              cl::desc("Bind references within the shared library."),
              cl::init(false));
 
+static cl::opt<bool>
+ArgBgroup("Bgroup",
+          cl::desc("Info the dynamic linker to perform lookups only inside the group."),
+          cl::init(false));
+
 static cl::opt<std::string>
 ArgSOName("soname",
           cl::desc("Set internal name of shared library"),
           cl::value_desc("name"));
+
+static cl::opt<bool>
+ArgNoUndefined("no-undefined",
+               cl::desc("Do not allow unresolved references"),
+               cl::init(false));
+
+static cl::opt<bool>
+ArgAllowMulDefs("allow-multiple-definition",
+                cl::desc("Allow multiple definition"),
+                cl::init(false));
+
+static cl::opt<bool>
+ArgEhFrameHdr("eh-frame-hdr",
+              cl::desc("Request creation of \".eh_frame_hdr\" section and ELF \"PT_GNU_EH_FRAME\" segment header."),
+              cl::init(false));
+
+static cl::list<mcld::ZOption, bool, llvm::cl::parser<mcld::ZOption> >
+ArgZOptionList("z",
+               cl::ZeroOrMore,
+               cl::desc("The -z options for GNU ld compatibility."),
+               cl::value_desc("keyword"),
+               cl::Prefix);
+
+cl::opt<mcld::CodeGenFileType>
+ArgFileType("filetype", cl::init(mcld::CGFT_EXEFile),
+  cl::desc("Choose a file type (not all types are supported by all targets):"),
+  cl::values(
+       clEnumValN(mcld::CGFT_ASMFile, "asm",
+                  "Emit an assembly ('.s') file"),
+       clEnumValN(mcld::CGFT_OBJFile, "obj",
+                  "Emit a relocatable object ('.o') file"),
+       clEnumValN(mcld::CGFT_DSOFile, "dso",
+                  "Emit an dynamic shared object ('.so') file"),
+       clEnumValN(mcld::CGFT_EXEFile, "exe",
+                  "Emit a executable ('.exe') file"),
+       clEnumValN(mcld::CGFT_NULLFile, "null",
+                  "Emit nothing, for performance testing"),
+       clEnumValEnd));
+
+static cl::opt<bool>
+ArgShared("shared",
+          cl::desc("Create a shared library."),
+          cl::init(false));
+
+static cl::alias
+ArgSharedAlias("Bshareable",
+               cl::desc("alias for -shared"),
+               cl::aliasopt(ArgShared));
+
+static cl::opt<bool>
+ArgPIE("pie",
+       cl::desc("Emit a position-independent executable file"),
+       cl::init(false));
+
+static cl::opt<Reloc::Model>
+ArgRelocModel("relocation-model",
+             cl::desc("Choose relocation model"),
+             cl::init(Reloc::Default),
+             cl::values(
+               clEnumValN(Reloc::Default, "default",
+                       "Target default relocation model"),
+               clEnumValN(Reloc::Static, "static",
+                       "Non-relocatable code"),
+               clEnumValN(Reloc::PIC_, "pic",
+                       "Fully relocatable, position independent code"),
+               clEnumValN(Reloc::DynamicNoPIC, "dynamic-no-pic",
+                       "Relocatable external references, non-relocatable code"),
+               clEnumValEnd));
+
+static cl::opt<bool>
+ArgFPIC("fPIC",
+        cl::desc("Set relocation model to pic. The same as -relocation-model=pic."),
+        cl::init(false));
+
+static cl::opt<std::string>
+ArgDyld("dynamic-linker",
+        cl::desc("Set the name of the dynamic linker."),
+        cl::value_desc("Program"));
+
+namespace color {
+enum Color {
+  Never,
+  Always,
+  Auto
+};
+} // namespace of color
+
+static cl::opt<color::Color>
+ArgColor("color",
+  cl::value_desc("WHEN"),
+  cl::desc("Surround the result strings with the marker"),
+  cl::init(color::Auto),
+  cl::values(
+    clEnumValN(color::Never, "never",
+      "do not surround result strings"),
+    clEnumValN(color::Always, "always",
+      "always surround result strings, even the output is a plain file"),
+    clEnumValN(color::Auto, "auto",
+      "surround result strings only if the output is a tty"),
+    clEnumValEnd));
 
 //===----------------------------------------------------------------------===//
 // Inputs
@@ -440,118 +536,139 @@ ArgBStaticListAlias3("non_shared",
 
 //===----------------------------------------------------------------------===//
 // Scripting Options
+static cl::list<std::string>
+ArgWrapList("wrap",
+            cl::ZeroOrMore,
+            cl::desc("Use a wrap function fo symbol."),
+            cl::value_desc("symbol"));
 
+static cl::list<std::string>
+ArgPortList("portable",
+            cl::ZeroOrMore,
+            cl::desc("Use a portable function fo symbol."),
+            cl::value_desc("symbol"));
 
 //===----------------------------------------------------------------------===//
 /// non-member functions
 
-// GetFileNameRoot - Helper function to get the basename of a filename.
-static inline void
-GetFileNameRoot(const std::string &pInputFilename, std::string& pFileNameRoot)
-{
-  std::string outputFilename;
-  /* *** */
-  const std::string& IFN = pInputFilename;
-  int Len = IFN.length();
-  if ((Len > 2) &&
-      IFN[Len-3] == '.' &&
-      ((IFN[Len-2] == 'b' && IFN[Len-1] == 'c') ||
-       (IFN[Len-2] == 'l' && IFN[Len-1] == 'l')))
-    pFileNameRoot = std::string(IFN.begin(), IFN.end()-3); // s/.bc/.s/
-  else
-    pFileNameRoot = std::string(IFN);
-}
-
+/// GetOutputStream - get the output stream.
 static tool_output_file *GetOutputStream(const char* pTargetName,
-                          Triple::OSType pOSType,
-                          mcld::CodeGenFileType pFileType,
-                          const std::string& pInputFilename,
-                          std::string& pOutputFilename)
+                                         Triple::OSType pOSType,
+                                         mcld::CodeGenFileType pFileType,
+                                         const mcld::sys::fs::Path& pInputFilename,
+                                         mcld::sys::fs::Path& pOutputFilename)
 {
-  // If we don't yet have an output filename, make one.
   if (pOutputFilename.empty()) {
-    if (pInputFilename == "-")
-      pOutputFilename = "-";
+    if (0 == pInputFilename.native().compare("-"))
+      pOutputFilename.assign("-");
     else {
-      GetFileNameRoot(pInputFilename, pOutputFilename);
+      switch(pFileType) {
+      case mcld::CGFT_ASMFile: {
+        if (0 == pInputFilename.native().compare("-"))
+          pOutputFilename.assign("_out");
+        else
+          pOutputFilename.assign(pInputFilename.stem().native());
 
-      switch (pFileType) {
-      case mcld::CGFT_ASMFile:
-        if (pTargetName[0] == 'c') {
-          if (pTargetName[1] == 0)
-            pOutputFilename += ".cbe.c";
-          else if (pTargetName[1] == 'p' && pTargetName[2] == 'p')
-            pOutputFilename += ".cpp";
+        if (0 == strcmp(pTargetName, "c"))
+          pOutputFilename.native() += ".cbe.c";
+        else if (0 == strcmp(pTargetName, "cpp"))
+          pOutputFilename.native() += ".cpp";
+        else
+          pOutputFilename.native() += ".s";
+      }
+      break;
+
+      case mcld::CGFT_OBJFile: {
+        if (0 == pInputFilename.native().compare("-"))
+          pOutputFilename.assign("_out");
+        else
+          pOutputFilename.assign(pInputFilename.stem().native());
+
+        if (pOSType == Triple::Win32)
+          pOutputFilename.native() += ".obj";
+        else
+          pOutputFilename.native() += ".o";
+      }
+      break;
+
+      case mcld::CGFT_DSOFile: {
+        if (Triple::Win32 == pOSType) {
+          if (0 == pInputFilename.native().compare("-"))
+            pOutputFilename.assign("_out");
           else
-            pOutputFilename += ".s";
+            pOutputFilename.assign(pInputFilename.stem().native());
+          pOutputFilename.native() += ".dll";
         }
         else
-          pOutputFilename += ".s";
-        break;
-      case mcld::CGFT_OBJFile:
-        if (pOSType == Triple::Win32)
-          pOutputFilename += ".obj";
+          pOutputFilename.assign("a.out");
+      }
+      break;
+
+      case mcld::CGFT_EXEFile: {
+        if (Triple::Win32 == pOSType) {
+          if (0 == pInputFilename.native().compare("-"))
+            pOutputFilename.assign("_out");
+          else
+            pOutputFilename.assign(pInputFilename.stem().native());
+          pOutputFilename.native() += ".exe";
+        }
         else
-          pOutputFilename += ".o";
-        break;
-      case mcld::CGFT_DSOFile:
-        if (pOSType == Triple::Win32)
-         pOutputFilename += ".dll";
-        else
-         pOutputFilename += ".so";
-        break;
-      case mcld::CGFT_ARCFile:
-         pOutputFilename += ".a";
-        break;
-      case mcld::CGFT_EXEFile:
+          pOutputFilename.assign("a.out");
+      }
+      break;
+
       case mcld::CGFT_NULLFile:
-        // do nothing
         break;
       default:
-        assert(0 && "Unknown file type");
-      }
-    }
-  }
+        llvm::report_fatal_error("Unknown output file type.\n");
+      } // end of switch
+    } // end of ! pInputFilename == "-"
+  } // end of if empty pOutputFilename
 
   // Decide if we need "binary" output.
-  bool Binary = false;
+  unsigned int fd_flags = 0x0;
   switch (pFileType) {
   default: assert(0 && "Unknown file type");
   case mcld::CGFT_ASMFile:
     break;
-  case mcld::CGFT_ARCFile:
   case mcld::CGFT_OBJFile:
   case mcld::CGFT_DSOFile:
   case mcld::CGFT_EXEFile:
   case mcld::CGFT_NULLFile:
-    Binary = true;
+    fd_flags |= raw_fd_ostream::F_Binary;
     break;
   }
 
   // Open the file.
-  std::string error;
-  unsigned OpenFlags = 0;
-  if (Binary) OpenFlags |= raw_fd_ostream::F_Binary;
-  tool_output_file *FDOut = new tool_output_file(pOutputFilename.c_str(), error,
-                                                 OpenFlags);
-  if (!error.empty()) {
-    errs() << error << '\n';
-    delete FDOut;
-    return 0;
+  std::string err_mesg;
+  tool_output_file *result_output =
+                            new tool_output_file(pOutputFilename.c_str(),
+                                                 err_mesg,
+                                                 fd_flags);
+  if (!err_mesg.empty()) {
+    errs() << err_mesg << '\n';
+    delete result_output;
+    return NULL;
   }
 
-  return FDOut;
+  return result_output;
 }
 
-static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
+static bool ShouldColorize()
+{
+   const char* term = getenv("TERM");
+   return term && (0 != strcmp(term, "dumb"));
+}
+
+static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
   // -----  Set up General Options  ----- //
   // set up soname
-  pOption.info().output().setSOName(ArgSOName);
+  pLDInfo.output().setSOName(ArgSOName);
 
   // set up sysroot
   if (!ArgSysRoot.empty()) {
     if (exists(ArgSysRoot) && is_directory(ArgSysRoot))
-      pOption.info().options().setSysroot(ArgSysRoot);
+      pLDInfo.options().setSysroot(ArgSysRoot);
   }
 
   // add all search directories
@@ -559,9 +676,9 @@ static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
   cl::list<mcld::MCLDDirectory>::iterator sdEnd = ArgSearchDirList.end();
   for (sd=ArgSearchDirList.begin(); sd!=sdEnd; ++sd) {
     if (sd->isInSysroot())
-      sd->setSysroot(pOption.info().options().sysroot());
+      sd->setSysroot(pLDInfo.options().sysroot());
     if (exists(sd->path()) && is_directory(sd->path())) {
-      pOption.info().options().directories().add(*sd);
+      pLDInfo.options().directories().add(*sd);
     }
     else {
       // FIXME: need a warning function
@@ -571,11 +688,98 @@ static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
     }
   }
 
-  pOption.info().options().setTrace(ArgTrace);
-  pOption.info().options().setVerbose(ArgVerbose);
-  pOption.info().options().setEntry(ArgEntry);
-  pOption.info().options().setBsymbolic(ArgBsymbolic);
+  pLDInfo.options().setPIE(ArgPIE);
+  pLDInfo.options().setTrace(ArgTrace);
+  pLDInfo.options().setVerbose(ArgVerbose);
+  pLDInfo.options().setMaxErrorNum(ArgMaxErrorNum);
+  pLDInfo.options().setMaxWarnNum(ArgMaxWarnNum);
+  pLDInfo.options().setEntry(ArgEntry);
+  pLDInfo.options().setBsymbolic(ArgBsymbolic);
+  pLDInfo.options().setBgroup(ArgBgroup);
+  pLDInfo.options().setDyld(ArgDyld);
+  pLDInfo.options().setNoUndefined(ArgNoUndefined);
+  pLDInfo.options().setMulDefs(ArgAllowMulDefs);
+  pLDInfo.options().setEhFrameHdr(ArgEhFrameHdr);
 
+  // set up rename map, for --wrap
+  cl::list<std::string>::iterator wname;
+  cl::list<std::string>::iterator wnameEnd = ArgWrapList.end();
+  for (wname = ArgWrapList.begin(); wname != wnameEnd; ++wname) {
+    bool exist = false;
+
+    // add wname -> __wrap_wname
+    mcld::StringEntry<llvm::StringRef>* to_wrap =
+                    pLDInfo.scripts().renameMap().insert(*wname, exist);
+
+    std::string to_wrap_str = "__wrap_" + *wname;
+    to_wrap->setValue(to_wrap_str);
+
+    if (exist)
+      mcld::warning(mcld::diag::rewrap) << *wname << to_wrap_str;
+
+    // add __real_wname -> wname
+    std::string from_real_str = "__real_" + *wname;
+    mcld::StringEntry<llvm::StringRef>* from_real =
+             pLDInfo.scripts().renameMap().insert(from_real_str, exist);
+    from_real->setValue(*wname);
+    if (exist)
+      mcld::warning(mcld::diag::rewrap) << *wname << from_real_str;
+  } // end of for
+
+  // set up rename map, for --portable
+  cl::list<std::string>::iterator pname;
+  cl::list<std::string>::iterator pnameEnd = ArgPortList.end();
+  for (pname = ArgPortList.begin(); pname != pnameEnd; ++pname) {
+    bool exist = false;
+
+    // add pname -> pname_portable
+    mcld::StringEntry<llvm::StringRef>* to_port =
+                  pLDInfo.scripts().renameMap().insert(*pname, exist);
+
+    std::string to_port_str = *pname + "_portable";
+    to_port->setValue(to_port_str);
+
+    if (exist)
+      mcld::warning(mcld::diag::rewrap) << *pname << to_port_str;
+
+    // add __real_pname -> pname
+    std::string from_real_str = "__real_" + *pname;
+    mcld::StringEntry<llvm::StringRef>* from_real =
+             pLDInfo.scripts().renameMap().insert(from_real_str, exist);
+
+    from_real->setValue(*pname);
+    if (exist)
+      mcld::warning(mcld::diag::rewrap) << *pname << from_real_str;
+  } // end of for
+
+  // set up colorize
+  switch (ArgColor) {
+    case color::Never:
+      pLDInfo.options().setColor(false);
+    break;
+    case color::Always:
+      pLDInfo.options().setColor(true);
+    break;
+    case color::Auto:
+      bool color_option = ShouldColorize() &&
+                 llvm::sys::Process::FileDescriptorIsDisplayed(STDOUT_FILENO);
+      pLDInfo.options().setColor(color_option);
+    break;
+  }
+
+  // add -z options
+  cl::list<mcld::ZOption>::iterator zOpt;
+  cl::list<mcld::ZOption>::iterator zOptEnd = ArgZOptionList.end();
+  for (zOpt = ArgZOptionList.begin(); zOpt != zOptEnd; ++zOpt) {
+    pLDInfo.options().addZOption(*zOpt);
+  }
+
+  // -----  Set up Script Options  ----- //
+
+  return true;
+}
+
+static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
   // -----  Set up Inputs  ----- //
   // add all start-group
   cl::list<bool>::iterator sg;
@@ -685,16 +889,14 @@ static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
     ++attr;
   }
 
-  // -----  Set up Scripting Options  ----- //
-
-  return false;
+  return true;
 }
 
 int main( int argc, char* argv[] )
 {
-
   LLVMContext &Context = getGlobalContext();
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
+
   // Initialize targets first, so that --version shows registered targets.
   InitializeAllTargets();
   InitializeAllAsmPrinters();
@@ -702,7 +904,9 @@ int main( int argc, char* argv[] )
   InitializeAllTargetMCs();
   mcld::InitializeAllTargets();
   mcld::InitializeAllLinkers();
-  cl::ParseCommandLineOptions(argc, argv, "llvm MCLinker\n");
+  mcld::InitializeAllDiagnostics();
+
+  cl::ParseCommandLineOptions(argc, argv, "MCLinker\n");
 
 #ifdef ENABLE_UNITTEST
   if (UnitTest) {
@@ -713,25 +917,45 @@ int main( int argc, char* argv[] )
   // Load the module to be compiled...
   std::auto_ptr<Module> M;
 
-  if (InputFilename.empty() && (FileType != mcld::CGFT_DSOFile)) {
-    // Read from stdin
-    InputFilename = "-";
+  // -shared
+  if (true == ArgShared) {
+    ArgFileType = mcld::CGFT_DSOFile;
   }
 
-  if (!InputFilename.empty()) {
+  // -V
+  if (ArgVersion) {
+    outs() << "MCLinker - ";
+    outs() << mcld::MCLDInfo::version();
+    outs() << "\n";
+  }
+
+  if (ArgBitcodeFilename.empty() &&
+      (mcld::CGFT_DSOFile != ArgFileType &&
+       mcld::CGFT_EXEFile != ArgFileType)) {
+    // If the file is not given, forcefully read from stdin
+    if (ArgVerbose >= 0) {
+      errs() << "** The bitcode/llvm asm file is not given. Read from stdin.\n"
+             << "** Specify input bitcode/llvm asm file by\n\n"
+             << "          llvm-mcld -dB [the bitcode/llvm asm]\n\n";
+    }
+
+    ArgBitcodeFilename.assign("-");
+  }
+
+  if (!ArgBitcodeFilename.empty()) {
     SMDiagnostic Err;
-    M.reset(ParseIRFile(InputFilename, Err, Context));
+    M.reset(ParseIRFile(ArgBitcodeFilename.native(), Err, Context));
 
     if (M.get() == 0) {
       Err.print(argv[0], errs());
       errs() << "** Failed to to the given bitcode/llvm asm file '"
-             << InputFilename << "'. **\n";
+             << ArgBitcodeFilename.native() << "'. **\n";
       return 1;
     }
-  } else {
-    // If here, output must be dynamic shared object (mcld::CGFT_DSOFile).
-
-    // Create an empty Module
+  }
+  else {
+    // If here, output must be dynamic shared object (mcld::CGFT_DSOFile) and
+    // executable file (mcld::CGFT_EXEFile).
     M.reset(new Module("Empty Module", Context));
   }
   Module &mod = *M.get();
@@ -782,9 +1006,11 @@ int main( int argc, char* argv[] )
     std::string Err;
     TheTarget = mcld::TargetRegistry::lookupTarget(TheTriple.getTriple(), Err);
     if (TheTarget == 0) {
-      errs() << argv[0] << ": error auto-selecting target for module '"
-             << Err << "'.  Please use the -march option to explicitly "
-             << "pick a target.\n";
+      errs() << "error: auto-selecting target `" << TheTriple.getTriple()
+             << "'\n"
+             << "Please use the -march option to explicitly select a target.\n"
+             << "Example:\n"
+             << "  $ " << argv[0] << " -march=arm\n";
       return 1;
     }
   }
@@ -809,6 +1035,10 @@ int main( int argc, char* argv[] )
   case '2': OLvl = CodeGenOpt::Default; break;
   case '3': OLvl = CodeGenOpt::Aggressive; break;
   }
+
+  // set -fPIC
+  if (ArgFPIC)
+    ArgRelocModel = Reloc::PIC_;
 
   TargetOptions Options;
   Options.LessPreciseFPMADOption = EnableFPMAD;
@@ -838,21 +1068,40 @@ int main( int argc, char* argv[] )
   std::auto_ptr<mcld::LLVMTargetMachine> target_machine(
           TheTarget->createTargetMachine(TheTriple.getTriple(),
                                          MCPU, FeaturesStr, Options,
-                                         RelocModel, CMModel, OLvl));
+                                         ArgRelocModel, CMModel, OLvl));
   assert(target_machine.get() && "Could not allocate target machine!");
   mcld::LLVMTargetMachine &TheTargetMachine = *target_machine.get();
 
   TheTargetMachine.getTM().setMCUseLoc(false);
   TheTargetMachine.getTM().setMCUseCFI(false);
 
+  // Set up mcld::outs() and mcld::errs()
+  InitializeOStreams(TheTargetMachine.getLDInfo());
+
+  // Set up MsgHandler
+  OwningPtr<mcld::DiagnosticLineInfo>
+    diag_line_info(TheTarget->createDiagnosticLineInfo(*TheTarget->get(),
+                                                       TheTriple.getTriple()));
+  OwningPtr<mcld::DiagnosticPrinter>
+    diag_printer(new mcld::TextDiagnosticPrinter(mcld::errs(),
+                                                TheTargetMachine.getLDInfo()));
+
+  mcld::InitializeDiagnosticEngine(TheTargetMachine.getLDInfo(),
+                                   diag_line_info.take(),
+                                   diag_printer.get());
+
+
   // Figure out where we are going to send the output...
   OwningPtr<tool_output_file>
   Out(GetOutputStream(TheTarget->get()->getName(),
                       TheTriple.getOS(),
-                      FileType,
-                      InputFilename,
-                      OutputFilename));
-  if (!Out) return 1;
+                      ArgFileType,
+                      ArgBitcodeFilename,
+                      ArgOutputFilename));
+  if (!Out) {
+    // FIXME: show some error message pls.
+    return 1;
+  }
 
   // Build up all of the passes that we want to do to the module.
   PassManager PM;
@@ -870,7 +1119,12 @@ int main( int argc, char* argv[] )
   mcld::SectLinkerOption *LinkerOpt =
       new mcld::SectLinkerOption(TheTargetMachine.getLDInfo());
 
-  if (ProcessLinkerInputsFromCommand(*LinkerOpt)) {
+  if (!ProcessLinkerOptionsFromCommand(TheTargetMachine.getLDInfo())) {
+    errs() << argv[0] << ": failed to process linker options from command line!\n";
+    return 1;
+  }
+
+  if (!ProcessLinkerInputsFromCommand(*LinkerOpt)) {
     errs() << argv[0] << ": failed to process inputs from command line!\n";
     return 1;
   }
@@ -881,8 +1135,8 @@ int main( int argc, char* argv[] )
     // Ask the target to add backend passes as necessary.
     if( TheTargetMachine.addPassesToEmitFile(PM,
                                              FOS,
-                                             OutputFilename,
-                                             FileType,
+                                             ArgOutputFilename.native(),
+                                             ArgFileType,
                                              OLvl,
                                              LinkerOpt,
                                              NoVerify)) {
@@ -903,6 +1157,16 @@ int main( int argc, char* argv[] )
   // clean up
   delete LinkerOpt;
 
+  if (0 != diag_printer->getNumErrors()) {
+    // If we reached here, we are failing ungracefully. Run the interrupt handlers
+    // to make sure any special cleanups get done, in particular that we remove
+    // files registered with RemoveFileOnSignal.
+    llvm::sys::RunInterruptHandlers();
+    diag_printer->finish();
+    exit(1);
+  }
+
+  diag_printer->finish();
   return 0;
 }
 

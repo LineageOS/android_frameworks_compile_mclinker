@@ -6,12 +6,14 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <mcld/Config/Config.h>
 #include <mcld/MC/MCLDInfo.h>
-#include <mcld/Support/FileSystem.h>
 #include <mcld/MC/InputFactory.h>
 #include <mcld/MC/AttributeFactory.h>
 #include <mcld/MC/ContextFactory.h>
-#include <mcld/Config/Config.h>
+#include <mcld/LD/NamePool.h>
+#include <mcld/LD/StaticResolver.h>
+#include <mcld/Support/FileSystem.h>
 #include <string>
 
 using namespace mcld;
@@ -22,16 +24,17 @@ MCLDInfo::MCLDInfo(const std::string& pTripleString,
                    size_t pAttrNum,
                    size_t pInputNum)
   : m_Options(),
-    m_pBitcode(0),
-    m_Triple(pTripleString),
-    m_pStrSymPool(0)
+    m_Scripts(),
+    m_pBitcode(NULL),
+    m_Triple(pTripleString)
 {
   m_pAttrFactory = new AttributeFactory(pAttrNum);
   m_pCntxtFactory = new ContextFactory(pInputNum);
-  m_pMemAreaFactory = new MemoryAreaFactory(pInputNum);
   m_pInputFactory = new InputFactory(pInputNum, *m_pAttrFactory);
   m_pInputTree = new InputTree(*m_pInputFactory);
   m_pOutput = new mcld::Output();
+  m_pResolver = new StaticResolver();
+  m_pNamePool = new NamePool(*m_pResolver, 1024);
 }
 
 MCLDInfo::~MCLDInfo()
@@ -39,9 +42,10 @@ MCLDInfo::~MCLDInfo()
   delete m_pOutput;
   delete m_pAttrFactory;
   delete m_pCntxtFactory;
-  delete m_pMemAreaFactory;
   delete m_pInputFactory;
   delete m_pInputTree;
+  delete m_pResolver;
+  delete m_pNamePool;
 }
 
 void MCLDInfo::setBitcode(const Input& pInput)
@@ -63,5 +67,5 @@ const Input& MCLDInfo::bitcode() const
 
 const char* MCLDInfo::version()
 {
-  return mcld::internal::version;
+  return MCLD_VERSION;
 }

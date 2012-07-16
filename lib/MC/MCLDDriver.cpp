@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <mcld/MC/InputTree.h>
 #include <mcld/MC/MCLinker.h>
-#include <mcld/MC/MCLDInputTree.h>
 #include <mcld/MC/MCLDDriver.h>
 #include <mcld/MC/MCLDInfo.h>
 #include <mcld/LD/ArchiveReader.h>
@@ -15,10 +15,12 @@
 #include <mcld/LD/DynObjReader.h>
 #include <mcld/LD/ObjectWriter.h>
 #include <mcld/LD/DynObjWriter.h>
+#include <mcld/LD/ExecWriter.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/Support/RealPath.h>
+#include <mcld/Support/MemoryAreaFactory.h>
 #include <mcld/Target/TargetLDBackend.h>
-#include <llvm/Support/ErrorHandling.h>
+#include <mcld/Support/MsgHandling.h>
 
 using namespace llvm;
 using namespace mcld;
@@ -26,91 +28,83 @@ using namespace mcld;
 MCLDDriver::MCLDDriver(MCLDInfo& pLDInfo, TargetLDBackend& pLDBackend)
   : m_LDInfo(pLDInfo),
     m_LDBackend(pLDBackend),
-    m_pLinker(0) {
+    m_pLinker(NULL) {
+
 }
 
 MCLDDriver::~MCLDDriver()
 {
-  if (0 != m_pLinker)
+  if (NULL != m_pLinker)
     delete m_pLinker;
+
 }
 
-void MCLDDriver::normalize() {
-
+void MCLDDriver::normalize()
+{
+  // -----  set up inputs  ----- //
   InputTree::dfs_iterator input, inEnd = m_LDInfo.inputs().dfs_end();
   for (input = m_LDInfo.inputs().dfs_begin(); input!=inEnd; ++input) {
-    // already got type - for example, bitcode
+    // already got type - for example, bitcode or external OIR (object
+    // intermediate representation)
     if ((*input)->type() == Input::Script ||
         (*input)->type() == Input::Object ||
         (*input)->type() == Input::DynObj  ||
-        (*input)->type() == Input::Archive)
+        (*input)->type() == Input::Archive ||
+        (*input)->type() == Input::External)
       continue;
-
-
-    MemoryArea *input_memory =
-        m_LDInfo.memAreaFactory().produce((*input)->path(), O_RDONLY);
-    if ((input_memory != NULL) && input_memory->isGood()) {
-      (*input)->setMemArea(input_memory);
-    }
-    else {
-      llvm::report_fatal_error("can not open file: " + (*input)->path().native());
-      return;
-    }
 
     // is a relocatable object file
     if (m_LDBackend.getObjectReader()->isMyFormat(**input)) {
       (*input)->setType(Input::Object);
-      (*input)->setContext(m_LDInfo.contextFactory().produce((*input)->path()));
       m_LDBackend.getObjectReader()->readObject(**input);
     }
     // is a shared object file
     else if (m_LDBackend.getDynObjReader()->isMyFormat(**input)) {
       (*input)->setType(Input::DynObj);
-      (*input)->setContext(m_LDInfo.contextFactory().produce((*input)->path()));
-      (*input)->setSOName((*input)->path().native());
       m_LDBackend.getDynObjReader()->readDSO(**input);
     }
     // is an archive
     else if (m_LDBackend.getArchiveReader()->isMyFormat(*(*input))) {
       (*input)->setType(Input::Archive);
-      mcld::InputTree* archive_member = m_LDBackend.getArchiveReader()->readArchive(**input);
-      if(!archive_member)  {
-        llvm::report_fatal_error("wrong format archive" + (*input)->path().string());
+      mcld::InputTree* archive_member =
+                          m_LDBackend.getArchiveReader()->readArchive(**input);
+      if(NULL == archive_member)  {
+        error(diag::err_empty_input) << (*input)->name() << (*input)->path();
         return;
       }
 
       m_LDInfo.inputs().merge<InputTree::Inclusive>(input, *archive_member);
     }
     else {
-      llvm::report_fatal_error(llvm::Twine("can not recognize file format: ") +
-                               (*input)->path().native() +
-                               llvm::Twine("\nobject format or target machine is wrong\n"));
+      fatal(diag::err_unrecognized_input_file) << (*input)->path()
+                                               << m_LDInfo.triple().str();
     }
-  }
+  } // end of for
 }
-
 
 bool MCLDDriver::linkable() const
 {
+  // check we have input and output files
+  if (m_LDInfo.inputs().empty()) {
+    error(diag::err_no_inputs);
+    return false;
+  }
+
   // check all attributes are legal
   mcld::AttributeFactory::const_iterator attr, attrEnd = m_LDInfo.attrFactory().end();
   for (attr=m_LDInfo.attrFactory().begin(); attr!=attrEnd; ++attr) {
-    std::string error_code;
-    if (!m_LDInfo.attrFactory().constraint().isLegal((**attr), error_code)) {
-      report_fatal_error(error_code);
+    if (!m_LDInfo.attrFactory().constraint().isLegal((**attr))) {
       return false;
     }
   }
 
-
-  bool hasDynObj = false;
   // can not mix -static with shared objects
   mcld::InputTree::const_bfs_iterator input, inEnd = m_LDInfo.inputs().bfs_end();
   for (input=m_LDInfo.inputs().bfs_begin(); input!=inEnd; ++input) {
-    if ((*input)->type() == mcld::Input::DynObj ) {
-      hasDynObj = true;
+    if ((*input)->type() == mcld::Input::DynObj) {
       if((*input)->attribute()->isStatic()) {
-        report_fatal_error("Can't link shared object with -static option");
+        error(diag::err_mixed_shared_static_objects)
+                                        << (*input)->name() << (*input)->path();
         return false;
       }
     }
@@ -127,7 +121,6 @@ bool MCLDDriver::initMCLinker()
   if (0 == m_pLinker)
     m_pLinker = new MCLinker(m_LDBackend,
                              m_LDInfo,
-                             *m_LDInfo.output().context(),
                              m_SectionMap);
 
   // initialize the readers and writers
@@ -137,16 +130,32 @@ bool MCLDDriver::initMCLinker()
       !m_LDBackend.initObjectReader(*m_pLinker) ||
       !m_LDBackend.initDynObjReader(*m_pLinker) ||
       !m_LDBackend.initObjectWriter(*m_pLinker) ||
-      !m_LDBackend.initDynObjWriter(*m_pLinker))
+      !m_LDBackend.initDynObjWriter(*m_pLinker) ||
+      !m_LDBackend.initExecWriter(*m_pLinker))
     return false;
 
+  // initialize RelocationFactory
+  m_LDBackend.initRelocFactory(*m_pLinker);
+  return true;
+}
+
+/// initStdSections - initialize standard sections
+bool MCLDDriver::initStdSections()
+{
   /// initialize section mapping for standard format, target-dependent section,
   /// (and user-defined mapping)
   if (!m_SectionMap.initStdSectionMap() ||
       !m_LDBackend.initTargetSectionMap(m_SectionMap))
     return false;
 
-  // initialize standard segments and sections
+  /// A technical debt. We need to initialize section map here because
+  /// we do not separate output file and temporary data structure. So far,
+  /// MCLinker directly use output file's LDContext as the temporary data
+  /// structure. We will create a new data structure mcld::Module to collect
+  /// all temporary data structures togather.
+  m_pLinker->initSectionMap();
+
+  // initialize standard sections
   switch (m_LDInfo.output().type()) {
     case Output::DynObj: {
       // intialize standard and target-dependent sections
@@ -174,11 +183,8 @@ bool MCLDDriver::initMCLinker()
     }
   } // end of switch
 
-  // initialize target-dependent segments and sections
+  // initialize target-dependent sections
   m_LDBackend.initTargetSections(*m_pLinker);
-
-  // initialize RelocationFactory
-  m_LDBackend.initRelocFactory(*m_pLinker);
 
   return true;
 }
@@ -226,25 +232,13 @@ bool MCLDDriver::readSymbolTables()
   return true;
 }
 
-/// mergeSymbolTables - merge the symbol tables of input files into the
-/// output's symbol table.
-bool MCLDDriver::mergeSymbolTables()
-{
-  mcld::InputTree::dfs_iterator input, inEnd = m_LDInfo.inputs().dfs_end();
-  for (input=m_LDInfo.inputs().dfs_begin(); input!=inEnd; ++input) {
-    if (!m_pLinker->mergeSymbolTable(**input))
-      return false;
-  }
-  return true;
-}
-
 /// addStandardSymbols - shared object and executable files need some
 /// standard symbols
 ///   @return if there are some input symbols with the same name to the
 ///   standard symbols, return false
 bool MCLDDriver::addStandardSymbols()
 {
-  return m_LDBackend.initStandardSymbols(*m_pLinker);
+  return m_LDBackend.initStandardSymbols(*m_pLinker, m_LDInfo.output());
 }
 
 /// addTargetSymbols - some targets, such as MIPS and ARM, need some
@@ -253,7 +247,7 @@ bool MCLDDriver::addStandardSymbols()
 ///   target symbols, return false
 bool MCLDDriver::addTargetSymbols()
 {
-  m_LDBackend.initTargetSymbols(*m_pLinker);
+  m_LDBackend.initTargetSymbols(*m_pLinker, m_LDInfo.output());
   return true;
 }
 
@@ -283,6 +277,11 @@ bool MCLDDriver::prelayout()
                         *m_pLinker);
 
   m_LDBackend.allocateCommonSymbols(m_LDInfo, *m_pLinker);
+
+  /// check program interpreter - computer the name size of the runtime dyld
+  /// FIXME: check if we are doing static linking!
+  if (m_LDInfo.output().type() == Output::Exec)
+    m_LDBackend.sizeInterp(m_LDInfo.output(), m_LDInfo);
 
   /// measure NamePools - compute the size of name pool sections
   /// In ELF, will compute  the size of.symtab, .strtab, .dynsym, .dynstr,
@@ -314,22 +313,22 @@ bool MCLDDriver::postlayout()
   return true;
 }
 
-/// relocate - applying relocation entries and create relocation
-/// section in the output files
-/// Create relocation section, asking TargetLDBackend to
-/// read the relocation information into RelocationEntry
-/// and push_back into the relocation section
-bool MCLDDriver::relocate()
-{
-  return m_pLinker->applyRelocations();
-}
-
 /// finalizeSymbolValue - finalize the resolved symbol value.
 ///   Before relocate(), after layout(), MCLinker should correct value of all
 ///   symbol.
 bool MCLDDriver::finalizeSymbolValue()
 {
   return m_pLinker->finalizeSymbols();
+}
+
+/// relocate - applying relocation entries and create relocation
+/// section in the output files
+/// Create relocation section, asking TargetLDBackend to
+/// read the relocation information into RelocationEntry
+/// and push_back into the relocation section
+bool MCLDDriver::relocation()
+{
+  return m_pLinker->applyRelocations();
 }
 
 /// emitOutput - emit the output file.
@@ -342,10 +341,9 @@ bool MCLDDriver::emitOutput()
     case Output::DynObj:
       m_LDBackend.getDynObjWriter()->writeDynObj(m_LDInfo.output());
       return true;
-    /** TODO: open the executable file writer **/
-    // case Output::Exec:
-      // m_LDBackend.getExecWriter()->writeObject(m_LDInfo.output());
-      // return true;
+    case Output::Exec:
+      m_LDBackend.getExecWriter()->writeExecutable(m_LDInfo.output());
+      return true;
   }
   return false;
 }
@@ -354,5 +352,9 @@ bool MCLDDriver::emitOutput()
 bool MCLDDriver::postProcessing()
 {
   m_pLinker->syncRelocationResult();
+
+  m_LDBackend.postProcessing(m_LDInfo.output(),
+                             m_LDInfo,
+                             *m_pLinker);
   return true;
 }

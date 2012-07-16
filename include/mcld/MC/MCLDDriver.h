@@ -19,12 +19,14 @@
 #endif
 
 #include <mcld/LD/SectionMap.h>
+
 namespace mcld
 {
 
 class MCLinker;
 class MCLDInfo;
 class TargetLDBackend;
+class MemoryAreaFactory;
 
 //===----------------------------------------------------------------------===//
 /// MCLDDriver - MCLDDriver prepares parameters for MCLinker.
@@ -35,6 +37,13 @@ public:
   MCLDDriver(MCLDInfo& pLDInfo, TargetLDBackend& pLDBackend);
   ~MCLDDriver();
 
+  /// initMCLinker - initialize MCLinker
+  ///  Connect all components in MCLinker
+  bool initMCLinker();
+
+  /// initStdSections - initialize standard sections of the output file.
+  bool initStdSections();
+
   /// normalize - normalize the input files
   void normalize();
 
@@ -43,10 +52,6 @@ public:
   ///  - check the Attributes are not violate the constaint
   ///  - check every Input has a correct Attribute
   bool linkable() const;
-
-  /// initMCLinker - initialize MCLinker
-  ///  Connect all components in MCLinker
-  bool initMCLinker();
 
   /// readSections - read all input section headers
   bool readSections();
@@ -95,7 +100,7 @@ public:
   /// Create relocation section, asking TargetLDBackend to
   /// read the relocation information into RelocationEntry
   /// and push_back into the relocation section
-  bool relocate();
+  bool relocation();
 
   /// finalizeSymbolValue - finalize the symbol value
   bool finalizeSymbolValue();
@@ -105,6 +110,18 @@ public:
 
   /// postProcessing - do modificatiion after all processes
   bool postProcessing();
+
+  /// getLinker - get internal MCLinker object
+  MCLinker* getLinker()
+  { return m_pLinker; }
+
+  /// getLinker - get internal MCLinker object
+  const MCLinker* getLinker() const
+  { return m_pLinker; }
+
+  /// hasInitLinker - has Linker been initialized?
+  bool hasInitLinker() const
+  { return (NULL != m_pLinker); }
 
 private:
   MCLDInfo& m_LDInfo;

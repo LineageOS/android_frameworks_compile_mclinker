@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef TARGETSELECT_H
-#define TARGETSELECT_H
+#ifndef MCLD_TARGET_SELECT_H
+#define MCLD_TARGET_SELECT_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -32,6 +32,11 @@ extern "C" {
   // Declare all of the available target-specific linker
 #define LLVM_LINKER(TargetName) void LLVMInitialize##TargetName##LDBackend();
 #include "mcld/Config/Linkers.def"
+
+  // Declare all of the available target-specific diagnostic line infomation
+#define LLVM_LINKER(TargetName) void LLVMInitialize##TargetName##DiagnosticLineInfo();
+#include "mcld/Config/Linkers.def"
+
 } // extern "C"
 
 namespace mcld
@@ -56,6 +61,9 @@ namespace mcld
 
 #define LLVM_TARGET(TargetName) LLVMInitialize##TargetName##LDTarget();
 #include "mcld/Config/Targets.def"
+
+#define LLVM_TARGET(TargetName) LLVMInitialize##TargetName##LDBackend();
+#include "mcld/Config/Targets.def"
   }
 
   /// InitializeAllLinkers - The main program should call this function if it
@@ -66,8 +74,13 @@ namespace mcld
   inline void InitializeAllLinkers() {
 #define LLVM_LINKER(TargetName) LLVMInitialize##TargetName##SectLinker();
 #include "mcld/Config/Linkers.def"
+  }
 
-#define LLVM_LINKER(TargetName) LLVMInitialize##TargetName##LDBackend();
+  /// InitializeMsgHandler - The main program should call this function if it
+  /// wants to print linker-specific messages. To make them available via the
+  /// TargetRegistry.
+  inline void InitializeAllDiagnostics() {
+#define LLVM_LINKER(TargetName)  LLVMInitialize##TargetName##DiagnosticLineInfo();
 #include "mcld/Config/Linkers.def"
   }
 

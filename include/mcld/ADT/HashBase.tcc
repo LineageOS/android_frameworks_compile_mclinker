@@ -247,3 +247,4 @@ void HashTableImpl<HashEntryTy, HashFunctionTy>::doRehash(unsigned int pNewSize)
   m_NumOfBuckets = pNewSize;
   m_NumOfTombstones = 0;
 }
+

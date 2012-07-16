@@ -14,6 +14,7 @@
 #include <mcld/MC/MCLDInfo.h>
 #include <mcld/MC/MCLinker.h>
 #include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MsgHandling.h>
 #include <mcld/Support/TargetRegistry.h>
 #include <mcld/Target/OutputRelocSection.h>
 
@@ -66,11 +67,24 @@ bool MipsGNULDBackend::initTargetSectionMap(SectionMap& pSectionMap)
 
 void MipsGNULDBackend::initTargetSections(MCLinker& pLinker)
 {
-  // Nothing to do because we do not support
-  // any MIPS specific sections now.
+  // Set up .dynamic
+  ELFFileFormat* file_format = NULL;
+  switch(pLinker.getLDInfo().output().type()) {
+    case Output::DynObj:
+      file_format = getDynObjFileFormat();
+      break;
+    case Output::Exec:
+      file_format = getExecFileFormat();
+      break;
+    case Output::Object:
+    default:
+      // TODO: not support yet
+      return;
+  }
+  file_format->getDynamic().setFlag(llvm::ELF::SHF_ALLOC);
 }
 
-void MipsGNULDBackend::initTargetSymbols(MCLinker& pLinker)
+void MipsGNULDBackend::initTargetSymbols(MCLinker& pLinker, const Output& pOutput)
 {
   // Define the symbol _GLOBAL_OFFSET_TABLE_ if there is a symbol with the
   // same name in input
@@ -120,11 +134,20 @@ void MipsGNULDBackend::scanRelocation(Relocation& pReloc,
                                       const LDSymbol& pInputSym,
                                       MCLinker& pLinker,
                                       const MCLDInfo& pLDInfo,
-                                      const Output& pOutput)
+                                      const Output& pOutput,
+                                      const LDSection& pSection)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   assert(NULL != rsym && "ResolveInfo of relocation not set while scanRelocation");
+
+  assert(NULL != pSection.getLink());
+  if (0 == (pSection.getLink()->flag() & llvm::ELF::SHF_ALLOC)) {
+    if (rsym->isLocal()) {
+      updateAddend(pReloc, pInputSym, pLinker.getLayout());
+    }
+    return;
+  }
 
   // A refernece to symbol _GLOBAL_OFFSET_TABLE_ implies
   // that a .got section is needed.
@@ -134,7 +157,15 @@ void MipsGNULDBackend::scanRelocation(Relocation& pReloc,
     }
   }
 
-  if (rsym->isLocal())
+  // Skip relocation against _gp_disp
+  if (strcmp("_gp_disp", pInputSym.name()) == 0)
+    return;
+
+  // We test isLocal or if pInputSym is not a dynamic symbol
+  // We assume -Bsymbolic to bind all symbols internaly via !rsym->isDyn()
+  // Don't put undef symbols into local entries.
+  if ((rsym->isLocal() || !isDynamicSymbol(pInputSym, pOutput) ||
+      !rsym->isDyn()) && !rsym->isUndef())
     scanLocalReloc(pReloc, pInputSym, pLinker, pLDInfo, pOutput);
   else
     scanGlobalReloc(pReloc, pInputSym, pLinker, pLDInfo, pOutput);
@@ -177,6 +208,11 @@ unsigned int MipsGNULDBackend::bitclass() const
   return 32;
 }
 
+uint64_t MipsGNULDBackend::defaultTextSegmentAddr() const
+{
+  return 0x80000;
+}
+
 void MipsGNULDBackend::doPreLayout(const Output& pOutput,
                                    const MCLDInfo& pInfo,
                                    MCLinker& pLinker)
@@ -191,9 +227,6 @@ void MipsGNULDBackend::doPostLayout(const Output& pOutput,
                                     const MCLDInfo& pInfo,
                                     MCLinker& pLinker)
 {
-  // emit program headers
-  if (pOutput.type() == Output::DynObj || pOutput.type() == Output::Exec)
-    emitProgramHdrs(pLinker.getLDInfo().output());
 }
 
 /// dynamic - the dynamic section of the target machine.
@@ -217,11 +250,12 @@ const MipsELFDynamic& MipsGNULDBackend::dynamic() const
 uint64_t MipsGNULDBackend::emitSectionData(const Output& pOutput,
                                            const LDSection& pSection,
                                            const MCLDInfo& pInfo,
+                                           const Layout& pLayout,
                                            MemoryRegion& pRegion) const
 {
   assert(pRegion.size() && "Size of MemoryRegion is zero!");
 
-  ELFFileFormat* file_format = getOutputFormat(pOutput);
+  const ELFFileFormat* file_format = getOutputFormat(pOutput);
 
   if (&pSection == &(file_format->getGOT())) {
     assert(NULL != m_pGOT && "emitSectionData failed, m_pGOT is NULL!");
@@ -229,17 +263,15 @@ uint64_t MipsGNULDBackend::emitSectionData(const Output& pOutput,
     return result;
   }
 
-  llvm::report_fatal_error(llvm::Twine("Unable to emit section `") +
-                           pSection.name() +
-                           llvm::Twine("'.\n"));
+  fatal(diag::unrecognized_output_sectoin)
+          << pSection.name()
+          << "mclinker@googlegroups.com";
   return 0;
 }
-/// isGOTSymbol - return true if the symbol is the GOT entry.
-bool MipsGNULDBackend::isGOTSymbol(const LDSymbol& pSymbol) const
+/// isGlobalGOTSymbol - return true if the symbol is the global GOT entry.
+bool MipsGNULDBackend::isGlobalGOTSymbol(const LDSymbol& pSymbol) const
 {
-  return std::find(m_LocalGOTSyms.begin(),
-                   m_LocalGOTSyms.end(), &pSymbol) != m_LocalGOTSyms.end() ||
-         std::find(m_GlobalGOTSyms.begin(),
+  return std::find(m_GlobalGOTSyms.begin(),
                    m_GlobalGOTSyms.end(), &pSymbol) != m_GlobalGOTSyms.end();
 }
 
@@ -326,7 +358,7 @@ void MipsGNULDBackend::emitDynNamePools(Output& pOutput,
     if (!isDynamicSymbol(**symbol, pOutput))
       continue;
 
-    if (isGOTSymbol(**symbol))
+    if (isGlobalGOTSymbol(**symbol))
       continue;
 
     emitDynamicSymbol(symtab32[symtabIdx], pOutput, **symbol, pLayout, strtab,
@@ -341,6 +373,12 @@ void MipsGNULDBackend::emitDynNamePools(Output& pOutput,
   for (std::vector<LDSymbol*>::const_iterator symbol = m_GlobalGOTSyms.begin(),
        symbol_end = m_GlobalGOTSyms.end();
        symbol != symbol_end; ++symbol) {
+
+    // Make sure this golbal GOT entry is a dynamic symbol.
+    // If not, something is wrong earlier when putting this symbol into
+    //  global GOT.
+    if (!isDynamicSymbol(**symbol, pOutput))
+      fatal(diag::mips_got_symbol) << (*symbol)->name();
 
     emitDynamicSymbol(symtab32[symtabIdx], pOutput, **symbol, pLayout, strtab,
                       strtabsize, symtabIdx);
@@ -382,7 +420,8 @@ void MipsGNULDBackend::emitDynNamePools(Output& pOutput,
 
   // emit soname
   // initialize value of ELF .dynamic section
-  dynamic().applySoname(strtabsize);
+  if (Output::DynObj == pOutput.type())
+    dynamic().applySoname(strtabsize);
   dynamic().applyEntries(pLDInfo, *file_format);
   dynamic().emit(dyn_sect, *dyn_region);
 
@@ -445,9 +484,10 @@ const OutputRelocSection& MipsGNULDBackend::getRelDyn() const
 
 unsigned int
 MipsGNULDBackend::getTargetSectionOrder(const Output& pOutput,
-                                        const LDSection& pSectHdr) const
+                                        const LDSection& pSectHdr,
+                                        const MCLDInfo& pInfo) const
 {
-  ELFFileFormat* file_format = getOutputFormat(pOutput);
+  const ELFFileFormat* file_format = getOutputFormat(pOutput);
 
   if (&pSectHdr == &file_format->getGOT())
     return SHO_DATA;
@@ -456,15 +496,10 @@ MipsGNULDBackend::getTargetSectionOrder(const Output& pOutput,
 }
 
 /// finalizeSymbol - finalize the symbol value
-/// If the symbol's reserved field is not zero, MCLinker will call back this
-/// function to ask the final value of the symbol
-bool MipsGNULDBackend::finalizeSymbol(LDSymbol& pSymbol) const
+bool MipsGNULDBackend::finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput)
 {
-  if (&pSymbol == m_pGpDispSymbol) {
-    m_pGpDispSymbol->setValue(m_pGOT->getSection().addr() + 0x7FF0);
-    return true;
-  }
-  return false;
+  m_pGpDispSymbol->setValue(m_pGOT->getSection().addr() + 0x7FF0);
+  return true;
 }
 
 /// allocateCommonSymbols - allocate common symbols in the corresponding
@@ -474,96 +509,112 @@ bool MipsGNULDBackend::finalizeSymbol(LDSymbol& pSymbol) const
 bool
 MipsGNULDBackend::allocateCommonSymbols(const MCLDInfo& pInfo, MCLinker& pLinker) const
 {
-  // SymbolCategory contains all symbols that must emit to the output files.
-  // We are not like Google gold linker, we don't remember symbols before symbol
-  // resolution. All symbols in SymbolCategory are already resolved. Therefore, we
-  // don't need to care about some symbols may be changed its category due to symbol
-  // resolution.
   SymbolCategory& symbol_list = pLinker.getOutputSymbols();
 
   if (symbol_list.emptyCommons() && symbol_list.emptyLocals())
     return true;
 
-  // addralign := max value of all common symbols
-  uint64_t addralign = 0x0;
-
-  // Due to the visibility, some common symbols may be forcefully local.
-  SymbolCategory::iterator com_sym, com_end = symbol_list.localEnd();
-  for (com_sym = symbol_list.localBegin(); com_sym != com_end; ++com_sym) {
-    if (ResolveInfo::Common == (*com_sym)->desc()) {
-      if ((*com_sym)->value() > addralign)
-        addralign = (*com_sym)->value();
-    }
-  }
-
-  // global common symbols.
-  com_end = symbol_list.commonEnd();
-  for (com_sym = symbol_list.commonBegin(); com_sym != com_end; ++com_sym) {
-    if ((*com_sym)->value() > addralign)
-      addralign = (*com_sym)->value();
-  }
+  SymbolCategory::iterator com_sym, com_end;
 
   // FIXME: If the order of common symbols is defined, then sort common symbols
-  // com_sym = symbol_list.commonBegin();
   // std::sort(com_sym, com_end, some kind of order);
 
   // get or create corresponding BSS LDSection
-  LDSection* bss_sect_hdr = NULL;
-  if (ResolveInfo::ThreadLocal == (*com_sym)->type()) {
-    bss_sect_hdr = &pLinker.getOrCreateOutputSectHdr(
+  LDSection* bss_sect = &pLinker.getOrCreateOutputSectHdr(".bss",
+                                   LDFileFormat::BSS,
+                                   llvm::ELF::SHT_NOBITS,
+                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
+
+  LDSection* tbss_sect = &pLinker.getOrCreateOutputSectHdr(
                                    ".tbss",
                                    LDFileFormat::BSS,
                                    llvm::ELF::SHT_NOBITS,
                                    llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
-  }
-  else {
-    bss_sect_hdr = &pLinker.getOrCreateOutputSectHdr(".bss",
+
+  // FIXME: .sbss amd .lbss currently unused.
+  /*
+  LDSection* sbss_sect = &pLinker.getOrCreateOutputSectHdr(
+                                   ".sbss",
                                    LDFileFormat::BSS,
                                    llvm::ELF::SHT_NOBITS,
-                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
-  }
+                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC |
+                                   llvm::ELF::SHF_MIPS_GPREL);
+
+  LDSection* lbss_sect = &pLinker.getOrCreateOutputSectHdr(
+                                   ".lbss",
+                                   LDFileFormat::BSS,
+                                   llvm::ELF::SHT_NOBITS,
+                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC |
+                                   llvm::ELF::SHF_MIPS_LOCAL);
+  */
+
+  assert(NULL != bss_sect && NULL != tbss_sect);
 
   // get or create corresponding BSS MCSectionData
-  assert(NULL != bss_sect_hdr);
-  llvm::MCSectionData& bss_section = pLinker.getOrCreateSectData(*bss_sect_hdr);
+  llvm::MCSectionData& bss_sect_data = pLinker.getOrCreateSectData(*bss_sect);
+  llvm::MCSectionData& tbss_sect_data = pLinker.getOrCreateSectData(*tbss_sect);
 
-  // allocate all common symbols
-  uint64_t offset = bss_sect_hdr->size();
+  // remember original BSS size
+  uint64_t bss_offset  = bss_sect->size();
+  uint64_t tbss_offset = tbss_sect->size();
 
   // allocate all local common symbols
   com_end = symbol_list.localEnd();
+
   for (com_sym = symbol_list.localBegin(); com_sym != com_end; ++com_sym) {
     if (ResolveInfo::Common == (*com_sym)->desc()) {
-      alignAddress(offset, (*com_sym)->value());
       // We have to reset the description of the symbol here. When doing
       // incremental linking, the output relocatable object may have common
       // symbols. Therefore, we can not treat common symbols as normal symbols
       // when emitting the regular name pools. We must change the symbols'
       // description here.
       (*com_sym)->resolveInfo()->setDesc(ResolveInfo::Define);
-      llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size(), &bss_section);
+      llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size());
       (*com_sym)->setFragmentRef(new MCFragmentRef(*frag, 0));
-      offset += (*com_sym)->size();
+
+      if (ResolveInfo::ThreadLocal == (*com_sym)->type()) {
+        // allocate TLS common symbol in tbss section
+        tbss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                          tbss_sect_data,
+                                                          (*com_sym)->value());
+      }
+      // FIXME: how to identify small and large common symbols?
+      else {
+        bss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                         bss_sect_data,
+                                                         (*com_sym)->value());
+      }
     }
   }
 
   // allocate all global common symbols
   com_end = symbol_list.commonEnd();
   for (com_sym = symbol_list.commonBegin(); com_sym != com_end; ++com_sym) {
-    alignAddress(offset, (*com_sym)->value());
-
     // We have to reset the description of the symbol here. When doing
     // incremental linking, the output relocatable object may have common
     // symbols. Therefore, we can not treat common symbols as normal symbols
     // when emitting the regular name pools. We must change the symbols'
     // description here.
     (*com_sym)->resolveInfo()->setDesc(ResolveInfo::Define);
-    llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size(), &bss_section);
+    llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size());
     (*com_sym)->setFragmentRef(new MCFragmentRef(*frag, 0));
-    offset += (*com_sym)->size();
+
+    if (ResolveInfo::ThreadLocal == (*com_sym)->type()) {
+      // allocate TLS common symbol in tbss section
+      tbss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                        tbss_sect_data,
+                                                        (*com_sym)->value());
+    }
+    // FIXME: how to identify small and large common symbols?
+    else {
+      bss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                       bss_sect_data,
+                                                       (*com_sym)->value());
+    }
   }
 
-  bss_sect_hdr->setSize(offset);
+  bss_sect->setSize(bss_offset);
+  tbss_sect->setSize(tbss_offset);
   symbol_list.changeCommonsToGlobal();
   return true;
 }
@@ -573,7 +624,7 @@ void MipsGNULDBackend::updateAddend(Relocation& pReloc,
                                    const Layout& pLayout) const
 {
   // Update value keep in addend if we meet a section symbol
-  if(pReloc.symInfo()->type() == ResolveInfo::Section) {
+  if (pReloc.symInfo()->type() == ResolveInfo::Section) {
     pReloc.setAddend(pLayout.getOutputOffset(
                      *pInputSym.fragRef()) + pReloc.addend());
   }
@@ -604,6 +655,12 @@ void MipsGNULDBackend::scanLocalReloc(Relocation& pReloc,
 
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
         rsym->setReserved(rsym->reserved() | ReserveRel);
+
+        // Remeber this rsym is a local GOT entry (as if it needs an entry).
+        // Actually we don't allocate an GOT entry.
+        if (NULL == m_pGOT)
+          createGOT(pLinker, pOutput);
+        m_pGOT->setLocal(rsym);
       }
       break;
     case llvm::ELF::R_MIPS_REL32:
@@ -637,10 +694,19 @@ void MipsGNULDBackend::scanLocalReloc(Relocation& pReloc,
       if (NULL == m_pGOT)
         createGOT(pLinker, pOutput);
 
+      // For got16 section based relocations, we need to reserve got entries.
+      if (rsym->type() == ResolveInfo::Section) {
+        m_pGOT->reserveLocalEntry();
+        // Remeber this rsym is a local GOT entry
+        m_pGOT->setLocal(rsym);
+        return;
+      }
+
       if (!(rsym->reserved() & MipsGNULDBackend::ReserveGot)) {
         m_pGOT->reserveLocalEntry();
         rsym->setReserved(rsym->reserved() | ReserveGot);
-        m_LocalGOTSyms.push_back(rsym->outSymbol());
+        // Remeber this rsym is a local GOT entry
+        m_pGOT->setLocal(rsym);
       }
       break;
     case llvm::ELF::R_MIPS_GPREL32:
@@ -668,11 +734,8 @@ void MipsGNULDBackend::scanLocalReloc(Relocation& pReloc,
     case llvm::ELF::R_MIPS_TLS_TPREL_LO16:
       break;
     default:
-      llvm::report_fatal_error(llvm::Twine("Unknown relocation ") +
-                               llvm::Twine(pReloc.type()) +
-                               llvm::Twine("for the local symbol `") +
-                               pReloc.symInfo()->name() +
-                               llvm::Twine("'."));
+      fatal(diag::unknown_relocation) << (int)pReloc.type()
+                                      << pReloc.symInfo()->name();
   }
 }
 
@@ -701,12 +764,18 @@ void MipsGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_MIPS_64:
     case llvm::ELF::R_MIPS_HI16:
     case llvm::ELF::R_MIPS_LO16:
-      if (isSymbolNeedsDynRel(*rsym, pOutput)) {
+      if (symbolNeedsDynRel(*rsym, false, pLDInfo, pOutput, true)) {
         if (NULL == m_pRelDyn)
           createRelDyn(pLinker, pOutput);
 
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
         rsym->setReserved(rsym->reserved() | ReserveRel);
+
+        // Remeber this rsym is a global GOT entry (as if it needs an entry).
+        // Actually we don't allocate an GOT entry.
+        if (NULL == m_pGOT)
+          createGOT(pLinker, pOutput);
+        m_pGOT->setGlobal(rsym);
       }
       break;
     case llvm::ELF::R_MIPS_GOT16:
@@ -725,16 +794,14 @@ void MipsGNULDBackend::scanGlobalReloc(Relocation& pReloc,
         m_pGOT->reserveGlobalEntry();
         rsym->setReserved(rsym->reserved() | ReserveGot);
         m_GlobalGOTSyms.push_back(rsym->outSymbol());
+        // Remeber this rsym is a global GOT entry
+        m_pGOT->setGlobal(rsym);
       }
       break;
     case llvm::ELF::R_MIPS_LITERAL:
     case llvm::ELF::R_MIPS_GPREL32:
-      llvm::report_fatal_error(llvm::Twine("Relocation ") +
-                               llvm::Twine(pReloc.type()) +
-                               llvm::Twine(" is not defined for the "
-                                           "global symbol `") +
-                               pReloc.symInfo()->name() +
-                               llvm::Twine("'."));
+      fatal(diag::invalid_global_relocation) << (int)pReloc.type()
+                                             << pReloc.symInfo()->name();
       break;
     case llvm::ELF::R_MIPS_GPREL16:
       break;
@@ -766,43 +833,12 @@ void MipsGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_MIPS_COPY:
     case llvm::ELF::R_MIPS_GLOB_DAT:
     case llvm::ELF::R_MIPS_JUMP_SLOT:
-      llvm::report_fatal_error(llvm::Twine("Relocation ") +
-                               llvm::Twine(pReloc.type()) +
-                               llvm::Twine("for the global symbol `") +
-                               pReloc.symInfo()->name() +
-                               llvm::Twine("' should only be seen "
-                                           "by the dynamic linker"));
+      fatal(diag::dynamic_relocation) << (int)pReloc.type();
       break;
     default:
-      llvm::report_fatal_error(llvm::Twine("Unknown relocation ") +
-                               llvm::Twine(pReloc.type()) +
-                               llvm::Twine("for the global symbol `") +
-                               pReloc.symInfo()->name() +
-                               llvm::Twine("'."));
+      fatal(diag::unknown_relocation) << (int)pReloc.type()
+                                      << pReloc.symInfo()->name();
   }
-}
-
-bool MipsGNULDBackend::isSymbolNeedsPLT(ResolveInfo& pSym,
-                                        const Output& pOutput) const
-{
-  return (Output::DynObj == pOutput.type() &&
-         ResolveInfo::Function == pSym.type() &&
-         (pSym.isDyn() || pSym.isUndef()));
-}
-
-bool MipsGNULDBackend::isSymbolNeedsDynRel(ResolveInfo& pSym,
-                                           const Output& pOutput) const
-{
-  if(pSym.isUndef() && Output::Exec == pOutput.type())
-    return false;
-  if(pSym.isAbsolute())
-    return false;
-  if(Output::DynObj == pOutput.type())
-    return true;
-  if(pSym.isDyn() || pSym.isUndef())
-    return true;
-
-  return false;
 }
 
 void MipsGNULDBackend::createGOT(MCLinker& pLinker, const Output& pOutput)
@@ -813,7 +849,7 @@ void MipsGNULDBackend::createGOT(MCLinker& pLinker, const Output& pOutput)
   m_pGOT = new MipsGOT(got, pLinker.getOrCreateSectData(got));
 
   // define symbol _GLOBAL_OFFSET_TABLE_ when .got create
-  if( m_pGOTSymbol != NULL ) {
+  if ( m_pGOTSymbol != NULL ) {
     pLinker.defineSymbol<MCLinker::Force, MCLinker::Unresolve>(
                      "_GLOBAL_OFFSET_TABLE_",
                      false,
@@ -849,22 +885,6 @@ void MipsGNULDBackend::createRelDyn(MCLinker& pLinker, const Output& pOutput)
   m_pRelDyn = new OutputRelocSection(reldyn,
                                      pLinker.getOrCreateSectData(reldyn),
                                      8);
-}
-
-ELFFileFormat* MipsGNULDBackend::getOutputFormat(const Output& pOutput) const
-{
-  switch (pOutput.type()) {
-    case Output::DynObj:
-      return getDynObjFileFormat();
-    case Output::Exec:
-      return getExecFileFormat();
-    case Output::Object:
-      return NULL;
-    default:
-      llvm::report_fatal_error(llvm::Twine("Unsupported output file format: ") +
-                               llvm::Twine(pOutput.type()));
-      return NULL;
-  }
 }
 
 //===----------------------------------------------------------------------===//

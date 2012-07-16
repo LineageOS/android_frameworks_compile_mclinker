@@ -18,7 +18,7 @@ namespace mcld
 {
 
 class ResolveInfo;
-class StrSymPool;
+class NamePool;
 
 /** \class Resolver
  *  \brief Resolver binds a symbol reference from one file to a symbol
@@ -51,49 +51,32 @@ public:
   };
 
 public:
-  Resolver();
-
-  Resolver(const Resolver& pCopy);
-
   virtual ~Resolver();
 
   /// shouldOverride - Can resolver override the symbol pOld by the symbol pNew?
   /// @return the action should be taken.
   /// @param pOld the symbol which may be overridden.
   /// @param pNew the symbol which is used to replace pOld
-  virtual unsigned int resolve(ResolveInfo & __restrict__ pOld,
-                               const ResolveInfo & __restrict__ pNew,
-                               bool &pOverride) = 0;
+  virtual bool resolve(ResolveInfo & __restrict__ pOld,
+                       const ResolveInfo & __restrict__ pNew,
+                       bool &pOverride) const = 0;
 
   /// resolveAgain - Can override by derived classes.
   /// @return the pointer to resolved ResolveInfo
   /// @return is the symbol existent?
-  virtual void resolveAgain(StrSymPool& pStrSymPool,
+  virtual void resolveAgain(NamePool& pNamePool,
                               unsigned int pAction,
                               ResolveInfo& __restrict__ pOld,
                               const ResolveInfo& __restrict__ pNew,
-                              Result& pResult) {
+                              Result& pResult) const {
     pResult.info = NULL;
     pResult.existent = false;
     pResult.overriden = false;
   }
 
-  const std::string& mesg() const
-  { return m_Mesg; }
-
-  void clearMesg();
-
-  Resolver* clone() const {
-    return doClone();
-  }
-
-protected:
-  std::string m_Mesg;
-
-private:
-  virtual Resolver* doClone() const = 0;
 };
 
 } // namespace of mcld
 
 #endif
+

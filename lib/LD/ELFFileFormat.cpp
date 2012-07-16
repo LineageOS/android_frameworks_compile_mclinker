@@ -57,7 +57,8 @@ ELFFileFormat::ELFFileFormat(GNULDBackend& pBackend)
     f_pJCR(NULL),
     f_pNoteABITag(NULL),
     f_pStab(NULL),
-    f_pStabStr(NULL) {
+    f_pStabStr(NULL),
+    f_pStack(NULL) {
 
 }
 
@@ -186,7 +187,7 @@ void ELFFileFormat::initObjectFormat(MCLinker& pLinker)
   f_pDataRelRo      = &pLinker.getOrCreateOutputSectHdr(".data.rel.ro",
                                               LDFileFormat::Regular,
                                               llvm::ELF::SHT_PROGBITS,
-                                              llvm::ELF::SHF_ALLOC,
+                                              llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
                                               0x1);
   f_pDtors          = &pLinker.getOrCreateOutputSectHdr(".dtors",
                                               LDFileFormat::Regular,
@@ -194,20 +195,15 @@ void ELFFileFormat::initObjectFormat(MCLinker& pLinker)
                                               llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
                                               0x1);
   f_pEhFrame        = &pLinker.getOrCreateOutputSectHdr(".eh_frame",
-                                              LDFileFormat::Exception,
+                                              LDFileFormat::EhFrame,
                                               llvm::ELF::SHT_PROGBITS,
                                               llvm::ELF::SHF_ALLOC,
-                                              0x1);
-  f_pEhFrameHdr     = &pLinker.getOrCreateOutputSectHdr(".eh_frame_hdr",
-                                              LDFileFormat::Exception,
-                                              llvm::ELF::SHT_PROGBITS,
-                                              llvm::ELF::SHF_ALLOC,
-                                              0x1);
+                                              0x4);
   f_pGCCExceptTable = &pLinker.getOrCreateOutputSectHdr(".gcc_except_table",
-                                              LDFileFormat::Exception,
+                                              LDFileFormat::GCCExceptTable,
                                               llvm::ELF::SHT_PROGBITS,
                                               llvm::ELF::SHF_ALLOC,
-                                              0x1);
+                                              0x4);
   f_pGNUVersion     = &pLinker.getOrCreateOutputSectHdr(".gnu.version",
                                               LDFileFormat::Version,
                                               llvm::ELF::SHT_GNU_versym,

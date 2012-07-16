@@ -9,13 +9,8 @@
 #ifndef MCLD_CONFIG_H
 #define MCLD_CONFIG_H
 
-namespace mcld {
-namespace internal {
-
-static const char* version="@MCLD_VERSION@";
-
-} // namespace of internal
-} // namespace of mcld
+#define @MCLD_ON_PLATFORM@ 1
+#define MCLD_VERSION "@MCLD_VERSION@"
 
 #endif
 

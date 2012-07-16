@@ -11,12 +11,14 @@
 #include <mcld/Target/GNULDBackend.h>
 #include <mcld/MC/MCLDInfo.h>
 #include <mcld/MC/MCLDOutput.h>
-#include <mcld/MC/MCLDInputTree.h>
+#include <mcld/MC/InputTree.h>
 #include <mcld/MC/SymbolCategory.h>
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/LD/Layout.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MsgHandling.h>
+#include <mcld/MC/MCLinker.h>
 #include <string>
 #include <cstring>
 #include <cassert>
@@ -26,36 +28,57 @@ using namespace mcld;
 //===----------------------------------------------------------------------===//
 // GNULDBackend
 GNULDBackend::GNULDBackend()
-  : m_pArchiveReader(0),
-    m_pObjectReader(0),
-    m_pDynObjReader(0),
-    m_pObjectWriter(0),
-    m_pDynObjWriter(0),
-    m_pDynObjFileFormat(0),
-    m_pExecFileFormat(0),
-    m_ELFSegmentTable(9)// magic number
-{
+  : m_pArchiveReader(NULL),
+    m_pObjectReader(NULL),
+    m_pDynObjReader(NULL),
+    m_pObjectWriter(NULL),
+    m_pDynObjWriter(NULL),
+    m_pExecWriter(NULL),
+    m_pDynObjFileFormat(NULL),
+    m_pExecFileFormat(NULL),
+    m_ELFSegmentTable(9), // magic number
+    m_pEhFrameHdr(NULL),
+    f_pPreInitArrayStart(NULL),
+    f_pPreInitArrayEnd(NULL),
+    f_pInitArrayStart(NULL),
+    f_pInitArrayEnd(NULL),
+    f_pFiniArrayStart(NULL),
+    f_pFiniArrayEnd(NULL),
+    f_pStack(NULL),
+    f_pExecutableStart(NULL),
+    f_pEText(NULL),
+    f_p_EText(NULL),
+    f_p__EText(NULL),
+    f_pEData(NULL),
+    f_p_EData(NULL),
+    f_pBSSStart(NULL),
+    f_pEnd(NULL),
+    f_p_End(NULL) {
   m_pSymIndexMap = new HashTableType(1024);
 }
 
 GNULDBackend::~GNULDBackend()
 {
-  if (m_pArchiveReader)
+  if (NULL != m_pArchiveReader)
     delete m_pArchiveReader;
-  if (m_pObjectReader)
+  if (NULL != m_pObjectReader)
     delete m_pObjectReader;
-  if (m_pDynObjReader)
+  if (NULL != m_pDynObjReader)
     delete m_pDynObjReader;
-  if (m_pObjectWriter)
+  if (NULL != m_pObjectWriter)
     delete m_pObjectWriter;
-  if (m_pDynObjWriter)
+  if (NULL != m_pDynObjWriter)
     delete m_pDynObjWriter;
-  if (m_pDynObjFileFormat)
+  if (NULL != m_pExecWriter)
+    delete m_pExecWriter;
+  if (NULL != m_pDynObjFileFormat)
     delete m_pDynObjFileFormat;
-  if (m_pExecFileFormat)
+  if (NULL != m_pExecFileFormat)
     delete m_pExecFileFormat;
-  if(m_pSymIndexMap)
+  if (NULL != m_pSymIndexMap)
     delete m_pSymIndexMap;
+  if (NULL != m_pEhFrameHdr)
+    delete m_pEhFrameHdr;
 }
 
 size_t GNULDBackend::sectionStartOffset() const
@@ -64,13 +87,20 @@ size_t GNULDBackend::sectionStartOffset() const
   return sizeof(llvm::ELF::Elf64_Ehdr)+10*sizeof(llvm::ELF::Elf64_Phdr);
 }
 
+uint64_t GNULDBackend::segmentStartAddr(const Output& pOutput,
+                                        const MCLDInfo& pInfo) const
+{
+  // TODO: handle the user option: -TText=
+  if (isOutputPIC(pOutput, pInfo))
+    return 0x0;
+  else
+    return defaultTextSegmentAddr();
+}
+
 bool GNULDBackend::initArchiveReader(MCLinker&, MCLDInfo &pInfo)
 {
   if (0 == m_pArchiveReader)
-  {
-    LDReader::Endian isLittleEndian = LDReader::LittleEndian;
-    m_pArchiveReader = new GNUArchiveReader(pInfo, isLittleEndian);
-  }
+    m_pArchiveReader = new GNUArchiveReader(pInfo);
   return true;
 }
 
@@ -96,8 +126,15 @@ bool GNULDBackend::initObjectWriter(MCLinker&)
 
 bool GNULDBackend::initDynObjWriter(MCLinker& pLinker)
 {
-  if (0 == m_pDynObjWriter)
+  if (NULL == m_pDynObjWriter)
     m_pDynObjWriter = new ELFDynObjWriter(*this, pLinker);
+  return true;
+}
+
+bool GNULDBackend::initExecWriter(MCLinker& pLinker)
+{
+  if (NULL == m_pExecWriter)
+    m_pExecWriter = new ELFExecWriter(*this, pLinker);
   return true;
 }
 
@@ -121,8 +158,395 @@ bool GNULDBackend::initDynObjSections(MCLinker& pMCLinker)
   return true;
 }
 
-bool GNULDBackend::initStandardSymbols(MCLinker& pLinker)
+bool GNULDBackend::initStandardSymbols(MCLinker& pLinker, const Output& pOutput)
 {
+  ELFFileFormat* file_format = getOutputFormat(pOutput);
+
+  // -----  section symbols  ----- //
+  // .preinit_array
+  MCFragmentRef* preinit_array = NULL;
+  if (file_format->hasPreInitArray()) {
+    preinit_array = pLinker.getLayout().getFragmentRef(
+                   *(file_format->getPreInitArray().getSectionData()->begin()),
+                   0x0);
+  }
+  f_pPreInitArrayStart =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__preinit_array_start",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             preinit_array, // FragRef
+                                             ResolveInfo::Hidden);
+  f_pPreInitArrayEnd =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__preinit_array_end",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Hidden);
+
+  // .init_array
+  MCFragmentRef* init_array = NULL;
+  if (file_format->hasInitArray()) {
+    init_array = pLinker.getLayout().getFragmentRef(
+                      *(file_format->getInitArray().getSectionData()->begin()),
+                      0x0);
+  }
+
+  f_pInitArrayStart =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__init_array_start",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             init_array, // FragRef
+                                             ResolveInfo::Hidden);
+  f_pInitArrayEnd =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__init_array_end",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             init_array, // FragRef
+                                             ResolveInfo::Hidden);
+
+  // .fini_array
+  MCFragmentRef* fini_array = NULL;
+  if (file_format->hasFiniArray()) {
+    fini_array = pLinker.getLayout().getFragmentRef(
+                     *(file_format->getFiniArray().getSectionData()->begin()),
+                     0x0);
+  }
+
+  f_pFiniArrayStart =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__fini_array_start",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             fini_array, // FragRef
+                                             ResolveInfo::Hidden);
+  f_pFiniArrayEnd =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__fini_array_end",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             fini_array, // FragRef
+                                             ResolveInfo::Hidden);
+
+  // .stack
+  MCFragmentRef* stack = NULL;
+  if (file_format->hasStack()) {
+    stack = pLinker.getLayout().getFragmentRef(
+                          *(file_format->getStack().getSectionData()->begin()),
+                          0x0);
+  }
+  f_pStack =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__stack",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Global,
+                                             0x0, // size
+                                             0x0, // value
+                                             stack, // FragRef
+                                             ResolveInfo::Hidden);
+
+  // -----  segment symbols  ----- //
+  f_pExecutableStart =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__executable_start",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+  f_pEText =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("etext",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+  f_p_EText =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("_etext",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+  f_p__EText =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("__etext",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+  f_pEData =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("edata",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+
+  f_pEnd =
+     pLinker.defineSymbol<MCLinker::AsRefered,
+                          MCLinker::Resolve>("end",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+
+  // _edata is defined forcefully.
+  // @ref Google gold linker: defstd.cc: 186
+  f_p_EData =
+     pLinker.defineSymbol<MCLinker::Force,
+                          MCLinker::Resolve>("_edata",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+
+  // __bss_start is defined forcefully.
+  // @ref Google gold linker: defstd.cc: 214
+  f_pBSSStart =
+     pLinker.defineSymbol<MCLinker::Force,
+                          MCLinker::Resolve>("__bss_start",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+
+  // _end is defined forcefully.
+  // @ref Google gold linker: defstd.cc: 228
+  f_p_End =
+     pLinker.defineSymbol<MCLinker::Force,
+                          MCLinker::Resolve>("_end",
+                                             false, // isDyn
+                                             ResolveInfo::NoType,
+                                             ResolveInfo::Define,
+                                             ResolveInfo::Absolute,
+                                             0x0, // size
+                                             0x0, // value
+                                             NULL, // FragRef
+                                             ResolveInfo::Default);
+
+  return true;
+}
+
+bool
+GNULDBackend::finalizeStandardSymbols(MCLinker& pLinker, const Output& pOutput)
+{
+  ELFFileFormat* file_format = getOutputFormat(pOutput);
+
+  // -----  section symbols  ----- //
+  if (NULL != f_pPreInitArrayStart) {
+    if (!f_pPreInitArrayStart->hasFragRef()) {
+      f_pPreInitArrayStart->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pPreInitArrayStart->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pPreInitArrayEnd) {
+    if (f_pPreInitArrayEnd->hasFragRef()) {
+      f_pPreInitArrayEnd->setValue(f_pPreInitArrayEnd->value() +
+                                   file_format->getPreInitArray().size());
+    }
+    else {
+      f_pPreInitArrayEnd->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pPreInitArrayEnd->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pInitArrayStart) {
+    if (!f_pInitArrayStart->hasFragRef()) {
+      f_pInitArrayStart->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pInitArrayStart->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pInitArrayEnd) {
+    if (f_pInitArrayEnd->hasFragRef()) {
+      f_pInitArrayEnd->setValue(f_pInitArrayEnd->value() +
+                                file_format->getInitArray().size());
+    }
+    else {
+      f_pInitArrayEnd->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pInitArrayEnd->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pFiniArrayStart) {
+    if (!f_pFiniArrayStart->hasFragRef()) {
+      f_pFiniArrayStart->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pFiniArrayStart->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pFiniArrayEnd) {
+    if (f_pFiniArrayEnd->hasFragRef()) {
+      f_pFiniArrayEnd->setValue(f_pFiniArrayEnd->value() +
+                                file_format->getFiniArray().size());
+    }
+    else {
+      f_pFiniArrayEnd->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pFiniArrayEnd->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pStack) {
+    if (!f_pStack->hasFragRef()) {
+      f_pStack->resolveInfo()->setBinding(ResolveInfo::Absolute);
+      f_pStack->setValue(0x0);
+    }
+  }
+
+  // -----  segment symbols  ----- //
+  if (NULL != f_pExecutableStart) {
+    ELFSegment* exec_start = m_ELFSegmentTable.find(llvm::ELF::PT_LOAD, 0x0, 0x0);
+    if (NULL != exec_start) {
+      if (ResolveInfo::ThreadLocal != f_pExecutableStart->type()) {
+        f_pExecutableStart->setValue(f_pExecutableStart->value() +
+                                     exec_start->vaddr());
+      }
+    }
+    else
+      f_pExecutableStart->setValue(0x0);
+  }
+
+  if (NULL != f_pEText || NULL != f_p_EText || NULL !=f_p__EText) {
+    ELFSegment* etext = m_ELFSegmentTable.find(llvm::ELF::PT_LOAD,
+                                               llvm::ELF::PF_X,
+                                               llvm::ELF::PF_W);
+    if (NULL != etext) {
+      if (NULL != f_pEText && ResolveInfo::ThreadLocal != f_pEText->type()) {
+        f_pEText->setValue(f_pEText->value() +
+                           etext->vaddr() +
+                           etext->memsz());
+      }
+      if (NULL != f_p_EText && ResolveInfo::ThreadLocal != f_p_EText->type()) {
+        f_p_EText->setValue(f_p_EText->value() +
+                            etext->vaddr() +
+                            etext->memsz());
+      }
+      if (NULL != f_p__EText && ResolveInfo::ThreadLocal != f_p__EText->type()) {
+        f_p__EText->setValue(f_p__EText->value() +
+                            etext->vaddr() +
+                            etext->memsz());
+      }
+    }
+    else {
+      if (NULL != f_pEText)
+        f_pEText->setValue(0x0);
+      if (NULL != f_p_EText)
+        f_p_EText->setValue(0x0);
+      if (NULL != f_p__EText)
+        f_p__EText->setValue(0x0);
+    }
+  }
+
+  if (NULL != f_pEData || NULL != f_p_EData || NULL != f_pBSSStart ||
+      NULL != f_pEnd || NULL != f_p_End) {
+    ELFSegment* edata = m_ELFSegmentTable.find(llvm::ELF::PT_LOAD,
+                                               llvm::ELF::PF_W,
+                                               0x0);
+    if (NULL != edata) {
+      if (NULL != f_pEData && ResolveInfo::ThreadLocal != f_pEData->type()) {
+        f_pEData->setValue(f_pEData->value() +
+                            edata->vaddr() +
+                            edata->filesz());
+      }
+      if (NULL != f_p_EData && ResolveInfo::ThreadLocal != f_p_EData->type()) {
+        f_p_EData->setValue(f_p_EData->value() +
+                            edata->vaddr() +
+                            edata->filesz());
+      }
+      if (NULL != f_pBSSStart && ResolveInfo::ThreadLocal != f_pBSSStart->type()) {
+        f_pBSSStart->setValue(f_pBSSStart->value() +
+                              edata->vaddr() +
+                              edata->filesz());
+      }
+
+      if (NULL != f_pEnd && ResolveInfo::ThreadLocal != f_pEnd->type()) {
+        f_pEnd->setValue(f_pEnd->value() +
+                         edata->vaddr() +
+                         edata->memsz());
+      }
+      if (NULL != f_p_End && ResolveInfo::ThreadLocal != f_p_End->type()) {
+        f_p_End->setValue(f_p_End->value() +
+                          edata->vaddr() +
+                          edata->memsz());
+      }
+    }
+    else {
+      if (NULL != f_pEData)
+        f_pEData->setValue(0x0);
+      if (NULL != f_p_EData)
+        f_p_EData->setValue(0x0);
+      if (NULL != f_pBSSStart)
+        f_pBSSStart->setValue(0x0);
+
+      if (NULL != f_pEnd)
+        f_pEnd->setValue(0x0);
+      if (NULL != f_p_End)
+        f_p_End->setValue(0x0);
+    }
+  }
+
   return true;
 }
 
@@ -132,7 +556,7 @@ GNUArchiveReader *GNULDBackend::getArchiveReader()
   return m_pArchiveReader;
 }
 
-GNUArchiveReader *GNULDBackend::getArchiveReader() const
+const GNUArchiveReader *GNULDBackend::getArchiveReader() const
 {
   assert(0 != m_pArchiveReader);
   return m_pArchiveReader;
@@ -144,7 +568,7 @@ ELFObjectReader *GNULDBackend::getObjectReader()
   return m_pObjectReader;
 }
 
-ELFObjectReader *GNULDBackend::getObjectReader() const
+const ELFObjectReader *GNULDBackend::getObjectReader() const
 {
   assert(0 != m_pObjectReader);
   return m_pObjectReader;
@@ -156,7 +580,7 @@ ELFDynObjReader *GNULDBackend::getDynObjReader()
   return m_pDynObjReader;
 }
 
-ELFDynObjReader *GNULDBackend::getDynObjReader() const
+const ELFDynObjReader *GNULDBackend::getDynObjReader() const
 {
   assert(0 != m_pDynObjReader);
   return m_pDynObjReader;
@@ -168,7 +592,7 @@ ELFObjectWriter *GNULDBackend::getObjectWriter()
   return NULL;
 }
 
-ELFObjectWriter *GNULDBackend::getObjectWriter() const
+const ELFObjectWriter *GNULDBackend::getObjectWriter() const
 {
   // TODO
   return NULL;
@@ -180,10 +604,52 @@ ELFDynObjWriter *GNULDBackend::getDynObjWriter()
   return m_pDynObjWriter;
 }
 
-ELFDynObjWriter *GNULDBackend::getDynObjWriter() const
+const ELFDynObjWriter *GNULDBackend::getDynObjWriter() const
 {
   assert(0 != m_pDynObjWriter);
   return m_pDynObjWriter;
+}
+
+ELFExecWriter *GNULDBackend::getExecWriter()
+{
+  assert(NULL != m_pExecWriter);
+  return m_pExecWriter;
+}
+
+const ELFExecWriter *GNULDBackend::getExecWriter() const
+{
+  assert(NULL != m_pExecWriter);
+  return m_pExecWriter;
+}
+
+ELFFileFormat* GNULDBackend::getOutputFormat(const Output& pOutput)
+{
+  switch (pOutput.type()) {
+    case Output::DynObj:
+      return getDynObjFileFormat();
+    case Output::Exec:
+      return getExecFileFormat();
+    // FIXME: We do not support building .o now
+    case Output::Object:
+    default:
+      fatal(diag::unrecognized_output_file) << pOutput.type();
+      return NULL;
+  }
+}
+
+const ELFFileFormat* GNULDBackend::getOutputFormat(const Output& pOutput) const
+{
+  switch (pOutput.type()) {
+    case Output::DynObj:
+      return getDynObjFileFormat();
+    case Output::Exec:
+      return getExecFileFormat();
+    // FIXME: We do not support building .o now
+    case Output::Object:
+    default:
+      fatal(diag::unrecognized_output_file) << pOutput.type();
+      return NULL;
+  }
 }
 
 ELFDynObjFileFormat* GNULDBackend::getDynObjFileFormat()
@@ -192,7 +658,7 @@ ELFDynObjFileFormat* GNULDBackend::getDynObjFileFormat()
   return m_pDynObjFileFormat;
 }
 
-ELFDynObjFileFormat* GNULDBackend::getDynObjFileFormat() const
+const ELFDynObjFileFormat* GNULDBackend::getDynObjFileFormat() const
 {
   assert(0 != m_pDynObjFileFormat);
   return m_pDynObjFileFormat;
@@ -204,7 +670,7 @@ ELFExecFileFormat* GNULDBackend::getExecFileFormat()
   return m_pExecFileFormat;
 }
 
-ELFExecFileFormat* GNULDBackend::getExecFileFormat() const
+const ELFExecFileFormat* GNULDBackend::getExecFileFormat() const
 {
   assert(0 != m_pExecFileFormat);
   return m_pExecFileFormat;
@@ -241,20 +707,7 @@ GNULDBackend::sizeNamePools(const Output& pOutput,
     strtab += str_size;
   }
 
-  ELFFileFormat* file_format = NULL;
-  switch(pOutput.type()) {
-    // compute size of .dynstr and .hash
-    case Output::DynObj:
-      file_format = getDynObjFileFormat();
-      break;
-    case Output::Exec:
-      file_format = getExecFileFormat();
-      break;
-    case Output::Object:
-    default:
-      // TODO: not support yet
-      return;
-  }
+  ELFFileFormat* file_format = getOutputFormat(pOutput);
 
   switch(pOutput.type()) {
     // compute size of .dynstr and .hash
@@ -335,23 +788,14 @@ void GNULDBackend::emitRegNamePools(Output& pOutput,
   bool sym_exist = false;
   HashTableType::entry_type* entry = 0;
 
-  ELFFileFormat* file_format = NULL;
-  switch(pOutput.type()) {
-    // compute size of .dynstr and .hash
-    case Output::DynObj:
-      file_format = getDynObjFileFormat();
-      break;
-    case Output::Exec:
-      file_format = getExecFileFormat();
-      break;
-    case Output::Object:
-    default:
-      // add first symbol into m_pSymIndexMap
-      entry = m_pSymIndexMap->insert(NULL, sym_exist);
-      entry->setValue(0);
+  ELFFileFormat* file_format = getOutputFormat(pOutput);
+  if (pOutput.type() == Output::Object) {
+    // add first symbol into m_pSymIndexMap
+    entry = m_pSymIndexMap->insert(NULL, sym_exist);
+    entry->setValue(0);
 
-      // TODO: not support yet
-      return;
+    // TODO: not support yet
+    return;
   }
 
   LDSection& symtab_sect = file_format->getSymTab();
@@ -446,24 +890,10 @@ void GNULDBackend::emitDynNamePools(Output& pOutput,
                                     const MCLDInfo& pLDInfo)
 {
   assert(pOutput.hasMemArea());
-  ELFFileFormat* file_format = NULL;
+  ELFFileFormat* file_format = getOutputFormat(pOutput);
 
   bool sym_exist = false;
   HashTableType::entry_type* entry = 0;
-
-  switch(pOutput.type()) {
-    // compute size of .dynstr and .hash
-    case Output::DynObj:
-      file_format = getDynObjFileFormat();
-      break;
-    case Output::Exec:
-      file_format = getExecFileFormat();
-      break;
-    case Output::Object:
-    default:
-      // TODO: not support yet
-      return;
-  }
 
   LDSection& symtab_sect = file_format->getDynSymTab();
   LDSection& strtab_sect = file_format->getDynStrTab();
@@ -587,7 +1017,8 @@ void GNULDBackend::emitDynNamePools(Output& pOutput,
 
   // emit soname
   // initialize value of ELF .dynamic section
-  dynamic().applySoname(strtabsize);
+  if (Output::DynObj == pOutput.type())
+    dynamic().applySoname(strtabsize);
   dynamic().applyEntries(pLDInfo, *file_format);
   dynamic().emit(dyn_sect, *dyn_region);
 
@@ -633,9 +1064,44 @@ void GNULDBackend::emitDynNamePools(Output& pOutput,
   }
 }
 
+/// sizeInterp - compute the size of the .interp section
+void GNULDBackend::sizeInterp(const Output& pOutput, const MCLDInfo& pLDInfo)
+{
+  assert(pOutput.type() == Output::Exec);
+
+  const char* dyld_name;
+  if (pLDInfo.options().hasDyld())
+    dyld_name = pLDInfo.options().dyld().c_str();
+  else
+    dyld_name = dyld();
+
+  LDSection& interp = getExecFileFormat()->getInterp();
+  interp.setSize(std::strlen(dyld_name) + 1);
+}
+
+/// emitInterp - emit the .interp
+void GNULDBackend::emitInterp(Output& pOutput, const MCLDInfo& pLDInfo)
+{
+  assert(pOutput.type() == Output::Exec &&
+         getExecFileFormat()->hasInterp() &&
+         pOutput.hasMemArea());
+
+  const LDSection& interp = getExecFileFormat()->getInterp();
+  MemoryRegion *region = pOutput.memArea()->request(
+                                              interp.offset(), interp.size());
+  const char* dyld_name;
+  if (pLDInfo.options().hasDyld())
+    dyld_name = pLDInfo.options().dyld().c_str();
+  else
+    dyld_name = dyld();
+
+  std::memcpy(region->start(), dyld_name, interp.size());
+}
+
 /// getSectionOrder
 unsigned int GNULDBackend::getSectionOrder(const Output& pOutput,
-                                           const LDSection& pSectHdr) const
+                                           const LDSection& pSectHdr,
+                                           const MCLDInfo& pInfo) const
 {
   // NULL section should be the "1st" section
   if (LDFileFormat::Null == pSectHdr.kind())
@@ -647,19 +1113,7 @@ unsigned int GNULDBackend::getSectionOrder(const Output& pOutput,
 
   bool is_write = (pSectHdr.flag() & llvm::ELF::SHF_WRITE) != 0;
   bool is_exec = (pSectHdr.flag() & llvm::ELF::SHF_EXECINSTR) != 0;
-  ELFFileFormat* file_format = NULL;
-  switch (pOutput.type()) {
-    case Output::DynObj:
-      file_format = getDynObjFileFormat();
-      break;
-    case Output::Exec:
-      file_format = getExecFileFormat();
-      break;
-    case Output::Object:
-    default:
-      assert(0 && "Not support yet.\n");
-      break;
-  }
+  const ELFFileFormat* file_format = getOutputFormat(pOutput);
 
   // TODO: need to take care other possible output sections
   switch (pSectHdr.kind()) {
@@ -673,13 +1127,18 @@ unsigned int GNULDBackend::getSectionOrder(const Output& pOutput,
       } else if (!is_write) {
         return SHO_RO;
       } else {
-        if (pSectHdr.type() == llvm::ELF::SHT_PREINIT_ARRAY ||
-            pSectHdr.type() == llvm::ELF::SHT_INIT_ARRAY ||
-            pSectHdr.type() == llvm::ELF::SHT_FINI_ARRAY ||
-            &pSectHdr == &file_format->getCtors() ||
-            &pSectHdr == &file_format->getDtors())
-          return SHO_RELRO;
-
+        if (pInfo.options().hasRelro()) {
+          if (pSectHdr.type() == llvm::ELF::SHT_PREINIT_ARRAY ||
+              pSectHdr.type() == llvm::ELF::SHT_INIT_ARRAY ||
+              pSectHdr.type() == llvm::ELF::SHT_FINI_ARRAY ||
+              &pSectHdr == &file_format->getCtors() ||
+              &pSectHdr == &file_format->getDtors() ||
+              &pSectHdr == &file_format->getJCR() ||
+              0 == pSectHdr.name().compare(".data.rel.ro"))
+            return SHO_RELRO;
+          if (0 == pSectHdr.name().compare(".data.rel.ro.local"))
+            return SHO_RELRO_LOCAL;
+        }
         return SHO_DATA;
       }
 
@@ -699,14 +1158,16 @@ unsigned int GNULDBackend::getSectionOrder(const Output& pOutput,
 
     // get the order from target for target specific sections
     case LDFileFormat::Target:
-      return getTargetSectionOrder(pOutput, pSectHdr);
+      return getTargetSectionOrder(pOutput, pSectHdr, pInfo);
 
     // handle .interp
     case LDFileFormat::Note:
       return SHO_INTERP;
 
-    case LDFileFormat::Exception:
-      return SHO_EHFRAME;
+    case LDFileFormat::EhFrame:
+    case LDFileFormat::EhFrameHdr:
+    case LDFileFormat::GCCExceptTable:
+      return SHO_EXCEPTION;
 
     case LDFileFormat::MetaData:
     case LDFileFormat::Debug:
@@ -745,7 +1206,12 @@ uint64_t GNULDBackend::getSymbolInfo(const LDSymbol& pSymbol) const
       pSymbol.visibility() == llvm::ELF::STV_HIDDEN)
     bind = llvm::ELF::STB_LOCAL;
 
-  return (pSymbol.resolveInfo()->type() | (bind << 4));
+  uint32_t type = pSymbol.resolveInfo()->type();
+  // if the IndirectFunc symbol (i.e., STT_GNU_IFUNC) is from dynobj, change
+  // its type to Function
+  if (type == ResolveInfo::IndirectFunc && pSymbol.isDyn())
+    type = ResolveInfo::Function;
+  return (type | (bind << 4));
 }
 
 /// getSymbolValue - this function is called after layout()
@@ -776,7 +1242,7 @@ GNULDBackend::getSymbolShndx(const LDSymbol& pSymbol, const Layout& pLayout) con
     }
   }
 
-  assert(pSymbol.hasFragRef());
+  assert(pSymbol.hasFragRef() && "symbols must have fragment reference to get its index");
   return pLayout.getOutputLDSection(*pSymbol.fragRef()->frag())->index();
 }
 
@@ -787,38 +1253,154 @@ size_t GNULDBackend::getSymbolIdx(LDSymbol* pSymbol) const
    return entry.getEntry()->value();
 }
 
-/// emitProgramHdrs - emit ELF program headers
-void GNULDBackend::emitProgramHdrs(Output& pOutput)
+/// allocateCommonSymbols - allocate common symbols in the corresponding
+/// sections.
+/// @refer Google gold linker: common.cc: 214
+bool
+GNULDBackend::allocateCommonSymbols(const MCLDInfo& pInfo, MCLinker& pLinker) const
 {
-  assert(NULL != pOutput.context());
-  createProgramHdrs(*pOutput.context());
+  SymbolCategory& symbol_list = pLinker.getOutputSymbols();
 
-  if (32 == bitclass())
-    writeELF32ProgramHdrs(pOutput);
-  else
-    writeELF64ProgramHdrs(pOutput);
+  if (symbol_list.emptyCommons() && symbol_list.emptyLocals())
+    return true;
+
+  SymbolCategory::iterator com_sym, com_end;
+
+  // FIXME: If the order of common symbols is defined, then sort common symbols
+  // std::sort(com_sym, com_end, some kind of order);
+
+  // get or create corresponding BSS LDSection
+  LDSection* bss_sect = &pLinker.getOrCreateOutputSectHdr(".bss",
+                                   LDFileFormat::BSS,
+                                   llvm::ELF::SHT_NOBITS,
+                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
+
+  LDSection* tbss_sect = &pLinker.getOrCreateOutputSectHdr(
+                                   ".tbss",
+                                   LDFileFormat::BSS,
+                                   llvm::ELF::SHT_NOBITS,
+                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
+
+  assert(NULL != bss_sect && NULL !=tbss_sect);
+
+  // get or create corresponding BSS MCSectionData
+  llvm::MCSectionData& bss_sect_data = pLinker.getOrCreateSectData(*bss_sect);
+  llvm::MCSectionData& tbss_sect_data = pLinker.getOrCreateSectData(*tbss_sect);
+
+  // remember original BSS size
+  uint64_t bss_offset  = bss_sect->size();
+  uint64_t tbss_offset = tbss_sect->size();
+
+  // allocate all local common symbols
+  com_end = symbol_list.localEnd();
+
+  for (com_sym = symbol_list.localBegin(); com_sym != com_end; ++com_sym) {
+    if (ResolveInfo::Common == (*com_sym)->desc()) {
+      // We have to reset the description of the symbol here. When doing
+      // incremental linking, the output relocatable object may have common
+      // symbols. Therefore, we can not treat common symbols as normal symbols
+      // when emitting the regular name pools. We must change the symbols'
+      // description here.
+      (*com_sym)->resolveInfo()->setDesc(ResolveInfo::Define);
+      llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size());
+      (*com_sym)->setFragmentRef(new MCFragmentRef(*frag, 0));
+
+      if (ResolveInfo::ThreadLocal == (*com_sym)->type()) {
+        // allocate TLS common symbol in tbss section
+        tbss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                          tbss_sect_data,
+                                                          (*com_sym)->value());
+      }
+      else {
+        bss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                         bss_sect_data,
+                                                         (*com_sym)->value());
+      }
+    }
+  }
+
+  // allocate all global common symbols
+  com_end = symbol_list.commonEnd();
+  for (com_sym = symbol_list.commonBegin(); com_sym != com_end; ++com_sym) {
+    // We have to reset the description of the symbol here. When doing
+    // incremental linking, the output relocatable object may have common
+    // symbols. Therefore, we can not treat common symbols as normal symbols
+    // when emitting the regular name pools. We must change the symbols'
+    // description here.
+    (*com_sym)->resolveInfo()->setDesc(ResolveInfo::Define);
+    llvm::MCFragment* frag = new llvm::MCFillFragment(0x0, 1, (*com_sym)->size());
+    (*com_sym)->setFragmentRef(new MCFragmentRef(*frag, 0));
+
+    if (ResolveInfo::ThreadLocal == (*com_sym)->type()) {
+      // allocate TLS common symbol in tbss section
+      tbss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                        tbss_sect_data,
+                                                        (*com_sym)->value());
+    }
+    else {
+      bss_offset += pLinker.getLayout().appendFragment(*frag,
+                                                       bss_sect_data,
+                                                       (*com_sym)->value());
+    }
+  }
+
+  bss_sect->setSize(bss_offset);
+  tbss_sect->setSize(tbss_offset);
+  symbol_list.changeCommonsToGlobal();
+  return true;
 }
 
+
 /// createProgramHdrs - base on output sections to create the program headers
-void GNULDBackend::createProgramHdrs(LDContext& pContext)
+void GNULDBackend::createProgramHdrs(Output& pOutput, const MCLDInfo& pInfo)
 {
+  assert(pOutput.hasContext());
+  ELFFileFormat *file_format = getOutputFormat(pOutput);
+
   // make PT_PHDR
   m_ELFSegmentTable.produce(llvm::ELF::PT_PHDR);
 
   // make PT_INTERP
-  LDSection* interp = pContext.getSection(".interp");
-  if (NULL != interp) {
+  if (file_format->hasInterp()) {
     ELFSegment* interp_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_INTERP);
-    interp_seg->addSection(interp);
-    interp_seg->setAlign(bitclass() / 8);
+    interp_seg->addSection(&file_format->getInterp());
+  }
+
+  if (pInfo.options().hasRelro()) {
+    // if -z relro is given, we need to adjust sections' offset again, and let
+    // PT_GNU_RELRO end on a common page boundary
+    LDContext::SectionTable& sect_table = pOutput.context()->getSectionTable();
+    size_t idx = 0;
+    while (idx < pOutput.context()->numOfSections()) {
+      // find the first non-relro section, and align its offset to a page
+      // boundary
+      if (getSectionOrder(pOutput, *sect_table[idx], pInfo) > SHO_RELRO_LAST) {
+        uint64_t offset = sect_table[idx]->offset();
+        alignAddress(offset, commonPageSize(pInfo));
+        sect_table[idx]->setOffset(offset);
+        ++idx;
+        break;
+      }
+      ++idx;
+    }
+    while (idx < pOutput.context()->numOfSections()) {
+      // adjust the remaining sections' offset
+      uint64_t offset = sect_table[idx - 1]->offset();
+      if (LDFileFormat::BSS != sect_table[idx - 1]->kind())
+        offset += sect_table[idx - 1]->size();
+      alignAddress(offset, sect_table[idx]->align());
+      sect_table[idx]->setOffset(offset);
+      ++idx;
+    }
   }
 
   uint32_t cur_seg_flag, prev_seg_flag = getSegmentFlag(0);
   uint64_t padding = 0;
   ELFSegment* load_seg = NULL;
   // make possible PT_LOAD segments
-  LDContext::sect_iterator sect, sect_end = pContext.sectEnd();
-  for (sect = pContext.sectBegin(); sect != sect_end; ++sect) {
+  LDContext::sect_iterator sect, sect_end = pOutput.context()->sectEnd();
+  for (sect = pOutput.context()->sectBegin(); sect != sect_end; ++sect) {
+
     if (0 == ((*sect)->flag() & llvm::ELF::SHF_ALLOC) &&
         LDFileFormat::Null != (*sect)->kind())
       continue;
@@ -829,36 +1411,60 @@ void GNULDBackend::createProgramHdrs(LDContext& pContext)
          LDFileFormat::Null == (*sect)->kind()) {
       // create new PT_LOAD segment
       load_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_LOAD);
-      load_seg->setAlign(pagesize());
+      load_seg->setAlign(commonPageSize(pInfo));
 
       // check if this segment needs padding
       padding = 0;
-      if (((*sect)->offset() & (load_seg->align() - 1)) != 0)
-        padding = load_seg->align();
+      if (((*sect)->offset() & (abiPageSize(pInfo) - 1)) != 0)
+        padding = abiPageSize(pInfo);
     }
 
     assert(NULL != load_seg);
-    load_seg->addSection(*sect);
-    load_seg->updateFlag(cur_seg_flag);
+    load_seg->addSection((*sect));
+    if (cur_seg_flag != prev_seg_flag)
+      load_seg->updateFlag(cur_seg_flag);
 
-    // FIXME: set section's vma
-    // need to handle start vma for user-defined one or for executable.
-    (*sect)->setAddr((*sect)->offset() + padding);
+    if (LDFileFormat::Null != (*sect)->kind())
+      (*sect)->setAddr(segmentStartAddr(pOutput, pInfo) +
+                       (*sect)->offset() +
+                       padding);
 
     prev_seg_flag = cur_seg_flag;
   }
 
   // make PT_DYNAMIC
-  LDSection* dynamic = pContext.getSection(".dynamic");
-  if (NULL != dynamic) {
-    ELFSegment* dyn_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_DYNAMIC);
-    dyn_seg->setFlag(llvm::ELF::PF_R | llvm::ELF::PF_W);
-    dyn_seg->addSection(dynamic);
-    dyn_seg->setAlign(bitclass() / 8);
+  if (file_format->hasDynamic()) {
+    ELFSegment* dyn_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_DYNAMIC,
+                                                    llvm::ELF::PF_R |
+                                                    llvm::ELF::PF_W);
+    dyn_seg->addSection(&file_format->getDynamic());
   }
 
+  if (pInfo.options().hasRelro()) {
+    // make PT_GNU_RELRO
+    ELFSegment* relro_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_GNU_RELRO);
+    for (LDContext::sect_iterator sect = pOutput.context()->sectBegin();
+         sect != pOutput.context()->sectEnd(); ++sect) {
+      unsigned int order = getSectionOrder(pOutput, **sect, pInfo);
+      if (SHO_RELRO_LOCAL == order ||
+          SHO_RELRO == order ||
+          SHO_RELRO_LAST == order) {
+        relro_seg->addSection(*sect);
+      }
+    }
+  }
+
+  // make PT_GNU_EH_FRAME
+  if (file_format->hasEhFrameHdr()) {
+    ELFSegment* eh_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_GNU_EH_FRAME);
+    eh_seg->addSection(&file_format->getEhFrameHdr());
+  }
+}
+
+/// setupProgramHdrs - set up the attributes of segments
+void GNULDBackend:: setupProgramHdrs(const Output& pOutput, const MCLDInfo& pInfo)
+{
   // update segment info
-  uint64_t file_size = 0;
   ELFSegmentFactory::iterator seg, seg_end = m_ELFSegmentTable.end();
   for (seg = m_ELFSegmentTable.begin(); seg != seg_end; ++seg) {
     ELFSegment& segment = *seg;
@@ -875,7 +1481,7 @@ void GNULDBackend::createProgramHdrs(LDContext& pContext)
         phdr_size = sizeof(llvm::ELF::Elf64_Phdr);
       }
       segment.setOffset(offset);
-      segment.setVaddr(offset);
+      segment.setVaddr(segmentStartAddr(pOutput, pInfo) + offset);
       segment.setPaddr(segment.vaddr());
       segment.setFilesz(numOfSegments() * phdr_size);
       segment.setMemsz(numOfSegments() * phdr_size);
@@ -883,14 +1489,21 @@ void GNULDBackend::createProgramHdrs(LDContext& pContext)
       continue;
     }
 
-    assert(NULL != segment.getFirstSection());
+    // bypass if there is no section in this segment (e.g., PT_GNU_STACK)
+    if (segment.numOfSections() == 0)
+      continue;
+
     segment.setOffset(segment.getFirstSection()->offset());
-    segment.setVaddr(segment.getFirstSection()->addr());
+    if (llvm::ELF::PT_LOAD == segment.type() &&
+        LDFileFormat::Null == segment.getFirstSection()->kind())
+      segment.setVaddr(segmentStartAddr(pOutput, pInfo));
+    else
+      segment.setVaddr(segment.getFirstSection()->addr());
     segment.setPaddr(segment.vaddr());
 
     const LDSection* last_sect = segment.getLastSection();
     assert(NULL != last_sect);
-    file_size = last_sect->offset() - segment.offset();
+    uint64_t file_size = last_sect->offset() - segment.offset();
     if (LDFileFormat::BSS != last_sect->kind())
       file_size += last_sect->size();
     segment.setFilesz(file_size);
@@ -899,61 +1512,58 @@ void GNULDBackend::createProgramHdrs(LDContext& pContext)
   }
 }
 
-/// writeELF32ProgramHdrs - write out the ELF32 program headers
-void GNULDBackend::writeELF32ProgramHdrs(Output& pOutput)
+/// createGNUStackInfo - create an output GNU stack section or segment if needed
+/// @ref gold linker: layout.cc:2608
+void GNULDBackend::createGNUStackInfo(const Output& pOutput,
+                                      const MCLDInfo& pInfo,
+                                      MCLinker& pLinker)
 {
-  assert(pOutput.hasMemArea());
+  uint32_t flag = 0x0;
+  if (pInfo.options().hasStackSet()) {
+    // 1. check the command line option (-z execstack or -z noexecstack)
+    if (pInfo.options().hasExecStack())
+      flag = llvm::ELF::SHF_EXECINSTR;
+  } else {
+    // 2. check the stack info from the input objects
+    size_t object_count = 0, stack_note_count = 0;
+    mcld::InputTree::const_bfs_iterator input, inEnd = pInfo.inputs().bfs_end();
+    for (input=pInfo.inputs().bfs_begin(); input!=inEnd; ++input) {
+      if ((*input)->type() == Input::Object) {
+        ++object_count;
+        const LDSection* sect = (*input)->context()->getSection(
+                                                             ".note.GNU-stack");
+        if (NULL != sect) {
+          ++stack_note_count;
+          // 2.1 found a stack note that is set as executable
+          if (0 != (llvm::ELF::SHF_EXECINSTR & sect->flag())) {
+            flag = llvm::ELF::SHF_EXECINSTR;
+            break;
+          }
+        }
+      }
+    }
 
-  uint64_t start_offset, phdr_size;
+    // 2.2 there are no stack note sections in all input objects
+    if (0 == stack_note_count)
+      return;
 
-  start_offset = sizeof(llvm::ELF::Elf32_Ehdr);
-  phdr_size = sizeof(llvm::ELF::Elf32_Phdr);
-  // Program header must start directly after ELF header
-  MemoryRegion *region = pOutput.memArea()->request(start_offset,
-                                                    numOfSegments()*phdr_size);
-
-  llvm::ELF::Elf32_Phdr* phdr = (llvm::ELF::Elf32_Phdr*)region->start();
-
-  size_t index = 0;
-  ELFSegmentFactory::iterator seg, segEnd = m_ELFSegmentTable.end();
-  for (seg = m_ELFSegmentTable.begin(); seg != segEnd; ++seg, ++index) {
-    phdr[index].p_type   = (*seg).type();
-    phdr[index].p_flags  = (*seg).flag();
-    phdr[index].p_offset = (*seg).offset();
-    phdr[index].p_vaddr  = (*seg).vaddr();
-    phdr[index].p_paddr  = (*seg).paddr();
-    phdr[index].p_filesz = (*seg).filesz();
-    phdr[index].p_memsz  = (*seg).memsz();
-    phdr[index].p_align  = (*seg).align();
+    // 2.3 a special case. Use the target default to decide if the stack should
+    //     be executable
+    if (llvm::ELF::SHF_EXECINSTR != flag && object_count != stack_note_count)
+      if (isDefaultExecStack())
+        flag = llvm::ELF::SHF_EXECINSTR;
   }
-}
 
-/// writeELF64ProgramHdrs - write out the ELF64 program headers
-void GNULDBackend::writeELF64ProgramHdrs(Output& pOutput)
-{
-  assert(pOutput.hasMemArea());
-
-  uint64_t start_offset, phdr_size;
-
-  start_offset = sizeof(llvm::ELF::Elf64_Ehdr);
-  phdr_size = sizeof(llvm::ELF::Elf64_Phdr);
-  // Program header must start directly after ELF header
-  MemoryRegion *region = pOutput.memArea()->request(start_offset,
-                                                    numOfSegments() *phdr_size);
-  llvm::ELF::Elf64_Phdr* phdr = (llvm::ELF::Elf64_Phdr*)region->start();
-
-  size_t index = 0;
-  ELFSegmentFactory::iterator seg, segEnd = m_ELFSegmentTable.end();
-  for (seg = m_ELFSegmentTable.begin(); seg != segEnd; ++seg, ++index) {
-    phdr[index].p_type   = (*seg).type();
-    phdr[index].p_flags  = (*seg).flag();
-    phdr[index].p_offset = (*seg).offset();
-    phdr[index].p_vaddr  = (*seg).vaddr();
-    phdr[index].p_paddr  = (*seg).paddr();
-    phdr[index].p_filesz = (*seg).filesz();
-    phdr[index].p_memsz  = (*seg).memsz();
-    phdr[index].p_align  = (*seg).align();
-  }
+  if (pOutput.type() != Output::Object)
+    m_ELFSegmentTable.produce(llvm::ELF::PT_GNU_STACK,
+                              llvm::ELF::PF_R |
+                              llvm::ELF::PF_W |
+                              getSegmentFlag(flag));
+  else
+    pLinker.getOrCreateOutputSectHdr(".note.GNU-stack",
+                                     LDFileFormat::Note,
+                                     llvm::ELF::SHT_PROGBITS,
+                                     flag);
 }
 
 /// preLayout - Backend can do any needed modification before layout
@@ -963,6 +1573,16 @@ void GNULDBackend::preLayout(const Output& pOutput,
 {
   // prelayout target first
   doPreLayout(pOutput, pLDInfo, pLinker);
+
+  if (pLDInfo.options().hasEhFrameHdr()) {
+    // init EhFrameHdr and size the output section
+    ELFFileFormat* format = getOutputFormat(pOutput);
+    assert(NULL != getEhFrame());
+    m_pEhFrameHdr = new EhFrameHdr(*getEhFrame(),
+                                   format->getEhFrame(),
+                                   format->getEhFrameHdr());
+    m_pEhFrameHdr->sizeOutput();
+  }
 }
 
 /// postLayout -Backend can do any needed modification after layout
@@ -970,8 +1590,34 @@ void GNULDBackend::postLayout(const Output& pOutput,
                               const MCLDInfo& pInfo,
                               MCLinker& pLinker)
 {
-  // post layout target first
+  // 1. emit program headers
+  if (pOutput.type() != Output::Object) {
+    // 1.1 create program headers
+    createProgramHdrs(pLinker.getLDInfo().output(), pInfo);
+  }
+
+  // 1.2 create special GNU Stack note section or segment
+  createGNUStackInfo(pOutput, pInfo, pLinker);
+
+  if (pOutput.type() != Output::Object) {
+    // 1.3 set up the attributes of program headers
+    setupProgramHdrs(pOutput, pInfo);
+  }
+
+  // 2. target specific post layout
   doPostLayout(pOutput, pInfo, pLinker);
+}
+
+void GNULDBackend::postProcessing(const Output& pOutput,
+                                  const MCLDInfo& pInfo,
+                                  MCLinker& pLinker)
+{
+  if (pInfo.options().hasEhFrameHdr()) {
+    // emit eh_frame_hdr
+    if (bitclass() == 32)
+      m_pEhFrameHdr->emitOutput<32>(pLinker.getLDInfo().output(),
+                                    pLinker);
+  }
 }
 
 /// getHashBucketCount - calculate hash bucket count.
@@ -1012,10 +1658,147 @@ bool GNULDBackend::isDynamicSymbol(const LDSymbol& pSymbol,
 
   // If we are building shared object, and the visibility is external, we
   // need to add it.
-  if (Output::DynObj == pOutput.type())
+  if (Output::DynObj == pOutput.type() || Output::Exec == pOutput.type())
     if (pSymbol.resolveInfo()->visibility() == ResolveInfo::Default ||
         pSymbol.resolveInfo()->visibility() == ResolveInfo::Protected)
       return true;
+  return false;
+}
+
+/// commonPageSize - the common page size of the target machine.
+/// @ref gold linker: target.h:135
+uint64_t GNULDBackend::commonPageSize(const MCLDInfo& pInfo) const
+{
+  if (pInfo.options().commPageSize() > 0)
+    return std::min(pInfo.options().commPageSize(), abiPageSize(pInfo));
+  else
+    return std::min(static_cast<uint64_t>(0x1000), abiPageSize(pInfo));
+}
+
+/// abiPageSize - the abi page size of the target machine.
+/// @ref gold linker: target.h:125
+uint64_t GNULDBackend::abiPageSize(const MCLDInfo& pInfo) const
+{
+  if (pInfo.options().maxPageSize() > 0)
+    return pInfo.options().maxPageSize();
+  else
+    return static_cast<uint64_t>(0x1000);
+}
+
+/// isOutputPIC - return whether the output is position-independent
+bool GNULDBackend::isOutputPIC(const Output& pOutput,
+                               const MCLDInfo& pInfo) const
+{
+  if (Output::DynObj == pOutput.type() || pInfo.options().isPIE())
+    return true;
+  return false;
+}
+
+/// isStaticLink - return whether we're doing static link
+bool GNULDBackend::isStaticLink(const Output& pOutput,
+                                const MCLDInfo& pInfo) const
+{
+  InputTree::const_iterator it = pInfo.inputs().begin();
+  if (!isOutputPIC(pOutput, pInfo) && (*it)->attribute()->isStatic())
+    return true;
+  return false;
+}
+
+/// isSymbolPreemtible - whether the symbol can be preemted by other
+/// link unit
+/// @ref Google gold linker, symtab.h:551
+bool GNULDBackend::isSymbolPreemptible(const ResolveInfo& pSym,
+                                       const MCLDInfo& pLDInfo,
+                                       const Output& pOutput) const
+{
+  if (pSym.other() != ResolveInfo::Default)
+    return false;
+
+  if (Output::DynObj != pOutput.type())
+    return false;
+
+  if (pLDInfo.options().Bsymbolic())
+    return false;
+
+  return true;
+}
+
+/// symbolNeedsPLT - return whether the symbol needs a PLT entry
+/// @ref Google gold linker, symtab.h:596
+bool GNULDBackend::symbolNeedsPLT(const ResolveInfo& pSym,
+                                  const MCLDInfo& pLDInfo,
+                                  const Output& pOutput) const
+{
+  if (pSym.isUndef() && !pSym.isDyn() && pOutput.type() != Output::DynObj)
+    return false;
+
+  // An IndirectFunc symbol (i.e., STT_GNU_IFUNC) always needs a plt entry
+  if (pSym.type() == ResolveInfo::IndirectFunc)
+    return true;
+
+  if (pSym.type() != ResolveInfo::Function)
+    return false;
+
+  if (isStaticLink(pOutput, pLDInfo) || pLDInfo.options().isPIE())
+    return false;
+
+  return (pSym.isDyn() ||
+          pSym.isUndef() ||
+          isSymbolPreemptible(pSym, pLDInfo, pOutput));
+}
+
+/// symbolNeedsDynRel - return whether the symbol needs a dynamic relocation
+/// @ref Google gold linker, symtab.h:645
+bool GNULDBackend::symbolNeedsDynRel(const ResolveInfo& pSym,
+                                     bool pSymHasPLT,
+                                     const MCLDInfo& pLDInfo,
+                                     const Output& pOutput,
+                                     bool isAbsReloc) const
+{
+  // an undefined reference in the executables should be statically
+  // resolved to 0 and no need a dynamic relocation
+  if (pSym.isUndef() && !pSym.isDyn() && (Output::Exec == pOutput.type()))
+    return false;
+  if (pSym.isAbsolute())
+    return false;
+  if (isOutputPIC(pOutput, pLDInfo) && isAbsReloc)
+    return true;
+  if (pSymHasPLT && ResolveInfo::Function == pSym.type())
+    return false;
+  if (!isOutputPIC(pOutput, pLDInfo) && pSymHasPLT)
+    return false;
+  if (pSym.isDyn() || pSym.isUndef() ||
+      isSymbolPreemptible(pSym, pLDInfo, pOutput))
+    return true;
 
   return false;
 }
+
+/// symbolNeedsCopyReloc - return whether the symbol needs a copy relocation
+bool GNULDBackend::symbolNeedsCopyReloc(const Layout& pLayout,
+                                        const Relocation& pReloc,
+                                        const ResolveInfo& pSym,
+                                        const MCLDInfo& pLDInfo,
+                                        const Output& pOutput) const
+{
+  // only the reference from dynamic executable to non-function symbol in
+  // the dynamic objects may need copy relocation
+  if (isOutputPIC(pOutput, pLDInfo) ||
+      !pSym.isDyn() ||
+      pSym.type() == ResolveInfo::Function ||
+      pSym.size() == 0)
+    return false;
+
+  // check if the option -z nocopyreloc is given
+  if (pLDInfo.options().hasNoCopyReloc())
+    return false;
+
+  // TODO: Is this check necessary?
+  // if relocation target place is readonly, a copy relocation is needed
+  if ((pLayout.getOutputLDSection(*pReloc.targetRef().frag())->flag() &
+      llvm::ELF::SHF_WRITE) == 0)
+    return true;
+
+  return false;
+}
+

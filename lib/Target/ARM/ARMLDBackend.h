@@ -86,7 +86,7 @@ public:
   void initTargetSections(MCLinker& pLinker);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(MCLinker& pLinker);
+  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
   /// initRelocFactory - create and initialize RelocationFactory
   bool initRelocFactory(const MCLinker& pLinker);
@@ -104,7 +104,8 @@ public:
                       const LDSymbol& pInputSym,
                       MCLinker& pLinker,
                       const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                      const Output& pOutput,
+                      const LDSection& pSection);
 
   uint32_t machine() const
   { return llvm::ELF::EM_ARM; }
@@ -126,6 +127,9 @@ public:
 
   unsigned int bitclass() const
   { return 32; }
+
+  uint64_t defaultTextSegmentAddr() const
+  { return 0x8000; }
 
   /// doPreLayout - Backend can do any needed modification before layout
   void doPreLayout(const Output& pOutput,
@@ -160,11 +164,13 @@ public:
   /// @param pOutput - the output file
   /// @param pSection - the given LDSection
   /// @param pInfo - all options in the command line.
+  /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
   uint64_t emitSectionData(const Output& pOutput,
                            const LDSection& pSection,
                            const MCLDInfo& pInfo,
+                           const Layout& pLayout,
                            MemoryRegion& pRegion) const;
 
   ARMGOT& getGOT();
@@ -185,28 +191,16 @@ public:
 
   /// getTargetSectionOrder - compute the layout order of ARM target sections
   unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr) const;
+                                     const LDSection& pSectHdr,
+                                     const MCLDInfo& pInfo) const;
 
-  /// finalizeSymbol - finalize the symbol value
-  /// If the symbol's reserved field is not zero, MCLinker will call back this
-  /// function to ask the final value of the symbol
-  bool finalizeSymbol(LDSymbol& pSymbol) const;
-
-  /// allocateCommonSymbols - allocate common symbols in the corresponding
-  /// sections.
-  bool allocateCommonSymbols(const MCLDInfo& pLDInfo, MCLinker& pLinker) const;
+  /// finalizeTargetSymbols - finalize the symbol value
+  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
 
   /// readSection - read target dependent sections
   bool readSection(Input& pInput,
                    MCLinker& pLinker,
                    LDSection& pInputSectHdr);
-
-public:
-  bool isSymbolPreemptible(const ResolveInfo& pSym,
-                           const MCLDInfo& pLDInfo,
-                           const Output& pOutput) const;
-
-  bool isPIC(const MCLDInfo& pLDInfo, const Output& pOutput) const;
 
 private:
   void scanLocalReloc(Relocation& pReloc,
@@ -221,18 +215,19 @@ private:
                        const MCLDInfo& pLDInfo,
                        const Output& pOutput);
 
-  bool isSymbolNeedsPLT(const ResolveInfo& pSym,
-                        const MCLDInfo& pLDInfo,
-                        const Output& pOutput) const;
-
-  bool isSymbolNeedsDynRel(const ResolveInfo& pSym,
-                           const Output& pOutput,
-                           bool isAbsReloc) const;
-
-
   void checkValidReloc(Relocation& pReloc,
                        const MCLDInfo& pLDInfo,
                        const Output& pOutput) const;
+
+  /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
+  /// @param pSym - A resolved copy symbol that defined in BSS section
+  void addCopyReloc(ResolveInfo& pSym);
+
+  /// defineSymbolforCopyReloc - allocate a space in BSS section and
+  /// and force define the copy of pSym to BSS section
+  /// @return the output LDSymbol of the copy symbol
+  LDSymbol& defineSymbolforCopyReloc(MCLinker& pLinker,
+                                     const ResolveInfo& pSym);
 
   /// updateAddend - update addend value of the relocation if the
   /// the target symbol is a section symbol. Addend is the offset
@@ -250,8 +245,6 @@ private:
   void createARMPLTandRelPLT(MCLinker& pLinker, const Output& pOutput);
 
   void createARMRelDyn(MCLinker& pLinker, const Output& pOutput);
-
-  ELFFileFormat* getOutputFormat(const Output& pOutput) const;
 
 private:
   RelocationFactory* m_pRelocFactory;
@@ -294,3 +287,4 @@ private:
 } // namespace of mcld
 
 #endif
+

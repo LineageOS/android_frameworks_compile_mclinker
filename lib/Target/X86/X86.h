@@ -21,3 +21,4 @@ TargetLDBackend *createX86LDBackend(const llvm::Target&, const std::string&);
 } // namespace of mcld
 
 #endif
+

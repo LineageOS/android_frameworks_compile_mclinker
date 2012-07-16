@@ -10,7 +10,6 @@
 // filesystem (v3), but modified to remove exception handling and the
 // path class.
 //===----------------------------------------------------------------------===//
-
 #ifndef MCLD_PATH_H
 #define MCLD_PATH_H
 #ifdef ENABLE_UNITTEST
@@ -18,15 +17,17 @@
 #endif
 
 #include <llvm/Support/raw_ostream.h>
+#include <mcld/Config/Config.h>
+
+#include <iosfwd>
 #include <functional>
 #include <string>
 
-//#include "mcld/Support/Directory.h"
 namespace mcld {
 namespace sys  {
 namespace fs   {
 
-#ifdef LLVM_ON_WIN32
+#if defined(MCLD_ON_WIN32)
 const wchar_t       separator = L'\\';
 const wchar_t       preferred_separator = L'\\';
 #else
@@ -44,7 +45,7 @@ const char          preferred_separator = '/';
 class Path
 {
 public:
-#ifdef LLVM_ON_WIN32
+#if defined(MCLD_ON_WIN32)
   typedef wchar_t                            ValueType;
 #else
   typedef char                               ValueType;

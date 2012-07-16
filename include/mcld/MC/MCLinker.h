@@ -19,7 +19,6 @@
 
 #include <llvm/ADT/ilist.h>
 #include <llvm/MC/MCAssembler.h>
-#include <mcld/LD/StrSymPool.h>
 #include <mcld/LD/StaticResolver.h>
 #include <mcld/LD/LDSectionFactory.h>
 #include <mcld/LD/LDFileFormat.h>
@@ -42,6 +41,8 @@ class LDSection;
 class LDSectionFactory;
 class SectionMap;
 class Output;
+class EhFrame;
+class EhFrameHdr;
 
 /** \class MCLinker
  *  \brief MCLinker provides a pass to link object files.
@@ -64,9 +65,8 @@ public:
 public:
   MCLinker(TargetLDBackend& pBackend,
            MCLDInfo& pLDInfo,
-           LDContext& pContext,
-           SectionMap& pSectionMap,
-           const Resolver& pResolver = StaticResolver());
+           SectionMap& pSectionMap);
+
   ~MCLinker();
 
   // ----- about symbols  ----- //
@@ -111,12 +111,6 @@ public:
                          MCFragmentRef* pFragmentRef,
                          ResolveInfo::Visibility pVisibility = ResolveInfo::Default);
 
-  /// mergeSymbolTable - merge the symbol table and resolve symbols.
-  ///   Since in current design, MCLinker resolves symbols when reading symbol
-  ///   tables, this function do nothing.
-  bool mergeSymbolTable(Input& pInput)
-  { return true; }
-
   bool finalizeSymbols();
 
   // -----  sections  ----- //
@@ -144,7 +138,13 @@ public:
   /// getOrCreateSectData - for reader to map and perform section merging immediately
   llvm::MCSectionData& getOrCreateSectData(LDSection& pSection);
 
-  // -----  relocations ----- //
+  // -----  eh_frame sections  ----- //
+  /// addEhFrame - add an exception handling section
+  /// @param pSection - the input section
+  /// @param pArea - the memory area which pSection is within.
+  uint64_t addEhFrame(LDSection& pSection, MemoryArea& pArea);
+
+  // -----  relocations  ----- //
   /// addRelocation - add a relocation entry in MCLinker (only for object file)
   /// @param pType - the type of the relocation
   /// @param pResolveInfo - the symbol should be the symbol in the input file. MCLinker
@@ -155,6 +155,7 @@ public:
                             const LDSymbol& pSym,
                             ResolveInfo& pResolveInfo,
                             MCFragmentRef& pFragmentRef,
+                            const LDSection& pSection,
                             Relocation::Address pAddend = 0);
 
   /// applyRelocations - apply all relocation enties.
@@ -165,6 +166,8 @@ public:
   void syncRelocationResult();
 
   // -----  layout  ----- //
+  void initSectionMap();
+
   Layout& getLayout()
   { return m_Layout; }
 
@@ -182,10 +185,10 @@ public:
 
   // -----  capacity  ----- //
   MCLDInfo& getLDInfo()
-  { return m_Info; }
+  { return m_LDInfo; }
 
   const MCLDInfo& getLDInfo() const
-  { return m_Info; }
+  { return m_LDInfo; }
 
 private:
   LDSymbol* defineSymbolForcefully(const llvm::StringRef& pName,
@@ -257,18 +260,15 @@ private:
 
 private:
   TargetLDBackend& m_Backend;
-  MCLDInfo& m_Info;
-  LDContext& m_Output;
+  MCLDInfo& m_LDInfo;
   SectionMap& m_SectionMap;
   LDSymbolFactory m_LDSymbolFactory;
   LDSectionFactory m_LDSectHdrFactory;
   LDSectionDataFactory m_LDSectDataFactory;
-  SectionMerger m_SectionMerger;
-  StrSymPool m_StrSymPool;
+  SectionMerger* m_pSectionMerger;
   Layout m_Layout;
   RelocationListType m_RelocationList;
   SymbolCategory m_OutputSymbols;
-
 };
 
 #include "MCLinker.tcc"

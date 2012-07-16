@@ -28,10 +28,10 @@ public:
   ELFExecFileFormat(GNULDBackend& pBackend) : ELFFileFormat(pBackend)
   {}
 
-  void initObjectType(MCLinker& pLinker)
-  { /** TODO **/ }
+  void initObjectType(MCLinker& pLinker);
 };
 
 } // namespace of mcld
 
 #endif
+

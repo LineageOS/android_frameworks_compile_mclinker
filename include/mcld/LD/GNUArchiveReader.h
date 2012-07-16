@@ -13,8 +13,6 @@
 #endif
 
 #include "mcld/LD/ArchiveReader.h"
-#include "mcld/Support/Path.h"
-#include <llvm/ADT/OwningPtr.h>
 
 #include <vector>
 #include <string>
@@ -27,6 +25,7 @@ class MemoryBuffer;
 
 namespace mcld
 {
+class MemoryArea;
 class MCLDInfo;
 class Input;
 class InputTree;
@@ -37,13 +36,24 @@ class InputTree;
 class GNUArchiveReader : public ArchiveReader
 {
 private:
-  struct ArchiveMemberHeader;
   struct SymbolTableEntry;
 
+  enum Constant
+  {
+    /// The length of the magic strign at the end of an archive member header.
+    HeaderFinalMagicSize = 2,
+    /// The length of the magic string at the start of an archive.
+    ArchiveMagicSize = 8
+  };
+  /// The magic string at the start of an archive.
+  static const char ArchiveMagic[ArchiveMagicSize];
+  static const char ThinArchiveMagic[ArchiveMagicSize];
+  /// The Magic string expected at the end of an archive member header.
+  static const char HeaderFinalMagic[HeaderFinalMagicSize];
+
 public:
-  explicit GNUArchiveReader(MCLDInfo &pLDInfo, LDReader::Endian endian)
-  : m_pLDInfo(pLDInfo),
-    m_endian(endian)
+  explicit GNUArchiveReader(MCLDInfo &pLDInfo)
+  : m_pLDInfo(pLDInfo)
   { }
 
   ~GNUArchiveReader()
@@ -63,23 +73,23 @@ private:
   /// second, read extended file name which is used in thin archive
   InputTree *setupNewArchive(Input &pInput, size_t off);
 
-  /// parse the archive header, and return the member size
-  size_t parseMemberHeader(llvm::OwningPtr<llvm::MemoryBuffer> &mapFile,
+  /// read the archive header, and return the member size
+  size_t readMemberHeader(MemoryArea &pArea,
                    off_t off,
                    std::string *p_Name,
                    off_t *nestedOff,
                    std::string &p_ExtendedName);
 
-  void readSymbolTable(llvm::OwningPtr<llvm::MemoryBuffer> &mapFile,
+  void readSymbolTable(MemoryArea &pArea,
                       std::vector<SymbolTableEntry> &pSymbolTable,
                       off_t start,
                       size_t size);
 
 private:
   MCLDInfo &m_pLDInfo;
-  LDReader::Endian m_endian;
 };
 
 } // namespace of mcld
 
 #endif
+

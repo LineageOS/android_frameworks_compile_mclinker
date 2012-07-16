@@ -8,11 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/ADT/Twine.h>
-#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/DataTypes.h>
 #include <llvm/Support/ELF.h>
 #include <mcld/MC/MCLDInfo.h>
 #include <mcld/LD/Layout.h>
+#include <mcld/Support/MsgHandling.h>
 
 #include "X86RelocationFactory.h"
 #include "X86RelocationFunctions.h"
@@ -56,11 +56,8 @@ void X86RelocationFactory::applyRelocation(Relocation& pRelocation,
   };
 
   if (type >= sizeof (apply_functions) / sizeof (apply_functions[0]) ) {
-    llvm::report_fatal_error(llvm::Twine("Unknown relocation type ") +
-			     llvm::Twine((int) type) +
-			     llvm::Twine(" to symbol `") +
-                             pRelocation.symInfo()->name() +
-                             llvm::Twine("'."));
+    fatal(diag::unknown_relocation) << (int)type <<
+                                       pRelocation.symInfo()->name();
     return;
   }
 
@@ -68,22 +65,18 @@ void X86RelocationFactory::applyRelocation(Relocation& pRelocation,
   Result result = apply_functions[type].func(pRelocation, pLDInfo, *this);
 
   // check result
+  if (OK == result) {
+    return;
+  }
   if (Overflow == result) {
-    llvm::report_fatal_error(llvm::Twine("Applying relocation `") +
-                             llvm::Twine(apply_functions[type].name) +
-                             llvm::Twine("' causes overflow. on symbol: `") +
-                             llvm::Twine(pRelocation.symInfo()->name()) +
-                             llvm::Twine("'."));
+    error(diag::result_overflow) << apply_functions[type].name
+                                 << pRelocation.symInfo()->name();
     return;
   }
 
   if (BadReloc == result) {
-    llvm::report_fatal_error(llvm::Twine("Applying relocation `") +
-                             llvm::Twine(apply_functions[type].name) +
-                             llvm::Twine("' encounters unexpected opcode. "
-                                         "on symbol: `") +
-                             llvm::Twine(pRelocation.symInfo()->name()) +
-                             llvm::Twine("'."));
+    error(diag::result_badreloc) << apply_functions[type].name
+                                 << pRelocation.symInfo()->name();
     return;
   }
 }
@@ -104,7 +97,7 @@ helper_use_relative_reloc(const ResolveInfo& pSym,
 
 {
   // if symbol is dynamic or undefine or preemptible
-  if(pSym.isDyn() ||
+  if (pSym.isDyn() ||
      pSym.isUndef() ||
      pFactory.getTarget().isSymbolPreemptible(pSym, pLDInfo, pLDInfo.output()))
     return false;
@@ -133,7 +126,7 @@ GOTEntry& helper_get_GOT_and_init(Relocation& pReloc,
       Relocation& rel_entry =
         *ld_backend.getRelDyn().getEntry(*rsym, true, exist);
       assert(!exist && "GOT entry not exist, but DynRel entry exist!");
-      if(helper_use_relative_reloc(*rsym, pLDInfo, pParent)) {
+      if (helper_use_relative_reloc(*rsym, pLDInfo, pParent)) {
         // Initialize got entry to target symbol address
         got_entry.setContent(pReloc.symValue());
         rel_entry.setType(llvm::ELF::R_386_RELATIVE);
@@ -147,7 +140,7 @@ GOTEntry& helper_get_GOT_and_init(Relocation& pReloc,
       rel_entry.targetRef().assign(got_entry);
     }
     else {
-      llvm::report_fatal_error("No GOT entry reserved for GOT type relocation!");
+      fatal(diag::reserve_entry_number_mismatch) << "GOT";
     }
   }
   return got_entry;
@@ -157,7 +150,7 @@ GOTEntry& helper_get_GOT_and_init(Relocation& pReloc,
 static
 X86RelocationFactory::Address helper_GOT_ORG(X86RelocationFactory& pParent)
 {
-  return pParent.getTarget().getGOT().getSection().addr();
+  return pParent.getTarget().getGOTPLT().getSection().addr();
 }
 
 
@@ -167,7 +160,9 @@ X86RelocationFactory::Address helper_GOT(Relocation& pReloc,
                                          X86RelocationFactory& pParent)
 {
   GOTEntry& got_entry = helper_get_GOT_and_init(pReloc, pLDInfo,  pParent);
-  return helper_GOT_ORG(pParent) + pParent.getLayout().getOutputOffset(got_entry);
+  X86RelocationFactory::Address got_addr =
+    pParent.getTarget().getGOT().getSection().addr();
+  return got_addr + pParent.getLayout().getOutputOffset(got_entry);
 }
 
 
@@ -195,7 +190,7 @@ PLTEntry& helper_get_PLT_and_init(Relocation& pReloc,
       rel_entry.setSymInfo(rsym);
     }
     else {
-      llvm::report_fatal_error("No PLT entry reserved for PLT type relocation!");
+      fatal(diag::reserve_entry_number_mismatch) << "PLT";
     }
   }
   return plt_entry;
@@ -235,7 +230,7 @@ void helper_DynRel(Relocation& pReloc,
   rel_entry.setType(pType);
   rel_entry.targetRef() = pReloc.targetRef();
 
-  if(pType == llvm::ELF::R_386_RELATIVE)
+  if (pType == llvm::ELF::R_386_RELATIVE)
     rel_entry.setSymInfo(0);
   else
     rel_entry.setSymInfo(rsym);
@@ -263,18 +258,34 @@ X86RelocationFactory::Result abs32(Relocation& pReloc,
   RelocationFactory::DWord A = pReloc.target() + pReloc.addend();
   RelocationFactory::DWord S = pReloc.symValue();
 
-  if(rsym->isLocal() && (rsym->reserved() & X86GNULDBackend::ReserveRel)) {
+  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
+                                                  *(pReloc.targetRef().frag()));
+  assert(NULL != target_sect);
+  // If the flag of target section is not ALLOC, we will not scan this relocation
+  // but perform static relocation. (e.g., applying .debug section)
+  if (0x0 == (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+    pReloc.target() = S + A;
+    return X86RelocationFactory::OK;
+  }
+
+  // A local symbol may need REL Type dynamic relocation
+  if (rsym->isLocal() && (rsym->reserved() & X86GNULDBackend::ReserveRel)) {
     helper_DynRel(pReloc, llvm::ELF::R_386_RELATIVE, pParent);
     pReloc.target() = S + A;
     return X86RelocationFactory::OK;
   }
-  else if(!rsym->isLocal()) {
-    if(rsym->reserved() & X86GNULDBackend::ReservePLT) {
+
+  // An external symbol may need PLT and dynamic relocation
+  if (!rsym->isLocal()) {
+    if (rsym->reserved() & X86GNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
       pReloc.target() = S + A;
     }
-    if(rsym->reserved() & X86GNULDBackend::ReserveRel) {
-      if(helper_use_relative_reloc(*rsym, pLDInfo, pParent) ) {
+    // If we generate a dynamic relocation (except R_386_RELATIVE)
+    // for a place, we should not perform static relocation on it
+    // in order to keep the addend store in the place correct.
+    if (rsym->reserved() & X86GNULDBackend::ReserveRel) {
+      if (helper_use_relative_reloc(*rsym, pLDInfo, pParent)) {
         helper_DynRel(pReloc, llvm::ELF::R_386_RELATIVE, pParent);
       }
       else {
@@ -294,10 +305,42 @@ X86RelocationFactory::Result rel32(Relocation& pReloc,
                                    const MCLDInfo& pLDInfo,
                                    X86RelocationFactory& pParent)
 {
-  // perform static relocation
+  ResolveInfo* rsym = pReloc.symInfo();
   RelocationFactory::DWord A = pReloc.target() + pReloc.addend();
-  pReloc.target() = pReloc.symValue() + A
-      - pReloc.place(pParent.getLayout());
+  RelocationFactory::DWord S = pReloc.symValue();
+  RelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+
+  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
+                                                  *(pReloc.targetRef().frag()));
+  assert(NULL != target_sect);
+  // If the flag of target section is not ALLOC, we will not scan this relocation
+  // but perform static relocation. (e.g., applying .debug section)
+  if (0x0 == (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+    pReloc.target() = S + A - P;
+    return X86RelocationFactory::OK;
+  }
+
+  // An external symbol may need PLT and dynamic relocation
+  if (!rsym->isLocal()) {
+    if (rsym->reserved() & X86GNULDBackend::ReservePLT) {
+       S = helper_PLT(pReloc, pParent);
+       pReloc.target() = S + A - P;
+    }
+    if (pParent.getTarget().symbolNeedsDynRel(
+          *rsym, (rsym->reserved() & X86GNULDBackend::ReservePLT), pLDInfo,
+                  pLDInfo.output(), false)) {
+      if (helper_use_relative_reloc(*rsym, pLDInfo, pParent) ) {
+        helper_DynRel(pReloc, llvm::ELF::R_386_RELATIVE, pParent);
+      }
+      else {
+        helper_DynRel(pReloc, pReloc.type(), pParent);
+          return X86RelocationFactory::OK;
+      }
+    }
+  }
+
+   // perform static relocation
+  pReloc.target() = S + A - P;
   return X86RelocationFactory::OK;
 }
 
@@ -331,7 +374,7 @@ X86RelocationFactory::Result got32(Relocation& pReloc,
                                    const MCLDInfo& pLDInfo,
                                    X86RelocationFactory& pParent)
 {
-  if(!(pReloc.symInfo()->reserved()
+  if (!(pReloc.symInfo()->reserved()
        & (X86GNULDBackend::ReserveGOT |X86GNULDBackend::GOTRel))) {
     return X86RelocationFactory::BadReloc;
   }
@@ -350,7 +393,7 @@ X86RelocationFactory::Result plt32(Relocation& pReloc,
 {
   // PLT_S depends on if there is a PLT entry.
   X86RelocationFactory::Address PLT_S;
-  if((pReloc.symInfo()->reserved() & X86GNULDBackend::ReservePLT))
+  if ((pReloc.symInfo()->reserved() & X86GNULDBackend::ReservePLT))
     PLT_S = helper_PLT(pReloc, pParent);
   else
     PLT_S = pReloc.symValue();

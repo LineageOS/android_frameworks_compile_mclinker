@@ -8,14 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include <llvm/ADT/Twine.h>
-#include <llvm/Support/ErrorHandling.h>
 #include <mcld/ADT/SizeTraits.h>
 #include <mcld/LD/Layout.h>
+#include <mcld/LD/LDContext.h>
 #include <mcld/LD/LDFileFormat.h>
+#include <mcld/LD/LDSection.h>
 #include <mcld/MC/MCLinker.h>
 #include <mcld/MC/MCLDInfo.h>
-#include <mcld/LD/LDSection.h>
-#include <mcld/LD/LDContext.h>
+#include <mcld/Support/MsgHandling.h>
 #include <mcld/Target/TargetLDBackend.h>
 #include <cassert>
 
@@ -132,16 +132,6 @@ void Layout::addInputRange(const llvm::MCSectionData& pSD,
   }
   else {
     range_list = m_SDRangeMap[&pSD];
-#ifdef MCLD_DEBUG
-    RangeList::iterator rangeIter, rangeEnd = range_list->end();
-    for (rangeIter = range_list->begin(); rangeIter != rangeEnd; ++rangeIter) {
-      if (&pInputHdr == rangeIter->header) {
-        llvm::report_fatal_error(llvm::Twine("Trying to map the same LDSection: ") +
-                                 pInputHdr.name() +
-                                 llvm::Twine(" into the different ranges.\n"));
-      }
-    }
-#endif
   }
 
   // make a range and push it into the range list
@@ -425,9 +415,7 @@ Layout::getFragmentRef(const LDSection& pInputSection, uint64_t pOffset)
 
   // range not found
   if (range == rangeEnd) {
-    llvm::report_fatal_error(llvm::Twine("section ") +
-                             pInputSection.name() +
-                             llvm::Twine(" never be in the range list.\n"));
+    fatal(diag::err_section_not_laid_out) << pInputSection.name();
   }
 
   return getFragmentRef(*range, pOffset);
@@ -481,7 +469,7 @@ Layout::getFragmentRef(const llvm::MCFragment& pFrag, uint64_t pBigOffset)
                              llvm::Twine(" never be in the range list.\n"));
   }
 
-  return getFragmentRef(*range, target_offset);
+  return getFragmentRef(*range, pBigOffset);
 }
 
 uint64_t Layout::getOutputOffset(const llvm::MCFragment& pFrag)
@@ -516,7 +504,8 @@ uint64_t Layout::getOutputOffset(const MCFragmentRef& pFragRef) const
 }
 
 void Layout::sortSectionOrder(const Output& pOutput,
-                              const TargetLDBackend& pBackend)
+                              const TargetLDBackend& pBackend,
+                              const MCLDInfo& pInfo)
 {
   typedef std::pair<LDSection*, unsigned int> SectOrder;
   typedef std::vector<SectOrder > SectListTy;
@@ -525,7 +514,7 @@ void Layout::sortSectionOrder(const Output& pOutput,
   for (size_t index = 0; index < m_SectionOrder.size(); ++index)
     sect_list.push_back(std::make_pair(
                     m_SectionOrder[index],
-                    pBackend.getSectionOrder(pOutput, *m_SectionOrder[index])));
+                    pBackend.getSectionOrder(pOutput, *m_SectionOrder[index], pInfo)));
 
   // simple insertion sort should be fine for general cases such as so and exec
   for (unsigned int i = 1; i < sect_list.size(); ++i) {
@@ -545,7 +534,9 @@ void Layout::sortSectionOrder(const Output& pOutput,
   }
 }
 
-bool Layout::layout(Output& pOutput, const TargetLDBackend& pBackend)
+bool Layout::layout(Output& pOutput,
+                    const TargetLDBackend& pBackend,
+                    const MCLDInfo& pInfo)
 {
   // determine what sections in output context will go into final output, and
   // push the needed sections into m_SectionOrder for later processing
@@ -558,10 +549,12 @@ bool Layout::layout(Output& pOutput, const TargetLDBackend& pBackend)
     switch (sect->kind()) {
       // ignore if there is no SectionData for certain section kinds
       case LDFileFormat::Regular:
-      case LDFileFormat::Note:
       case LDFileFormat::Target:
       case LDFileFormat::MetaData:
       case LDFileFormat::BSS:
+      case LDFileFormat::Debug:
+      case LDFileFormat::EhFrame:
+      case LDFileFormat::GCCExceptTable:
         if (0 != sect->size()) {
           if (NULL != sect->getSectionData() &&
               !sect->getSectionData()->getFragmentList().empty()) {
@@ -581,6 +574,8 @@ bool Layout::layout(Output& pOutput, const TargetLDBackend& pBackend)
       // ignore if section size is 0
       case LDFileFormat::NamePool:
       case LDFileFormat::Relocation:
+      case LDFileFormat::Note:
+      case LDFileFormat::EhFrameHdr:
         if (0 != sect->size())
           m_SectionOrder.push_back(sect);
         break;
@@ -590,47 +585,22 @@ bool Layout::layout(Output& pOutput, const TargetLDBackend& pBackend)
           ;
         }
         break;
-      case LDFileFormat::Debug:
-        if (0 != sect->size()) {
-          m_SectionOrder.push_back(sect);
-          llvm::errs() << "WARNING: DWRAF debugging has not been fully supported yet.\n"
-                       << "section `" << sect->name() << "'.\n";
-        }
-        break;
-      case LDFileFormat::Exception:
-        if (0 != sect->size()) {
-          llvm::errs() << "WARNING: Exception handling has not been fully supported yet.\n"
-                       << "section `" << sect->name() << "'.\n";
-          if (NULL != sect->getSectionData() &&
-              !sect->getSectionData()->getFragmentList().empty()) {
-            // make sure that all fragments are valid
-            llvm::MCFragment& frag =
-              sect->getSectionData()->getFragmentList().back();
-            setFragmentLayoutOrder(&frag);
-            setFragmentLayoutOffset(&frag);
-          }
-          m_SectionOrder.push_back(sect);
-        }
-        break;
       case LDFileFormat::Version:
         if (0 != sect->size()) {
           m_SectionOrder.push_back(sect);
-          llvm::errs() << "WARNING: Symbolic versioning has not been fully supported yet.\n"
-                       << "section `" << sect->name() << "'.\n";
+          warning(diag::warn_unsupported_symbolic_versioning) << sect->name();
         }
         break;
       default:
-        llvm::report_fatal_error(llvm::Twine("Unsupported section kind of `") +
-                                 sect->name() +
-                                 llvm::Twine("': ") +
-                                 llvm::Twine(sect->kind()) +
-                                 llvm::Twine(".\n"));
+        if (0 != sect->size()) {
+          error(diag::err_unsupported_section) << sect->name() << sect->kind();
+        }
         break;
     }
   }
 
   // perform sorting on m_SectionOrder to get a ordering for final layout
-  sortSectionOrder(pOutput, pBackend);
+  sortSectionOrder(pOutput, pBackend, pInfo);
 
   // Backend defines the section start offset for section 1.
   uint64_t offset = pBackend.sectionStartOffset();

@@ -69,9 +69,13 @@ bool ELFDynObjReader::readDSO(Input& pInput)
   MemoryRegion* region = pInput.memArea()->request(0, hdr_size);
   uint8_t* ELF_hdr = region->start();
 
-  bool result = m_pELFReader->readSectionHeaders(pInput, m_Linker, ELF_hdr);
+  bool shdr_result = m_pELFReader->readSectionHeaders(pInput, m_Linker, ELF_hdr);
   pInput.memArea()->release(region);
-  return result;
+
+  // read .dynamic to get the correct SONAME
+  bool dyn_result = m_pELFReader->readDynamic(pInput);
+
+  return (shdr_result && dyn_result);
 }
 
 /// readSymbols
@@ -80,9 +84,20 @@ bool ELFDynObjReader::readSymbols(Input& pInput)
   assert(pInput.hasMemArea());
 
   LDSection* symtab_shdr = pInput.context()->getSection(".dynsym");
+  if (NULL == symtab_shdr) {
+    note(diag::note_has_no_symtab) << pInput.name()
+                                   << pInput.path()
+                                   << ".dynsym";
+    return true;
+  }
+
   LDSection* strtab_shdr = symtab_shdr->getLink();
-  if (NULL == symtab_shdr || NULL == strtab_shdr)
+  if (NULL == strtab_shdr) {
+    fatal(diag::fatal_cannot_read_strtab) << pInput.name()
+                                          << pInput.path()
+                                          << ".dynsym";
     return false;
+  }
 
   MemoryRegion* symtab_region = pInput.memArea()->request(symtab_shdr->offset(),
                                                           symtab_shdr->size());

@@ -58,7 +58,10 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
     switch(sect->kind()) {
       case LDFileFormat::Regular:
       case LDFileFormat::Relocation:
-      case LDFileFormat::Target: {
+      case LDFileFormat::Target:
+      case LDFileFormat::Debug:
+      case LDFileFormat::GCCExceptTable:
+      case LDFileFormat::EhFrame: {
         region = pOutput.memArea()->request(sect->offset(), sect->size());
         if (NULL == region) {
           llvm::report_fatal_error(llvm::Twine("cannot get enough memory region for output section[") +
@@ -72,11 +75,10 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
       case LDFileFormat::Null:
       case LDFileFormat::NamePool:
       case LDFileFormat::BSS:
-      case LDFileFormat::Debug:
       case LDFileFormat::Note:
       case LDFileFormat::MetaData:
-      case LDFileFormat::Exception:
       case LDFileFormat::Version:
+      case LDFileFormat::EhFrameHdr:
         // ignore these sections
         continue;
       default: {
@@ -91,7 +93,12 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
 
     // write out sections with data
     switch(sect->kind()) {
-      case LDFileFormat::Regular: {
+      case LDFileFormat::Regular:
+      case LDFileFormat::Debug:
+      case LDFileFormat::GCCExceptTable:
+      case LDFileFormat::EhFrame: {
+        // FIXME: if optimization of exception handling sections is enabled,
+        // then we should emit these sections by the other way.
         emitSectionData(m_Linker.getLayout(), *sect, *region);
         break;
       }
@@ -99,11 +106,16 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
         emitRelocation(m_Linker.getLayout(), pOutput, *sect, *region);
         break;
       case LDFileFormat::Target:
-        target().emitSectionData(pOutput, *sect, m_Linker.getLDInfo(), *region);
+        target().emitSectionData(pOutput,
+                                 *sect,
+                                 m_Linker.getLDInfo(),
+                                 m_Linker.getLayout(),
+                                 *region);
         break;
       default:
         continue;
     }
+
   } // end of for loop
 
   if (32 == target().bitclass()) {
@@ -115,6 +127,8 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
                      m_Linker.getLayout(),
                      target(),
                      pOutput);
+
+    emitELF32ProgramHeader(pOutput, target());
 
     emitELF32SectionHeader(pOutput, m_Linker);
   }
@@ -128,11 +142,13 @@ llvm::error_code ELFDynObjWriter::writeDynObj(Output& pOutput)
                      target(),
                      pOutput);
 
+    emitELF64ProgramHeader(pOutput, target());
+
     emitELF64SectionHeader(pOutput, m_Linker);
   }
   else
     return make_error_code(errc::not_supported);
-
+  pOutput.memArea()->clear();
   return llvm::make_error_code(llvm::errc::success);
 }
 

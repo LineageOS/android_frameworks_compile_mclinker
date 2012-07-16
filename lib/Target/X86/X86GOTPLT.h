@@ -12,7 +12,7 @@
 #include <gtest.h>
 #endif
 
-#include "mcld/Target/GOT.h"
+#include <mcld/Target/GOT.h>
 
 namespace mcld
 {
@@ -22,7 +22,7 @@ class LDSection;
  *  \brief X86 .got.plt section.
  */
 
-const unsigned int X86GOT0Num = 3;
+const unsigned int X86GOTPLT0Num = 3;
 
 class X86GOTPLT : public GOT
 {
@@ -47,17 +47,19 @@ public:
 
 // For GOT0
 public:
-  void applyGOT0(const uint64_t pAddress);
+  void applyGOT0(uint64_t pAddress);
 
 // For GOTPLT
 public:
-  void reserveGOTPLTEntry();
+  void reserveEntry(size_t pNum = 1);
 
-  void applyAllGOTPLT(const uint64_t pPLTBase);
+  GOTEntry* getEntry(const ResolveInfo& pSymbol, bool& pExist);
+
+  void applyAllGOTPLT(uint64_t pPLTBase,
+                      unsigned int pPLT0Size,
+                      unsigned int pPLT1Size);
 
   GOTEntry*& lookupGOTPLTMap(const ResolveInfo& pSymbol);
-
-  iterator getNextGOTPLTEntry();
 
 private:
   iterator m_GOTPLTIterator;
@@ -67,3 +69,4 @@ private:
 } // namespace of mcld
 
 #endif
+

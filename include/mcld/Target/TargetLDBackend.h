@@ -11,6 +11,7 @@
 
 #include <llvm/Support/DataTypes.h>
 #include <mcld/MC/MCLDOutput.h>
+#include <mcld/LD/EhFrame.h>
 
 namespace mcld {
 
@@ -23,6 +24,7 @@ class ObjectReader;
 class DynObjReader;
 class ObjectWriter;
 class DynObjWriter;
+class ExecWriter;
 class LDContext;
 class SectionMap;
 class Output;
@@ -50,9 +52,9 @@ public:
   virtual bool initTargetSectionMap(SectionMap& pSectionMap) { return true;}
   virtual void initTargetSegments(MCLinker& pLinker) { }
   virtual void initTargetSections(MCLinker& pLinker) { }
-  virtual void initTargetSymbols(MCLinker& pLinker) { }
+  virtual void initTargetSymbols(MCLinker& pLinker, const Output& pOutput) { }
   virtual void initTargetRelocation(MCLinker& pLinker) { }
-  virtual bool initStandardSymbols(MCLinker& pLinker) = 0;
+  virtual bool initStandardSymbols(MCLinker& pLinker, const Output& pOutput) = 0;
   virtual bool initRelocFactory(const MCLinker& pLinker) = 0;
 
   virtual RelocationFactory* getRelocFactory() = 0;
@@ -68,7 +70,8 @@ public:
                               const LDSymbol& pInputSym,
                               MCLinker& pLinker,
                               const MCLDInfo& pLDInfo,
-                              const Output& pOutput) = 0;
+                              const Output& pOutput,
+                              const LDSection& pSection) = 0;
 
   // -----  format dependent  ----- //
   virtual bool initArchiveReader(MCLinker&, MCLDInfo&) = 0;
@@ -76,6 +79,7 @@ public:
   virtual bool initDynObjReader(MCLinker&) = 0;
   virtual bool initObjectWriter(MCLinker&) = 0;
   virtual bool initDynObjWriter(MCLinker&) = 0;
+  virtual bool initExecWriter(MCLinker&) = 0;
 
   virtual bool initExecSections(MCLinker&) = 0;
   virtual bool initDynObjSections(MCLinker&) = 0;
@@ -85,6 +89,7 @@ public:
   virtual DynObjReader *getDynObjReader() = 0;
   virtual ObjectWriter *getObjectWriter() = 0;
   virtual DynObjWriter *getDynObjWriter() = 0;
+  virtual ExecWriter *getExecWriter() = 0;
 
   virtual LDFileFormat* getDynObjFileFormat() = 0;
   virtual LDFileFormat* getExecFileFormat() = 0;
@@ -99,21 +104,30 @@ public:
                           const MCLDInfo& pInfo,
                           MCLinker& pLinker) = 0;
 
+  /// postProcessing - Backend can do any needed modification in the final stage
+  virtual void postProcessing(const Output& pOutput,
+                              const MCLDInfo& pInfo,
+                              MCLinker& pLinker) = 0;
+
   /// Is the target machine little endian? **/
   virtual bool isLittleEndian() const = 0;
 
   /// bit class. the bit length of the target machine, 32 or 64 **/
   virtual unsigned int bitclass() const = 0;
 
-  /// the page size of the target machine
-  virtual unsigned int pagesize() const = 0;
+  /// the common page size of the target machine
+  virtual uint64_t commonPageSize(const MCLDInfo& pInfo) const = 0;
+
+  /// the abi page size of the target machine
+  virtual uint64_t abiPageSize(const MCLDInfo& pInfo) const = 0;
 
   /// section start offset in the output file
   virtual size_t sectionStartOffset() const = 0;
 
   /// computeSectionOrder - compute the layout order of the given section
   virtual unsigned int getSectionOrder(const Output& pOutput,
-                                       const LDSection& pSectHdr) const = 0;
+                                       const LDSection& pSectHdr,
+                                       const MCLDInfo& pInfo) const = 0;
 
   /// sizeNamePools - compute the size of regular name pools
   /// In ELF executable files, regular name pools are .symtab, .strtab.,
@@ -127,7 +141,7 @@ public:
   /// then it will ask backend to finalize the symbol value.
   /// @return ture - if backend set the symbol value sucessfully
   /// @return false - if backend do not recognize the symbol
-  virtual bool finalizeSymbol(LDSymbol& pSymbol) const = 0;
+  virtual bool finalizeSymbols(MCLinker& pLinker, const Output& pOutput) = 0;
 
   /// allocateCommonSymbols - allocate common symbols in the corresponding
   /// sections.
@@ -138,6 +152,22 @@ public:
                            MCLinker& pLinker,
                            LDSection& pInputSectHdr)
   { return true; }
+
+  /// dyld - the name of the default dynamic linker
+  virtual const char* dyld() const = 0;
+
+  /// sizeInterp - compute the size of program interpreter's name
+  /// In ELF executables, this is the length of dynamic linker's path name
+  virtual void sizeInterp(const Output& pOutput, const MCLDInfo& pLDInfo) = 0;
+
+public:
+  EhFrame* getEhFrame();
+
+  const EhFrame* getEhFrame() const;
+
+private:
+  /// m_pEhFrame - section .eh_frame
+  EhFrame* m_pEhFrame;
 
 };
 

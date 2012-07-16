@@ -27,6 +27,7 @@ DECL_ARM_APPLY_RELOC_FUNC(movt_abs)         \
 DECL_ARM_APPLY_RELOC_FUNC(movt_prel)        \
 DECL_ARM_APPLY_RELOC_FUNC(thm_movw_abs_nc)  \
 DECL_ARM_APPLY_RELOC_FUNC(thm_movw_prel_nc) \
+DECL_ARM_APPLY_RELOC_FUNC(thm_movw_brel)    \
 DECL_ARM_APPLY_RELOC_FUNC(thm_movt_abs)     \
 DECL_ARM_APPLY_RELOC_FUNC(thm_movt_prel)    \
 DECL_ARM_APPLY_RELOC_FUNC(prel31)           \
@@ -66,7 +67,7 @@ DECL_ARM_APPLY_RELOC_FUNC(unsupport)
   { &call,              27, "R_ARM_PLT32"             },  \
   { &call,              28, "R_ARM_CALL"              },  \
   { &call,              29, "R_ARM_JUMP24"            },  \
-  { &unsupport,         30, "R_ARM_THM_JUMP24"        },  \
+  { &thm_call,          30, "R_ARM_THM_JUMP24"        },  \
   { &unsupport,         31, "R_ARM_BASE_ABS"          },  \
   { &unsupport,         32, "R_ARM_ALU_PCREL_7_0"     },  \
   { &unsupport,         33, "R_ARM_ALU_PCREL_15_8"    },  \
@@ -123,9 +124,9 @@ DECL_ARM_APPLY_RELOC_FUNC(unsupport)
   { &unsupport,         84, "R_ARM_MOVW_BREL_NC"      },  \
   { &unsupport,         85, "R_ARM_MOVT_BREL"         },  \
   { &unsupport,         86, "R_ARM_MOVW_BREL"         },  \
-  { &unsupport,         87, "R_ARM_THM_MOVW_BREL_NC"  },  \
-  { &unsupport,         88, "R_ARM_THM_MOVT_BREL"     },  \
-  { &unsupport,         89, "R_ARM_THM_MOVW_BREL"     },  \
+  { &thm_movw_brel,     87, "R_ARM_THM_MOVW_BREL_NC"  },  \
+  { &thm_movt_prel,     88, "R_ARM_THM_MOVT_BREL"     },  \
+  { &thm_movw_brel,     89, "R_ARM_THM_MOVW_BREL"     },  \
   { &unsupport,         90, "R_ARM_TLS_GOTDESC"       },  \
   { &unsupport,         91, "R_ARM_TLS_CALL"          },  \
   { &unsupport,         92, "R_ARM_TLS_DESCSEQ"       },  \

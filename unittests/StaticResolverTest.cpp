@@ -6,12 +6,22 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <mcld/Support/TargetSelect.h>
 #include <mcld/LD/StaticResolver.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/ResolveInfoFactory.h>
+#include <mcld/LD/DiagnosticPrinter.h>
+#include <mcld/LD/DiagnosticLineInfo.h>
+#include <mcld/LD/TextDiagnosticPrinter.h>
+#include <mcld/Support/MsgHandling.h>
+#include <mcld/MC/MCLDInfo.h>
 #include "StaticResolverTest.h"
 
 #include <iostream>
+#include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/FileSystem.h>
+#include <mcld/LD/DiagnosticLineInfo.h>
+#include <mcld/LD/TextDiagnosticPrinter.h>
 
 using namespace std;
 using namespace mcld;
@@ -23,6 +33,13 @@ StaticResolverTest::StaticResolverTest()
   // create testee. modify it if need
   m_pResolver = new StaticResolver();
   m_pFactory = new ResolveInfoFactory();
+  mcld::InitializeAllDiagnostics();
+
+  m_pLDInfo = new MCLDInfo("arm-none-linux-gnueabi", 10, 10);
+  m_pLineInfo = new DiagnosticLineInfo();
+  m_pPrinter = new mcld::DiagnosticPrinter(); //llvm::errs(), *m_pLDInfo);
+  mcld::InitializeDiagnosticEngine(*m_pLDInfo, m_pLineInfo, m_pPrinter);
+
 }
 
 // Destructor can do clean-up work that doesn't throw exceptions here.
@@ -30,6 +47,7 @@ StaticResolverTest::~StaticResolverTest()
 {
   delete m_pResolver;
   delete m_pFactory;
+  delete m_pLDInfo;
 }
 
 // SetUp() will be called immediately before each test.
@@ -55,10 +73,9 @@ TEST_F( StaticResolverTest, MDEF ) {
   ASSERT_TRUE( mcld::ResolveInfo::define_flag == new_sym->info());
   ASSERT_TRUE( mcld::ResolveInfo::define_flag == old_sym->info());
   bool override = true;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Abort, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
-  ASSERT_STREQ( "multiple definitions of `abc'.", m_pResolver->mesg().c_str() );
 }
 
 TEST_F( StaticResolverTest, DynDefAfterDynUndef ) {
@@ -82,8 +99,8 @@ TEST_F( StaticResolverTest, DynDefAfterDynUndef ) {
   ASSERT_EQ( mcld::ResolveInfo::Define,    old_sym->desc());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
   ASSERT_EQ(1, old_sym->size());
 }
@@ -109,8 +126,8 @@ TEST_F( StaticResolverTest, DynDefAfterDynDef ) {
   ASSERT_EQ( mcld::ResolveInfo::Define, old_sym->desc());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
   ASSERT_EQ(1, old_sym->size());
 }
@@ -136,8 +153,8 @@ TEST_F( StaticResolverTest, DynUndefAfterDynUndef ) {
   ASSERT_EQ( mcld::ResolveInfo::Undefined, old_sym->desc());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
   ASSERT_EQ(1, old_sym->size());
 }
@@ -158,8 +175,8 @@ TEST_F( StaticResolverTest, OverrideWeakByGlobal )
   ASSERT_TRUE( mcld::ResolveInfo::global_flag == new_sym->info());
   ASSERT_TRUE( mcld::ResolveInfo::weak_flag == old_sym->info());
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_TRUE( override );
   ASSERT_EQ(0, old_sym->size());
 }
@@ -187,8 +204,8 @@ TEST_F( StaticResolverTest, DynWeakAfterDynDef ) {
   ASSERT_EQ( mcld::ResolveInfo::Define, new_sym->desc());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
   ASSERT_EQ(1, old_sym->size());
 }
@@ -209,8 +226,8 @@ TEST_F( StaticResolverTest, MarkByBiggerCommon )
   ASSERT_TRUE( mcld::ResolveInfo::common_flag == new_sym->info());
   ASSERT_TRUE( mcld::ResolveInfo::common_flag == old_sym->info());
   bool override = true;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_FALSE( override );
   ASSERT_EQ(999, old_sym->size());
 }
@@ -234,8 +251,8 @@ TEST_F( StaticResolverTest, OverrideByBiggerCommon )
   ASSERT_TRUE( (ResolveInfo::weak_flag | ResolveInfo::common_flag) == old_sym->info());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ( Resolver::Success, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_TRUE( override );
   ASSERT_EQ(999, old_sym->size());
 }
@@ -258,13 +275,10 @@ TEST_F( StaticResolverTest, OverrideCommonByDefine)
   ASSERT_TRUE( ResolveInfo::common_flag == old_sym->info());
 
   bool override = false;
-  unsigned int result = m_pResolver->resolve(*old_sym, *new_sym, override);
-  ASSERT_EQ(Resolver::Warning, result);
+  bool result = m_pResolver->resolve(*old_sym, *new_sym, override);
+  ASSERT_TRUE(result);
   ASSERT_TRUE( override );
   ASSERT_EQ(999, old_sym->size());
-  
-  ASSERT_STREQ("definition of 'abc' is overriding common.", m_pResolver->mesg().c_str() );
-
 }
 
 TEST_F( StaticResolverTest, SetUpDesc)

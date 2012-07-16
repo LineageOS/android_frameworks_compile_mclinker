@@ -7,15 +7,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Support/ELF.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/ADT/Twine.h>
+#include <llvm/Support/ELF.h>
 #include <llvm/Support/Host.h>
 #include <mcld/MC/MCLinker.h>
-#include <mcld/Support/MemoryArea.h>
-#include <mcld/Support/MemoryRegion.h>
 #include <mcld/LD/ELFReader.h>
 #include <mcld/Target/GNULDBackend.h>
+#include <mcld/Support/MemoryArea.h>
+#include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MsgHandling.h>
 #include <cstring>
 
 using namespace mcld;
@@ -28,16 +29,22 @@ ELFReaderIF::getLDSectionKind(uint32_t pType, const char* pName) const
 {
   // name rules
   llvm::StringRef name(pName);
-  if (llvm::StringRef::npos != name.find(".debug"))
+  if (name.startswith(".debug") ||
+      name.startswith(".zdebug") ||
+      name.startswith(".gnu.linkonce.wi.") ||
+      name.startswith(".line") ||
+      name.startswith(".stab"))
     return LDFileFormat::Debug;
   if (name.startswith(".comment"))
     return LDFileFormat::MetaData;
   if (name.startswith(".interp") || name.startswith(".dynamic"))
     return LDFileFormat::Note;
-  if (name.startswith(".eh_frame") ||
-      name.startswith(".eh_frame_hdr") ||
-      name.startswith(".gcc_except_table"))
-    return LDFileFormat::Exception;
+  if (name.startswith(".eh_frame"))
+    return LDFileFormat::EhFrame;
+  if (name.startswith(".eh_frame_hdr"))
+    return LDFileFormat::EhFrameHdr;
+  if (name.startswith(".gcc_except_table"))
+    return LDFileFormat::GCCExceptTable;
 
   // type rules
   switch(pType) {
@@ -74,8 +81,7 @@ ELFReaderIF::getLDSectionKind(uint32_t pType, const char* pName) const
         (pType >= llvm::ELF::SHT_LOOS && pType <= llvm::ELF::SHT_HIOS) ||
         (pType >= llvm::ELF::SHT_LOUSER && pType <= llvm::ELF::SHT_HIUSER))
       return LDFileFormat::Target;
-    llvm::report_fatal_error(llvm::Twine("unsupported ELF section type: ") +
-                             llvm::Twine(pType) + llvm::Twine(".\n"));
+    fatal(diag::err_unsupported_section) << pName << pType;
   }
   return LDFileFormat::MetaData;
 }
@@ -141,13 +147,9 @@ ELFReaderIF::getSymFragmentRef(Input& pInput,
 
   LDSection* sect_hdr = pInput.context()->getSection(pShndx);
 
-  if (NULL == sect_hdr) {
-    llvm::report_fatal_error(llvm::Twine("section[") +
-                             llvm::Twine(pShndx) +
-                             llvm::Twine("] is invalid in file `") +
-                             pInput.path().native() +
-                             llvm::Twine("'.\n"));
-  }
+  if (NULL == sect_hdr)
+    unreachable(diag::unreachable_invalid_section_idx) << pShndx
+                                                       << pInput.path().native();
   
   MCFragmentRef* result = pLinker.getLayout().getFragmentRef(*sect_hdr, pOffset);
   return result;
@@ -186,3 +188,17 @@ uint64_t ELFReaderIF::getSymValue(uint64_t pValue,
   return 0x0;
 }
 
+bool ELFReaderIF::readEhFrame(Input& pInput,
+                              MCLinker& pLinker,
+                              LDSection& pInputSectHdr) const
+{
+  LDSection& out_sect = pLinker.getOrCreateOutputSectHdr(pInputSectHdr.name(),
+                                                         pInputSectHdr.kind(),
+                                                         pInputSectHdr.type(),
+                                                         pInputSectHdr.flag());
+
+  size_t size = pLinker.addEhFrame(pInputSectHdr, *pInput.memArea());
+
+  out_sect.setSize(out_sect.size() + size);
+  return true;
+}

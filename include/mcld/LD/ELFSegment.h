@@ -36,7 +36,8 @@ public:
              uint64_t pPaddr = 0,
              uint64_t pFilesz = 0,
              uint64_t pMemsz = 0,
-             uint64_t pAlign = 0);
+             uint64_t pAlign = 0,
+             uint64_t pMaxSectAlign = 0);
   ~ELFSegment();
 
   ///  -----  iterators  -----  ///
@@ -52,34 +53,32 @@ public:
   const_sect_iterator sectEnd() const
   { return m_SectionList.end(); }
 
-  const LDSection* getFirstSection()
+  LDSection* getFirstSection()
   {
-    if (0 == m_SectionList.size())
+    if (0 == numOfSections())
       return NULL;
     return m_SectionList[0];
   }
 
-  const LDSection* getLastSection()
+  LDSection* getLastSection()
   {
-    size_t size = m_SectionList.size();
-    if (0 == size)
+    if (0 == numOfSections())
       return NULL;
-    return m_SectionList[size - 1];
+    return m_SectionList[numOfSections() - 1];
   }
 
   const LDSection* getFirstSection() const
   {
-    if (0 == m_SectionList.size())
+    if (0 == numOfSections())
       return NULL;
     return m_SectionList[0];
   }
 
   const LDSection* getLastSection() const
   {
-    size_t size = m_SectionList.size();
-    if (0 == size)
+    if (0 == numOfSections())
       return NULL;
-    return m_SectionList[size - 1];
+    return m_SectionList[numOfSections() - 1];
   }
 
   ///  -----  observers  -----  ///
@@ -105,7 +104,7 @@ public:
   { return m_Flag; }
 
   uint64_t align() const
-  { return m_Align; }
+  { return std::max(m_Align, m_MaxSectionAlign); }
 
   size_t numOfSections() const
   { return m_SectionList.size(); }
@@ -142,21 +141,25 @@ public:
   void addSection(LDSection* pSection)
   {
     assert(NULL != pSection);
+    if (pSection->align() > m_MaxSectionAlign)
+      m_MaxSectionAlign = pSection->align();
     m_SectionList.push_back(pSection);
   }
 
 private:
-  uint32_t m_Type;    // Type of segment
-  uint32_t m_Flag;    // Segment flags
-  uint64_t m_Offset;  // File offset where segment is located, in bytes
-  uint64_t m_Vaddr;   // Virtual address of beginning of segment
-  uint64_t m_Paddr;   // Physical address of beginning of segment (OS-specific)
-  uint64_t m_Filesz;  // Num. of bytes in file image of segment (may be zero)
-  uint64_t m_Memsz;   // Num. of bytes in mem image of segment (may be zero)
-  uint64_t m_Align;   // Segment alignment constraint
+  uint32_t m_Type;            // Type of segment
+  uint32_t m_Flag;            // Segment flags
+  uint64_t m_Offset;          // File offset where segment is located, in bytes
+  uint64_t m_Vaddr;           // Virtual address of the segment
+  uint64_t m_Paddr;           // Physical address of the segment (OS-specific)
+  uint64_t m_Filesz;          // # of bytes in file image of segment (may be 0)
+  uint64_t m_Memsz;           // # of bytes in mem image of segment (may be 0)
+  uint64_t m_Align;           // alignment constraint
+  uint64_t m_MaxSectionAlign; // max alignment of the sections in this segment
   std::vector<LDSection*> m_SectionList;
 };
 
 } // namespace of mcld
 
 #endif
+
