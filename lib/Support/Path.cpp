@@ -12,6 +12,7 @@
 
 #include <locale>
 #include <string.h>
+#include <iostream>
 
 using namespace mcld;
 using namespace mcld::sys::fs;
@@ -205,4 +206,3 @@ llvm::raw_ostream &mcld::sys::fs::operator<<(llvm::raw_ostream &pOS,
 {
   return pOS << pPath.native();
 }
-
