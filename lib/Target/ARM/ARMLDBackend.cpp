@@ -35,6 +35,7 @@ ARMGNULDBackend::ARMGNULDBackend()
     m_pRelDyn(NULL),
     m_pRelPLT(NULL),
     m_pDynamic(NULL),
+    m_pGOTSymbol(NULL),
     m_pEXIDX(NULL),
     m_pEXTAB(NULL),
     m_pAttributes(NULL) {
@@ -840,8 +841,8 @@ bool ARMGNULDBackend::readSection(Input& pInput,
       (0 != out_sect.size()))
     return true;
 
-  MemoryRegion* region = pInput.memArea()->request(pInputSectHdr.offset(),
-                                                   pInputSectHdr.size());
+  MemoryRegion* region = pInput.memArea()->request(
+          pInput.fileOffset() + pInputSectHdr.offset(), pInputSectHdr.size());
 
   llvm::MCSectionData& sect_data = pLinker.getOrCreateSectData(pInputSectHdr);
 

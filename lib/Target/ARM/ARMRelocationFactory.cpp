@@ -20,10 +20,33 @@
 
 using namespace mcld;
 
+//===--------------------------------------------------------------------===//
+// Relocation Functions and Tables
+//===--------------------------------------------------------------------===//
 DECL_ARM_APPLY_RELOC_FUNCS
+
+/// the prototype of applying function
+typedef RelocationFactory::Result (*ApplyFunctionType)(
+                                               Relocation& pReloc,
+                                               const MCLDInfo& pLDInfo,
+                                               ARMRelocationFactory& pParent);
+
+// the table entry of applying functions
+struct ApplyFunctionTriple
+{
+  ApplyFunctionType func;
+  unsigned int type;
+  const char* name;
+};
+
+// declare the table of applying functions
+static const ApplyFunctionTriple ApplyFunctions[] = {
+  DECL_ARM_APPLY_RELOC_FUNC_PTRS
+};
 
 //===--------------------------------------------------------------------===//
 // ARMRelocationFactory
+//===--------------------------------------------------------------------===//
 ARMRelocationFactory::ARMRelocationFactory(size_t pNum,
                                            ARMGNULDBackend& pParent)
   : RelocationFactory(pNum),
@@ -34,58 +57,24 @@ ARMRelocationFactory::~ARMRelocationFactory()
 {
 }
 
-void ARMRelocationFactory::applyRelocation(Relocation& pRelocation,
-                                           const MCLDInfo& pLDInfo)
+RelocationFactory::Result
+ARMRelocationFactory::applyRelocation(Relocation& pRelocation,
+                                      const MCLDInfo& pLDInfo)
 {
   Relocation::Type type = pRelocation.type();
   if (type > 130) { // 131-255 doesn't noted in ARM spec
     fatal(diag::unknown_relocation) << (int)type
                                     << pRelocation.symInfo()->name();
-    return;
+    return RelocationFactory::Unknown;
   }
 
-  /// the prototype of applying function
-  typedef Result (*ApplyFunctionType)(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
-                                      ARMRelocationFactory& pParent);
-
-  // the table entry of applying functions
-  struct ApplyFunctionTriple {
-    ApplyFunctionType func;
-    unsigned int type;
-    const char* name;
-  };
-
-  // declare the table of applying functions
-  static ApplyFunctionTriple apply_functions[] = {
-    DECL_ARM_APPLY_RELOC_FUNC_PTRS
-  };
-
-  // apply the relocation
-  Result result = apply_functions[type].func(pRelocation, pLDInfo, *this);
-
-  // check result
-  if (OK == result) {
-    return;
-  }
-  if (Overflow == result) {
-    error(diag::result_overflow) << apply_functions[type].name
-                                 << pRelocation.symInfo()->name();
-    return;
-  }
-  if (BadReloc == result) {
-    error(diag::result_badreloc) << apply_functions[type].name
-                                 << pRelocation.symInfo()->name();
-    return;
-  }
-  if (Unsupport == result) {
-    fatal(diag::unsupported_relocation) << type
-                                        << "mclinker@googlegroups.com";
-    return;
-  }
+  return ApplyFunctions[type].func(pRelocation, pLDInfo, *this);
 }
 
-
+const char* ARMRelocationFactory::getName(RelocationFactory::Type pType) const
+{
+  return ApplyFunctions[pType].name;
+}
 
 //===--------------------------------------------------------------------===//
 // non-member functions
@@ -570,7 +559,8 @@ ARMRelocationFactory::Result call(Relocation& pReloc,
 
   ARMRelocationFactory::DWord X = ((S + A) | T) - P;
   // Check X is 24bit sign int. If not, we should use stub or PLT before apply.
-  assert(!helper_check_signed_overflow(X, 26) && "Jump or Call target too far!");
+  if (helper_check_signed_overflow(X, 26))
+    return ARMRelocationFactory::Overflow;
   //                    Make sure the Imm is 0.          Result Mask.
   pReloc.target() = (pReloc.target() & 0xFF000000u) | ((X & 0x03FFFFFEu) >> 2);
   return ARMRelocationFactory::OK;
@@ -638,7 +628,6 @@ ARMRelocationFactory::Result thm_call(Relocation& pReloc,
 
   // FIXME: Check bit size is 24(thumb2) or 22?
   if (helper_check_signed_overflow(X, 25)) {
-    assert(!"Offset is too far. We need stub or PLT for it.");
     return ARMRelocationFactory::Overflow;
   }
 
@@ -664,10 +653,10 @@ ARMRelocationFactory::Result movw_abs_nc(Relocation& pReloc,
   ARMRelocationFactory::DWord X;
 
   const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                  *(pReloc.targetRef().frag()));
+                                                 *(pReloc.targetRef().frag()));
   assert(NULL != target_sect);
-  // If the flag of target section is not ALLOC, we will not scan this relocation
-  // but perform static relocation. (e.g., applying .debug section)
+  // If the flag of target section is not ALLOC, we will not scan this
+  // relocation but perform static relocation. (e.g., applying .debug section)
   if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
     // use plt
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
@@ -676,15 +665,11 @@ ARMRelocationFactory::Result movw_abs_nc(Relocation& pReloc,
     }
   }
 
-  X = (S + A) | T ;
   // perform static relocation
-  pReloc.target() = (S + A) | T;
-  if (helper_check_signed_overflow(X, 16)) {
-    return ARMRelocationFactory::Overflow;
-  } else {
-    pReloc.target() = helper_insert_val_movw_movt_inst(pReloc.target(), X);
-    return ARMRelocationFactory::OK;
-  }
+  X = (S + A) | T;
+  pReloc.target() = helper_insert_val_movw_movt_inst(
+                                         pReloc.target() + pReloc.addend(), X);
+  return ARMRelocationFactory::OK;
 }
 
 // R_ARM_MOVW_PREL_NC: ((S + A) | T) - P

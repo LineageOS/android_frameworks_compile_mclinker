@@ -6,13 +6,28 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+
 #ifndef ALONE_LINKER_H
 #define ALONE_LINKER_H
 
-#include <mcld/Support/MemoryAreaFactory.h>
-#include <mcld/Support/TargetRegistry.h>
-#include <mcld/MC/MCLDDriver.h>
-#include <mcld/MC/InputTree.h>
+#include <string>
+
+namespace mcld {
+
+class TargetLDBackend;
+class MCLDDriver;
+class MemoryFactory;
+class MCLDInfo;
+class TreeIteratorBase;
+class Input;
+
+namespace sys { namespace fs {
+
+class Path;
+
+} } // end namespace sys::fs
+
+} // end namespace mcld
 
 namespace alone {
 
@@ -26,6 +41,7 @@ public:
     kDoubleConfig,
     kCreateBackend,
     kDelegateLDInfo,
+    kFindNameSpec,
     kOpenNameSpec,
     kOpenObjectFile,
     kNotConfig,
@@ -42,9 +58,11 @@ public:
 private:
   mcld::TargetLDBackend *mBackend;
   mcld::MCLDDriver *mDriver;
-  mcld::MCLDInfo *mLDInfo;
-  mcld::InputTree::iterator mRoot;
   MemoryFactory *mMemAreaFactory;
+  mcld::MCLDInfo *mLDInfo;
+  mcld::TreeIteratorBase *mRoot;
+  bool mShared;
+  std::string mSOName;
 
 public:
   Linker();
