@@ -21,14 +21,18 @@
 #include <mcld/Support/MemoryAreaFactory.h>
 #include <mcld/Target/TargetLDBackend.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/LD/Archive.h>
 
 using namespace llvm;
 using namespace mcld;
 
-MCLDDriver::MCLDDriver(MCLDInfo& pLDInfo, TargetLDBackend& pLDBackend)
+MCLDDriver::MCLDDriver(MCLDInfo& pLDInfo,
+                       TargetLDBackend& pLDBackend,
+                       MemoryAreaFactory& pAreaFactory)
   : m_LDInfo(pLDInfo),
     m_LDBackend(pLDBackend),
-    m_pLinker(NULL) {
+    m_pLinker(NULL),
+    m_AreaFactory(pAreaFactory) {
 
 }
 
@@ -36,82 +40,6 @@ MCLDDriver::~MCLDDriver()
 {
   if (NULL != m_pLinker)
     delete m_pLinker;
-
-}
-
-void MCLDDriver::normalize()
-{
-  // -----  set up inputs  ----- //
-  InputTree::dfs_iterator input, inEnd = m_LDInfo.inputs().dfs_end();
-  for (input = m_LDInfo.inputs().dfs_begin(); input!=inEnd; ++input) {
-    // already got type - for example, bitcode or external OIR (object
-    // intermediate representation)
-    if ((*input)->type() == Input::Script ||
-        (*input)->type() == Input::Object ||
-        (*input)->type() == Input::DynObj  ||
-        (*input)->type() == Input::Archive ||
-        (*input)->type() == Input::External)
-      continue;
-
-    // is a relocatable object file
-    if (m_LDBackend.getObjectReader()->isMyFormat(**input)) {
-      (*input)->setType(Input::Object);
-      m_LDBackend.getObjectReader()->readObject(**input);
-    }
-    // is a shared object file
-    else if (m_LDBackend.getDynObjReader()->isMyFormat(**input)) {
-      (*input)->setType(Input::DynObj);
-      m_LDBackend.getDynObjReader()->readDSO(**input);
-    }
-    // is an archive
-    else if (m_LDBackend.getArchiveReader()->isMyFormat(*(*input))) {
-      (*input)->setType(Input::Archive);
-      mcld::InputTree* archive_member =
-                          m_LDBackend.getArchiveReader()->readArchive(**input);
-      if(NULL == archive_member)  {
-        error(diag::err_empty_input) << (*input)->name() << (*input)->path();
-        return;
-      }
-
-      m_LDInfo.inputs().merge<InputTree::Inclusive>(input, *archive_member);
-    }
-    else {
-      fatal(diag::err_unrecognized_input_file) << (*input)->path()
-                                               << m_LDInfo.triple().str();
-    }
-  } // end of for
-}
-
-bool MCLDDriver::linkable() const
-{
-  // check we have input and output files
-  if (m_LDInfo.inputs().empty()) {
-    error(diag::err_no_inputs);
-    return false;
-  }
-
-  // check all attributes are legal
-  mcld::AttributeFactory::const_iterator attr, attrEnd = m_LDInfo.attrFactory().end();
-  for (attr=m_LDInfo.attrFactory().begin(); attr!=attrEnd; ++attr) {
-    if (!m_LDInfo.attrFactory().constraint().isLegal((**attr))) {
-      return false;
-    }
-  }
-
-  // can not mix -static with shared objects
-  mcld::InputTree::const_bfs_iterator input, inEnd = m_LDInfo.inputs().bfs_end();
-  for (input=m_LDInfo.inputs().bfs_begin(); input!=inEnd; ++input) {
-    if ((*input)->type() == mcld::Input::DynObj) {
-      if((*input)->attribute()->isStatic()) {
-        error(diag::err_mixed_shared_static_objects)
-                                        << (*input)->name() << (*input)->path();
-        return false;
-      }
-    }
-  }
-
-  // can not mix -r with shared objects
-  return true;
 }
 
 /// initMCLinker - initialize MCLinker
@@ -126,7 +54,8 @@ bool MCLDDriver::initMCLinker()
   // initialize the readers and writers
   // Because constructor can not be failed, we initalize all readers and
   // writers outside the MCLinker constructors.
-  if (!m_LDBackend.initArchiveReader(*m_pLinker, m_LDInfo) ||
+  if (!m_LDBackend.initObjectReader(*m_pLinker) ||
+      !m_LDBackend.initArchiveReader(*m_pLinker, m_LDInfo, m_AreaFactory) ||
       !m_LDBackend.initObjectReader(*m_pLinker) ||
       !m_LDBackend.initDynObjReader(*m_pLinker) ||
       !m_LDBackend.initObjectWriter(*m_pLinker) ||
@@ -189,18 +118,78 @@ bool MCLDDriver::initStdSections()
   return true;
 }
 
-/// readSections - read all input section headers
-bool MCLDDriver::readSections()
+void MCLDDriver::normalize()
 {
-  // Bitcode is read by the other path. This function reads sections in object
-  // files.
-  mcld::InputTree::bfs_iterator input, inEnd = m_LDInfo.inputs().bfs_end();
-  for (input=m_LDInfo.inputs().bfs_begin(); input!=inEnd; ++input) {
-    if ((*input)->type() == Input::Object) {
-      if (!m_LDBackend.getObjectReader()->readSections(**input))
-        return false;
+  // -----  set up inputs  ----- //
+  InputTree::iterator input, inEnd = m_LDInfo.inputs().end();
+  for (input = m_LDInfo.inputs().begin(); input!=inEnd; ++input) {
+    // already got type - for example, bitcode or external OIR (object
+    // intermediate representation)
+    if ((*input)->type() == Input::Script ||
+        (*input)->type() == Input::Object ||
+        (*input)->type() == Input::DynObj  ||
+        (*input)->type() == Input::Archive ||
+        (*input)->type() == Input::External)
+      continue;
+
+    // is a relocatable object file
+    if (m_LDBackend.getObjectReader()->isMyFormat(**input)) {
+      (*input)->setType(Input::Object);
+      m_LDBackend.getObjectReader()->readObject(**input);
+      m_LDBackend.getObjectReader()->readSections(**input);
+      m_LDBackend.getObjectReader()->readSymbols(**input);
+    }
+    // is a shared object file
+    else if (m_LDBackend.getDynObjReader()->isMyFormat(**input)) {
+      (*input)->setType(Input::DynObj);
+      m_LDBackend.getDynObjReader()->readDSO(**input);
+      m_LDBackend.getDynObjReader()->readSymbols(**input);
+    }
+    // is an archive
+    else if (m_LDBackend.getArchiveReader()->isMyFormat(**input)) {
+      (*input)->setType(Input::Archive);
+      Archive archive(**input, m_LDInfo.inputFactory());
+      m_LDBackend.getArchiveReader()->readArchive(archive);
+      if(archive.numOfObjectMember() > 0) {
+        m_LDInfo.inputs().merge<InputTree::Inclusive>(input, archive.inputs());
+      }
+    }
+    else {
+      fatal(diag::err_unrecognized_input_file) << (*input)->path()
+                                               << m_LDInfo.triple().str();
+    }
+  } // end of for
+}
+
+bool MCLDDriver::linkable() const
+{
+  // check we have input and output files
+  if (m_LDInfo.inputs().empty()) {
+    error(diag::err_no_inputs);
+    return false;
+  }
+
+  // check all attributes are legal
+  mcld::AttributeFactory::const_iterator attr, attrEnd = m_LDInfo.attrFactory().end();
+  for (attr=m_LDInfo.attrFactory().begin(); attr!=attrEnd; ++attr) {
+    if (!m_LDInfo.attrFactory().constraint().isLegal((**attr))) {
+      return false;
     }
   }
+
+  // can not mix -static with shared objects
+  mcld::InputTree::const_bfs_iterator input, inEnd = m_LDInfo.inputs().bfs_end();
+  for (input=m_LDInfo.inputs().bfs_begin(); input!=inEnd; ++input) {
+    if ((*input)->type() == mcld::Input::DynObj) {
+      if((*input)->attribute()->isStatic()) {
+        error(diag::err_mixed_shared_static_objects)
+                                        << (*input)->name() << (*input)->path();
+        return false;
+      }
+    }
+  }
+
+  // can not mix -r with shared objects
   return true;
 }
 
@@ -209,26 +198,6 @@ bool MCLDDriver::mergeSections()
 {
   // TODO: when MCLinker can read other object files, we have to merge
   // sections
-  return true;
-}
-
-/// readSymbolTables - read symbol tables from the input files.
-///  for each input file, loads its symbol table from file.
-bool MCLDDriver::readSymbolTables()
-{
-  mcld::InputTree::dfs_iterator input, inEnd = m_LDInfo.inputs().dfs_end();
-  for (input=m_LDInfo.inputs().dfs_begin(); input!=inEnd; ++input) {
-    switch((*input)->type()) {
-    case Input::DynObj:
-      if (!m_LDBackend.getDynObjReader()->readSymbols(**input))
-        return false;
-      break;
-    case Input::Object:
-      if (!m_LDBackend.getObjectReader()->readSymbols(**input))
-        return false;
-      break;
-    }
-  }
   return true;
 }
 

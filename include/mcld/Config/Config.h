@@ -23,7 +23,7 @@
 # define MCLD_ON_WIN32 1
 #endif
 
-#define MCLD_VERSION "LionHead - 1.3.18"
+#define MCLD_VERSION "Phoenix - 1.4.0"
 
 #endif
 

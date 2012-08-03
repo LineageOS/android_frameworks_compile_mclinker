@@ -6,10 +6,15 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+
 #include "X86GOTPLT.h"
+
+#include <new>
+
+#include <llvm/Support/Casting.h>
+
 #include <mcld/LD/LDFileFormat.h>
 #include <mcld/Support/MsgHandling.h>
-#include <new>
 
 namespace {
   const uint64_t X86GOTPLTEntrySize = 4;
@@ -19,7 +24,8 @@ namespace mcld {
 
 //===----------------------------------------------------------------------===//
 // X86GOTPLT
-X86GOTPLT::X86GOTPLT(LDSection& pSection, llvm::MCSectionData& pSectionData)
+//===----------------------------------------------------------------------===//
+X86GOTPLT::X86GOTPLT(LDSection& pSection, SectionData& pSectionData)
   : GOT(pSection, pSectionData, X86GOTPLTEntrySize), m_GOTPLTIterator()
 {
   GOTEntry* Entry = 0;
@@ -30,7 +36,7 @@ X86GOTPLT::X86GOTPLT(LDSection& pSection, llvm::MCSectionData& pSectionData)
                                         &m_SectionData);
 
     if (!Entry)
-      fatal(diag::fail_allocate_memory) << "GOT0";
+      fatal(diag::fail_allocate_memory_got);
 
     m_Section.setSize(m_Section.size() + X86GOTPLTEntrySize);
   }
@@ -84,7 +90,7 @@ void X86GOTPLT::reserveEntry(size_t pNum)
   for (size_t i = 0; i < pNum; ++i) {
     got_entry = new GOTEntry(0, getEntrySize(),&(getSectionData()));
     if (!got_entry)
-      fatal(diag::fail_allocate_memory) << "GOT";
+      fatal(diag::fail_allocate_memory_got);
 
     m_Section.setSize(m_Section.size() + getEntrySize());
   }

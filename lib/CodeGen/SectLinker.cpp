@@ -77,7 +77,7 @@ bool SectLinker::doInitialization(Module &pM)
   initializeInputTree(PosDepOpts);
   initializeInputOutput(info);
   // Now, all input arguments are prepared well, send it into MCLDDriver
-  m_pLDDriver = new MCLDDriver(info, *m_pLDBackend);
+  m_pLDDriver = new MCLDDriver(info, *m_pLDBackend, *memAreaFactory());
 
   return false;
 }
@@ -133,16 +133,11 @@ bool SectLinker::doFinalization(Module &pM)
     return true;
 
 
-  // 6. - read all sections
-  if (!m_pLDDriver->readSections() ||
-      !m_pLDDriver->mergeSections())
+  // 6. - merge all sections
+  if (!m_pLDDriver->mergeSections())
     return true;
 
-  // 7. - read all symbol tables of input files and resolve them
-  if (!m_pLDDriver->readSymbolTables())
-    return true;
-
-  // 7.a - add standard symbols and target-dependent symbols
+  // 7. - add standard symbols and target-dependent symbols
   // m_pLDDriver->addUndefSymbols();
   if (!m_pLDDriver->addStandardSymbols() ||
       !m_pLDDriver->addTargetSymbols())
@@ -157,7 +152,7 @@ bool SectLinker::doFinalization(Module &pM)
   // 10. - linear layout
   m_pLDDriver->layout();
 
-  // 10.b - post-layout
+  // 10.b - post-layout (create segment, instruction relaxing)
   m_pLDDriver->postlayout();
 
   // 11. - finalize symbol value

@@ -78,6 +78,9 @@ public:
 
   uint64_t defaultTextSegmentAddr() const;
 
+  /// abiPageSize - the abi page size of the target machine
+  uint64_t abiPageSize(const MCLDInfo& pInfo) const;
+
   /// preLayout - Backend can do any needed modification before layout
   void doPreLayout(const Output& pOutput,
                    const MCLDInfo& pInfo,
@@ -101,7 +104,7 @@ public:
   /// call back target backend to emit the data.
   ///
   /// Backends handle the target-special tables (plt, gp,...) by themselves.
-  /// Backend can put the data of the tables in MCSectionData directly
+  /// Backend can put the data of the tables in SectionData directly
   ///  - LDSection.getSectionData can get the section data.
   /// Or, backend can put the data into special data structure
   ///  - backend can maintain its own map<LDSection, table> to get the table

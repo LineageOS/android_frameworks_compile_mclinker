@@ -8,10 +8,13 @@
 //===----------------------------------------------------------------------===//
 #include "ARMGOT.h"
 #include "ARMPLT.h"
-#include <llvm/Support/raw_ostream.h>
+
+#include <new>
+
+#include <llvm/Support/Casting.h>
+
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
-#include <new>
 
 namespace {
 
@@ -33,17 +36,17 @@ const uint32_t arm_plt1[] = {
 
 using namespace mcld;
 
-ARMPLT0::ARMPLT0(llvm::MCSectionData* pParent)
+ARMPLT0::ARMPLT0(SectionData* pParent)
   : PLTEntry(sizeof(arm_plt0), pParent) {}
 
-ARMPLT1::ARMPLT1(llvm::MCSectionData* pParent)
+ARMPLT1::ARMPLT1(SectionData* pParent)
   : PLTEntry(sizeof(arm_plt1), pParent) {}
 
 //===----------------------------------------------------------------------===//
 // ARMPLT
 
 ARMPLT::ARMPLT(LDSection& pSection,
-               llvm::MCSectionData& pSectionData,
+               SectionData& pSectionData,
                ARMGOT &pGOTPLT)
   : PLT(pSection, pSectionData), m_GOT(pGOTPLT), m_PLTEntryIterator() {
   ARMPLT0* plt0_entry = new ARMPLT0(&m_SectionData);
@@ -65,7 +68,7 @@ void ARMPLT::reserveEntry(size_t pNum)
     plt1_entry = new (std::nothrow) ARMPLT1(&m_SectionData);
 
     if (!plt1_entry)
-      fatal(diag::fail_allocate_memory) << "ARMPLT1";
+      fatal(diag::fail_allocate_memory_plt);
 
     m_Section.setSize(m_Section.size() + plt1_entry->getEntrySize());
 
@@ -166,7 +169,7 @@ void ARMPLT::applyPLT0() {
   data = static_cast<uint32_t*>(malloc(plt0->getEntrySize()));
 
   if (!data)
-    fatal(diag::fail_allocate_memory) << "plt0";
+    fatal(diag::fail_allocate_memory_plt);
 
   memcpy(data, arm_plt0, plt0->getEntrySize());
   data[4] = offset;
@@ -203,7 +206,7 @@ void ARMPLT::applyPLT1() {
     Out = static_cast<uint32_t*>(malloc(plt1->getEntrySize()));
 
     if (!Out)
-      fatal(diag::fail_allocate_memory) << "plt1";
+      fatal(diag::fail_allocate_memory_plt);
 
     // Offset is the distance between the last PLT entry and the associated
     // GOT entry.

@@ -140,6 +140,14 @@ void Path::m_erase_redundant_separator(Path::StringType::size_type pSepPos)
     m_PathName.erase(begin+1,pSepPos-begin-1);
 }
 
+Path Path::parent_path() const
+{
+  size_t end_pos = m_PathName.find_last_of(separator);
+  if (end_pos != StringType::npos)
+    return Path(m_PathName.substr(0, end_pos));
+  return Path();
+}
+
 Path Path::stem() const
 {
   size_t begin_pos = m_PathName.find_last_of(separator)+1;

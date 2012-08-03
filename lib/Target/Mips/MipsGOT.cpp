@@ -7,10 +7,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "MipsGOT.h"
+
+#include <llvm/Support/Casting.h>
+
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
-#include "MipsGOT.h"
 
 namespace {
   const size_t MipsGOTEntrySize = 4;
@@ -21,7 +24,7 @@ using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // MipsGOT
-MipsGOT::MipsGOT(LDSection& pSection, llvm::MCSectionData& pSectionData)
+MipsGOT::MipsGOT(LDSection& pSection, SectionData& pSectionData)
   : GOT(pSection, pSectionData, MipsGOTEntrySize),
     m_pLocalNum(0)
 {
@@ -31,7 +34,7 @@ MipsGOT::MipsGOT(LDSection& pSection, llvm::MCSectionData& pSectionData)
       new (std::nothrow) GOTEntry(0, MipsGOTEntrySize, &m_SectionData);
 
     if (NULL == entry)
-      fatal(diag::fail_allocate_memory) << "GOT0";
+      fatal(diag::fail_allocate_memory_got);
 
     m_Section.setSize(m_Section.size() + MipsGOTEntrySize);
   }
@@ -94,7 +97,7 @@ void MipsGOT::reserveEntry(size_t pNum)
       new (std::nothrow) GOTEntry(0, MipsGOTEntrySize, &m_SectionData);
 
     if (NULL == entry)
-      fatal(diag::fail_allocate_memory) << "GOTEntry";
+      fatal(diag::fail_allocate_memory_got);
 
     m_Section.setSize(m_Section.size() + MipsGOTEntrySize);
   }

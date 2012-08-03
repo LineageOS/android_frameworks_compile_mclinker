@@ -7,9 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 #include "X86GOT.h"
-#include <mcld/LD/LDFileFormat.h>
-#include <mcld/Support/MsgHandling.h>
+
 #include <new>
+
+#include <llvm/Support/Casting.h>
+
+#include <mcld/LD/LDFileFormat.h>
+#include <mcld/LD/SectionData.h>
+#include <mcld/Support/MsgHandling.h>
 
 namespace {
   const size_t X86GOTEntrySize = 4;
@@ -19,7 +24,8 @@ using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // X86GOT
-X86GOT::X86GOT(LDSection& pSection, llvm::MCSectionData& pSectionData)
+//===----------------------------------------------------------------------===//
+X86GOT::X86GOT(LDSection& pSection, SectionData& pSectionData)
              : GOT(pSection, pSectionData, X86GOTEntrySize),
                m_GOTIterator(), m_fIsVisit(false)
 {
@@ -38,7 +44,7 @@ void X86GOT::reserveEntry(size_t pNum)
                                         &m_SectionData);
 
     if (!Entry)
-      fatal(diag::fail_allocate_memory) << "GOTEntry";
+      fatal(diag::fail_allocate_memory_got);
 
     m_Section.setSize(m_Section.size() + X86GOTEntrySize);
   }

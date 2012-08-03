@@ -10,343 +10,384 @@
 #include <mcld/MC/MCLDInput.h>
 #include <mcld/MC/InputTree.h>
 #include <mcld/LD/GNUArchiveReader.h>
+#include <mcld/LD/ResolveInfo.h>
+#include <mcld/LD/ELFObjectReader.h>
 #include <mcld/Support/FileSystem.h>
+#include <mcld/Support/FileHandle.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MemoryAreaFactory.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/Path.h>
 #include <mcld/ADT/SizeTraits.h>
 
-#include <llvm/Support/system_error.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/Host.h>
 
-#include <sstream>
-#include <string>
-#include <vector>
+#include <cstring>
 #include <cstdlib>
 
 using namespace mcld;
 
-typedef uint32_t elfWord;
-
-
-/// Archive Header, Magic number
-const char GNUArchiveReader::ArchiveMagic[ArchiveMagicSize] = { '!', '<', 'a', 'r', 'c', 'h', '>', '\n' };
-const char GNUArchiveReader::ThinArchiveMagic[ArchiveMagicSize] = { '!', '<', 't', 'h', 'i', 'n', '>', '\n' };
-const char GNUArchiveReader::HeaderFinalMagic[HeaderFinalMagicSize] = { '`', '\n' };
-
-
-struct GNUArchiveReader::SymbolTableEntry
+GNUArchiveReader::GNUArchiveReader(MCLDInfo& pLDInfo,
+                                   MemoryAreaFactory& pMemAreaFactory,
+                                   ELFObjectReader& pELFObjectReader)
+ : m_LDInfo(pLDInfo),
+   m_MemAreaFactory(pMemAreaFactory),
+   m_ELFObjectReader(pELFObjectReader)
 {
-  off_t fileOffset;
-  std::string name;
-};
-
-
-
-/// convert string to size_t
-template<class Type>
-Type stringToType(const std::string &str)
-{
-  Type n;
-  std::stringstream ss(str);
-  ss >> n;
-  return n;
 }
 
+GNUArchiveReader::~GNUArchiveReader()
+{
+}
 
-/// GNUArchiveReader Operations
-/// Public API
-bool GNUArchiveReader::isMyFormat(Input &pInput) const
+/// isMyFormat
+bool GNUArchiveReader::isMyFormat(Input& pInput) const
 {
   assert(pInput.hasMemArea());
+  MemoryRegion* region = pInput.memArea()->request(pInput.fileOffset(),
+                                                   Archive::MAGIC_LEN);
+  const char* str = reinterpret_cast<const char*>(region->getBuffer());
 
-  MemoryRegion *region = pInput.memArea()->request(0, ArchiveMagicSize);
-  if (!region)
-    llvm::report_fatal_error("can't request MemoryRegion for archive magic");
+  bool result = false;
+  assert(NULL != str);
+  if (isArchive(str) || isThinArchive(str))
+    result = true;
 
-  const char *p_buffer = reinterpret_cast<char *> (region->getBuffer());
+  pInput.memArea()->release(region);
+  return result;
+}
 
-  /// check archive format.
-  if (memcmp(p_buffer, ArchiveMagic, ArchiveMagicSize) != 0
-      && memcmp(p_buffer, ThinArchiveMagic, ArchiveMagicSize) != 0) {
-    return false;
-  }
+/// isArchive
+bool GNUArchiveReader::isArchive(const char* pStr) const
+{
+  return (0 == memcmp(pStr, Archive::MAGIC, Archive::MAGIC_LEN));
+}
+
+/// isThinArchive
+bool GNUArchiveReader::isThinArchive(const char* pStr) const
+{
+  return (0 == memcmp(pStr, Archive::THIN_MAGIC, Archive::MAGIC_LEN));
+}
+
+/// isThinArchive
+bool GNUArchiveReader::isThinArchive(Input& pInput) const
+{
+  assert(pInput.hasMemArea());
+  MemoryRegion* region = pInput.memArea()->request(pInput.fileOffset(),
+                                                   Archive::MAGIC_LEN);
+  const char* str = reinterpret_cast<const char*>(region->getBuffer());
+
+  bool result = false;
+  assert(NULL != str);
+  if (isThinArchive(str))
+    result = true;
+
+  pInput.memArea()->release(region);
+  return result;
+}
+
+bool GNUArchiveReader::readArchive(Archive& pArchive)
+{
+  // read the symtab of the archive
+  readSymbolTable(pArchive);
+
+  // read the strtab of the archive
+  readStringTable(pArchive);
+
+  // add root archive to ArchiveMemberMap
+  pArchive.addArchiveMember(pArchive.getARFile().name(),
+                            pArchive.inputs().root(),
+                            &InputTree::Downward);
+
+  // include the needed members in the archive and build up the input tree
+  bool willSymResolved;
+  do {
+    willSymResolved = false;
+    for (size_t idx = 0; idx < pArchive.numOfSymbols(); ++idx) {
+      // bypass if we already decided to include this symbol or not
+      if (Archive::Symbol::Unknown != pArchive.getSymbolStatus(idx))
+        continue;
+
+      // bypass if another symbol with the same object file offset is included
+      if (pArchive.hasObjectMember(pArchive.getObjFileOffset(idx))) {
+        pArchive.setSymbolStatus(idx, Archive::Symbol::Include);
+        continue;
+      }
+
+      // check if we should include this defined symbol
+      Archive::Symbol::Status status =
+        shouldIncludeSymbol(pArchive.getSymbolName(idx));
+      if (Archive::Symbol::Unknown != status)
+        pArchive.setSymbolStatus(idx, status);
+
+      if (Archive::Symbol::Include == status) {
+        Input* cur_archive = &(pArchive.getARFile());
+        Input* member = cur_archive;
+        uint32_t file_offset = pArchive.getObjFileOffset(idx);
+        while ((member != NULL) && (Input::Object != member->type())) {
+          uint32_t nested_offset = 0;
+          // use the file offset in current archive to find out the member we
+          // want to include
+          member = readMemberHeader(pArchive,
+                                    *cur_archive,
+                                    file_offset,
+                                    nested_offset);
+          assert(member != NULL);
+          // bypass if we get an archive that is already in the map
+          if (Input::Archive == member->type()) {
+              cur_archive = member;
+              file_offset = nested_offset;
+              continue;
+          }
+
+          // insert a node into the subtree of current archive.
+          Archive::ArchiveMember* parent =
+            pArchive.getArchiveMember(cur_archive->name());
+
+          assert(NULL != parent);
+          pArchive.inputs().insert(parent->lastPos, *(parent->move), *member);
+
+          // move the iterator to new created node, and also adjust the
+          // direction to Afterward for next insertion in this subtree
+          parent->move->move(parent->lastPos);
+          parent->move = &InputTree::Afterward;
+
+          if (m_ELFObjectReader.isMyFormat(*member)) {
+            member->setType(Input::Object);
+            pArchive.addObjectMember(pArchive.getObjFileOffset(idx),
+                                     parent->lastPos);
+            m_ELFObjectReader.readObject(*member);
+            m_ELFObjectReader.readSections(*member);
+            m_ELFObjectReader.readSymbols(*member);
+          }
+          else if (isMyFormat(*member)) {
+            member->setType(Input::Archive);
+            // when adding a new archive node, set the iterator to archive
+            // itself, and set the direction to Downward
+            pArchive.addArchiveMember(member->name(),
+                                      parent->lastPos,
+                                      &InputTree::Downward);
+            cur_archive = member;
+            file_offset = nested_offset;
+          }
+        } // end of while
+        willSymResolved = true;
+      } // end of if
+    } // end of for
+  } while (willSymResolved);
+
   return true;
 }
 
-LDReader::Endian GNUArchiveReader::endian(Input& pFile) const
+/// readMemberHeader - read the header of a member in a archive file and then
+/// return the corresponding archive member (it may be an input object or
+/// another archive)
+/// @param pArchiveRoot  - the archive root that holds the strtab (extended
+///                        name table)
+/// @param pArchiveFile  - the archive that contains the needed object
+/// @param pFileOffset   - file offset of the member header in the archive
+/// @param pNestedOffset - used when we find a nested archive
+Input* GNUArchiveReader::readMemberHeader(Archive& pArchiveRoot,
+                                          Input& pArchiveFile,
+                                          uint32_t pFileOffset,
+                                          uint32_t& pNestedOffset)
 {
-  return LDReader::BigEndian;
-}
+  assert(pArchiveFile.hasMemArea());
 
-InputTree *GNUArchiveReader::readArchive(Input &pInput)
-{
-  return setupNewArchive(pInput, 0);
-}
+  MemoryRegion* header_region =
+    pArchiveFile.memArea()->request((pArchiveFile.fileOffset() + pFileOffset),
+                                    sizeof(Archive::MemberHeader));
+  const Archive::MemberHeader* header =
+    reinterpret_cast<const Archive::MemberHeader*>(header_region->getBuffer());
 
-/// Read Input as archive. First create a null InputTree.
-/// Then Construct Input object for corresponding member of this archive
-/// and insert the Input object into the InputTree.
-/// Finally, return the InputTree.
-InputTree *GNUArchiveReader::setupNewArchive(Input &pInput,
-                                            size_t off)
-{
-  assert(pInput.hasMemArea());
-  MemoryRegion *region = pInput.memArea()->request(off, ArchiveMagicSize);
+  assert(0 == memcmp(header->fmag, Archive::MEMBER_MAGIC, 2));
 
-  if (!region)
-    llvm::report_fatal_error("can't request MemoryRegion for archive magic");
+  // int size = atoi(header->size);
 
-  const char *pFile = reinterpret_cast<char *> (region->getBuffer());
-
-  /// check archive format.
-  bool isThinArchive;
-  isThinArchive = memcmp(pFile, ThinArchiveMagic, ArchiveMagicSize) == 0;
-  if(!isThinArchive && memcmp(pFile, ArchiveMagic, ArchiveMagicSize) != 0)
-    llvm::report_fatal_error("Fail : archive magic number is not matched");
-
-  InputTree *resultTree = new InputTree(m_pLDInfo.inputFactory());
-  std::vector<SymbolTableEntry> symbolTable;
-  std::string archiveMemberName;
-  std::string extendedName;
-
-  off += ArchiveMagicSize ;
-  size_t symbolTableSize = readMemberHeader(*pInput.memArea(), off, &archiveMemberName,
-                                            NULL, extendedName);
-  /// read archive symbol table
-  if(archiveMemberName.empty())
-  {
-    readSymbolTable(*pInput.memArea(), symbolTable,
-                    off+sizeof(ArchiveMemberHeader), symbolTableSize);
-    off = off + sizeof(ArchiveMemberHeader) + symbolTableSize;
+  // parse the member name and nested offset if any
+  std::string member_name;
+  llvm::StringRef name_field(header->name, 16);
+  if ('/' != header->name[0]) {
+    // this is an object file in an archive
+    size_t pos = name_field.find_first_of('/');
+    member_name.assign(name_field.substr(0, pos).str());
   }
-  else
-  {
-    llvm::report_fatal_error("fatal error : need symbol table\n");
-    return NULL;
-  }
+  else {
+    // this is an object/archive file in a thin archive
+    size_t begin = 1;
+    size_t end = name_field.find_first_of(" :");
+    uint32_t name_offset = 0;
+    // parse the name offset
+    name_field.substr(begin, end - begin).getAsInteger(10, name_offset);
 
-  if((off&1) != 0)
-    ++off;
+    if (':' == name_field[end]) {
+      // there is a nested offset
+      begin = end + 1;
+      end = name_field.find_first_of(' ', begin);
+      name_field.substr(begin, end - begin).getAsInteger(10, pNestedOffset);
+    }
 
-  size_t extendedSize = readMemberHeader(*pInput.memArea(), off, &archiveMemberName,
-                                          NULL, extendedName);
-  /// read long Name table if exist
-  if(archiveMemberName == "/")
-  {
-    off += sizeof(ArchiveMemberHeader);
-    MemoryRegion *extended_name_region = pInput.memArea()->request(off, extendedSize);
-    pFile = reinterpret_cast<char *>(extended_name_region->getBuffer());
-    extendedName.assign(pFile, extendedSize);
-
+    // get the member name from the extended name table
+    begin = name_offset;
+    end = pArchiveRoot.getStrTable().find_first_of('\n', begin);
+    member_name.assign(pArchiveRoot.getStrTable().substr(begin, end - begin -1));
   }
 
-  /// traverse all the archive members
-  InputTree::iterator node = resultTree->root();
-  std::set<std::string> haveSeen;
-  for(unsigned i=0 ; i<symbolTable.size() ; ++i)
-  {
-    /// We shall get each member at this archive.
-    /// Construct a corresponding mcld::Input, and insert it into
-    /// the original InputTree, resultTree.
-    off_t nestedOff = 0;
+  Input* member = NULL;
+  if (!isThinArchive(pArchiveFile)) {
+    // this is an object file in an archive
+    member =
+      m_LDInfo.inputFactory().produce(member_name,
+                                      pArchiveFile.path(),
+                                      Input::Unknown,
+                                      (pFileOffset +
+                                       sizeof(Archive::MemberHeader)));
+    assert(member != NULL);
+    member->setMemArea(pArchiveFile.memArea());
+    LDContext *input_context = m_LDInfo.contextFactory().produce();
+    member->setContext(input_context);
+  }
+  else {
+    // this is a member in a thin archive
+    // try to find if this is a archive already in the map first
+    Archive::ArchiveMember* ar_member =
+      pArchiveRoot.getArchiveMember(member_name);
+    if (NULL != ar_member) {
+      return ar_member->file;
+    }
 
-    readMemberHeader(*pInput.memArea(), symbolTable[i].fileOffset, &archiveMemberName,
-                      &nestedOff, extendedName);
-
-    if(haveSeen.find(archiveMemberName)==haveSeen.end())
-      haveSeen.insert(archiveMemberName);
+    // get nested file path, the nested file's member name is the relative
+    // path to the archive containing it.
+    sys::fs::Path input_path(pArchiveFile.path().parent_path());
+    if (!input_path.empty())
+      input_path.append(member_name);
     else
-      continue;
+      input_path.assign(member_name);
+    member =
+      m_LDInfo.inputFactory().produce(member_name, input_path, Input::Unknown);
 
-    if(!isThinArchive)
-    {
-      /// New a Input object and assign fileOffset in MCLDFile.
-      /// Insert the object to resultTree and move ahead.
-      off_t fileOffset = symbolTable[i].fileOffset + sizeof(ArchiveMemberHeader);
-      Input *insertObjectFile = m_pLDInfo.inputFactory().produce(archiveMemberName,
-                                                                 pInput.path(),
-                                                                 MCLDFile::Object,
-                                                                 fileOffset);
-      resultTree->insert<InputTree::Positional>(node, *insertObjectFile);
-      if(i==0)
-        node.move<InputTree::Inclusive>();
-      else
-        node.move<InputTree::Positional>();
-
-      continue;
+    assert(member != NULL);
+    MemoryArea* input_memory =
+      m_MemAreaFactory.produce(member->path(), FileHandle::ReadOnly);
+    if (input_memory->handler()->isGood()) {
+      member->setMemArea(input_memory);
     }
-    
-    /// TODO:(Duo)
-    /// adjust the relative pathname
-    /// For example
-    /// thin archive pathname : "/usr/lib/thin.a"
-    ///           Member name : "member.a"
-    /// pathname after adjust : "/usr/lib/member.a"
-    sys::fs::RealPath realPath(archiveMemberName);
-    if(nestedOff > 0)
-    {
-      /// This is a member of a nested archive.
-      /// Create an Input for this archive ,and recursive call setupNewArchive
-      /// Finally, merge the new InputTree with the old one
-      Input *newArchive = m_pLDInfo.inputFactory().produce(archiveMemberName,
-                                                           realPath,
-                                                           MCLDFile::Archive,
-                                                           0);
-
-      resultTree->insert<InputTree::Positional>(node, *newArchive);
-      if(i==0)
-        node.move<InputTree::Inclusive>();
-      else
-        node.move<InputTree::Positional>();
-      InputTree *newArchiveTree = setupNewArchive(*newArchive, 0);
-      resultTree->merge<InputTree::Inclusive>(node, *newArchiveTree);
-      continue;
+    else {
+      error(diag::err_cannot_open_input) << member->name() << member->path();
+      return NULL;
     }
-    /// External member , open it as normal object file
-    /// add new Input to InputTree
-    Input *insertObjectFile = m_pLDInfo.inputFactory().produce(archiveMemberName,
-                                                               realPath,
-                                                               MCLDFile::Object,
-                                                               0);
-    resultTree->insert<InputTree::Positional>(node, *insertObjectFile);
-    if(i==0)
-      node.move<InputTree::Inclusive>();
-    else
-      node.move<InputTree::Positional>();
+    LDContext *input_context = m_LDInfo.contextFactory().produce(input_path);
+    member->setContext(input_context);
   }
-  return resultTree;
+
+  pArchiveFile.memArea()->release(header_region);
+  return member;
 }
 
-
-/// Parse the member header and return the size of member
-/// Archive member names in System 5 style :
-///
-/// "/                  " - symbol table, must be the first member
-/// "//                 " - long name table
-/// "filename.o/        " - regular file with short name
-/// "/5566              " - name at offset 5566 at long name table
-
-size_t GNUArchiveReader::readMemberHeader(MemoryArea &pArea,
-                                           off_t off,
-                                           std::string *p_Name,
-                                           off_t *p_NestedOff,
-                                           std::string &p_ExtendedName)
+/// readSymbolTable - read the archive symbol map (armap)
+bool GNUArchiveReader::readSymbolTable(Archive& pArchive)
 {
-  MemoryRegion *region = pArea.request(off, sizeof(ArchiveMemberHeader));
-  const char *pFile = reinterpret_cast<char *>(region->getBuffer());
-  const ArchiveMemberHeader *header = reinterpret_cast<const ArchiveMemberHeader *>(pFile);
+  assert(pArchive.getARFile().hasMemArea());
 
-  /// check magic number of member header
-  if(memcmp(header->finalMagic, HeaderFinalMagic, sizeof HeaderFinalMagic))
-  {
-    llvm::report_fatal_error("archive member header magic number false");
-    return 0;
-  }
+  MemoryRegion* header_region =
+    pArchive.getARFile().memArea()->request((pArchive.getARFile().fileOffset() +
+                                             Archive::MAGIC_LEN),
+                                            sizeof(Archive::MemberHeader));
+  const Archive::MemberHeader* header =
+    reinterpret_cast<const Archive::MemberHeader*>(header_region->getBuffer());
+  assert(0 == memcmp(header->fmag, Archive::MEMBER_MAGIC, 2));
 
-  /// evaluate member size
-  std::string sizeString(header->size, sizeof(header->size)+1);
-  size_t memberSize = stringToType<size_t>(sizeString);
-  if(memberSize == 0)
-  {
-    llvm::report_fatal_error("member Size Error");
-    return 0;
-  }
+  int symtab_size = atoi(header->size);
+  pArchive.setSymTabSize(symtab_size);
 
-  if(header->name[0] != '/')
-  {
-    /// This is a regular file with short name
-    const char* nameEnd = strchr(header->name, '/');
-    size_t nameLen = ((nameEnd == NULL) ? 0 : (nameEnd - header->name));
-    if((nameLen <= 0) || (nameLen >= sizeof(header->name)))
-    {
-      llvm::report_fatal_error("header name format error\n");
-      return 0;
-    }
-    p_Name->assign(header->name, nameLen);
+  MemoryRegion* symtab_region =
+    pArchive.getARFile().memArea()->request((pArchive.getARFile().fileOffset() +
+                                             Archive::MAGIC_LEN +
+                                             sizeof(Archive::MemberHeader)),
+                                            symtab_size);
+  const uint32_t* data =
+    reinterpret_cast<const uint32_t*>(symtab_region->getBuffer());
 
-    if(!p_NestedOff)
-      p_NestedOff = 0;
-  }
-  else if(header->name[1] == ' ')
-  {
-    /// This is symbol table
-    if(!p_Name->empty())
-      p_Name->clear();
-  }
-  else if(header->name[1] == '/')
-  {
-    /// This is long name table
-    p_Name->assign(1,'/');
-  }
+  // read the number of symbols
+  uint32_t number = 0;
+  if (llvm::sys::isLittleEndianHost())
+    number = bswap32(*data);
   else
-  {
-    /// This is regular file with long name
-    char *end;
-    long extendedNameOff = strtol(header->name+1, &end, 10);
-    long nestedOff = 0;
-    if(*end == ':')
-      nestedOff = strtol(end+1, &end, 10);
+    number = *data;
 
-    if(*end != ' '
-       || extendedNameOff < 0
-       || static_cast<size_t>(extendedNameOff) >= p_ExtendedName.size())
-    {
-      llvm::report_fatal_error("extended name");
-      return 0;
-    }
+  // set up the pointers for file offset and name offset
+  ++data;
+  const char* name = reinterpret_cast<const char*>(data + number);
 
-    const char *name = p_ExtendedName.data() + extendedNameOff;
-    const char *nameEnd = strchr(name, '\n');
-    if(nameEnd[-1] != '/'
-       || static_cast<size_t>(nameEnd-name) > p_ExtendedName.size())
-    {
-      llvm::report_fatal_error("p_ExtendedName substring is not end with / \n");
-      return 0;
-    }
-    p_Name->assign(name, nameEnd-name-1);
-    if(p_NestedOff)
-     *p_NestedOff = nestedOff;
+  // add the archive symbols
+  for (uint32_t i = 0; i < number; ++i) {
+    if (llvm::sys::isLittleEndianHost())
+      pArchive.addSymbol(name, bswap32(*data));
+    else
+      pArchive.addSymbol(name, *data);
+    name += strlen(name) + 1;
+    ++data;
   }
 
-  return memberSize;
+  pArchive.getARFile().memArea()->release(header_region);
+  pArchive.getARFile().memArea()->release(symtab_region);
+  return true;
 }
 
-void GNUArchiveReader::readSymbolTable(MemoryArea &pArea,
-                                       std::vector<SymbolTableEntry> &pSymbolTable,
-                                       off_t start,
-                                       size_t size)
+/// readStringTable - read the strtab for long file name of the archive
+bool GNUArchiveReader::readStringTable(Archive& pArchive)
 {
-  MemoryRegion *region = pArea.request(start, size);
-  const char *pFile = reinterpret_cast<char *>(region->getBuffer());
-  const elfWord *p_Word = reinterpret_cast<const elfWord *>(pFile);
-  unsigned int symbolNum = *p_Word;
+  size_t offset = Archive::MAGIC_LEN +
+                  sizeof(Archive::MemberHeader) +
+                  pArchive.getSymTabSize();
 
-  /// Portable Issue on Sparc platform
-  /// Intel, ARM and Mips are littel-endian , Sparc is little-endian after verion 9
-  /// symbolNum in symbol table is always big-endian
-  if(llvm::sys::isLittleEndianHost())
-    symbolNum = bswap32(symbolNum);
-  ++p_Word;
+  if (0x0 != (offset & 1))
+    ++offset;
 
-  const char *p_Name = reinterpret_cast<const char *>(p_Word + symbolNum);
+  assert(pArchive.getARFile().hasMemArea());
 
-  for(unsigned int i=0 ; i<symbolNum ; ++i)
-  {
-    SymbolTableEntry entry;
-    /// member offset
-    unsigned int memberOffset = *p_Word;
-    if(llvm::sys::isLittleEndianHost())
-      memberOffset = bswap32(memberOffset);
-    entry.fileOffset = static_cast<off_t>(memberOffset);
-    ++p_Word;
-    /// member name
-    off_t nameEnd = strlen(p_Name) + 1;
-    entry.name.assign(p_Name, nameEnd);
-    p_Name += nameEnd;
-    /// the symbol is found in symbol pool
-    if (m_pLDInfo.getNamePool().findSymbol(entry.name))
-      pSymbolTable.push_back(entry);
-  }
+  MemoryRegion* header_region =
+    pArchive.getARFile().memArea()->request((pArchive.getARFile().fileOffset() +
+                                             offset),
+                                            sizeof(Archive::MemberHeader));
+  const Archive::MemberHeader* header =
+    reinterpret_cast<const Archive::MemberHeader*>(header_region->getBuffer());
+
+  assert(0 == memcmp(header->fmag, Archive::MEMBER_MAGIC, 2));
+
+  int strtab_size = atoi(header->size);
+
+  MemoryRegion* strtab_region =
+    pArchive.getARFile().memArea()->request((pArchive.getARFile().fileOffset() +
+                                             offset +
+                                             sizeof(Archive::MemberHeader)),
+                                            strtab_size);
+  const char* strtab =
+    reinterpret_cast<const char*>(strtab_region->getBuffer());
+
+  pArchive.getStrTable().assign(strtab, strtab_size);
+
+  pArchive.getARFile().memArea()->release(header_region);
+  pArchive.getARFile().memArea()->release(strtab_region);
+  return true;
 }
+
+/// shouldIncludeStatus - given a sym name from armap and check if including
+/// the corresponding archive member, and then return the decision
+enum Archive::Symbol::Status
+GNUArchiveReader::shouldIncludeSymbol(const llvm::StringRef& pSymName) const
+{
+  // TODO: handle symbol version issue and user defined symbols
+  ResolveInfo* info = m_LDInfo.getNamePool().findInfo(pSymName);
+  if (NULL != info) {
+    if (!info->isUndef())
+      return Archive::Symbol::Exclude;
+    if (info->isWeak())
+      return Archive::Symbol::Unknown;
+    return Archive::Symbol::Include;
+  }
+  return Archive::Symbol::Unknown;
+}
+

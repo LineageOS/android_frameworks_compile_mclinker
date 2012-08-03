@@ -1,4 +1,4 @@
-//===- X86PLT.cpp -----------------------------------------------------------===//
+//===- X86PLT.cpp ---------------------------------------------------------===//
 //
 //                     The MCLinker Project
 //
@@ -8,12 +8,18 @@
 //===----------------------------------------------------------------------===//
 #include "X86GOTPLT.h"
 #include "X86PLT.h"
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/ELF.h>
-#include <mcld/MC/MCLDOutput.h>
-#include <mcld/Support/MsgHandling.h>
+
 #include <new>
 
+#include <llvm/Support/ELF.h>
+#include <llvm/Support/Casting.h>
+
+#include <mcld/MC/MCLDOutput.h>
+#include <mcld/Support/MsgHandling.h>
+
+//===----------------------------------------------------------------------===//
+// PLT entry data
+//===----------------------------------------------------------------------===//
 namespace {
 
 const uint8_t x86_dyn_plt0[] = {
@@ -44,17 +50,17 @@ const uint8_t x86_exec_plt1[] = {
 
 namespace mcld {
 
-X86PLT0::X86PLT0(llvm::MCSectionData* pParent, unsigned int pSize)
+X86PLT0::X86PLT0(SectionData* pParent, unsigned int pSize)
   : PLTEntry(pSize, pParent) { }
 
-X86PLT1::X86PLT1(llvm::MCSectionData* pParent, unsigned int pSize)
+X86PLT1::X86PLT1(SectionData* pParent, unsigned int pSize)
   : PLTEntry(pSize, pParent) { }
 
 //===----------------------------------------------------------------------===//
 // X86PLT
-
+//===----------------------------------------------------------------------===//
 X86PLT::X86PLT(LDSection& pSection,
-               llvm::MCSectionData& pSectionData,
+               SectionData& pSectionData,
                X86GOTPLT &pGOTPLT,
                const Output& pOutput)
   : PLT(pSection, pSectionData),
@@ -94,7 +100,7 @@ void X86PLT::reserveEntry(size_t pNum)
     plt1_entry = new (std::nothrow) X86PLT1(&m_SectionData, m_PLT1Size);
 
     if (!plt1_entry)
-      fatal(diag::fail_allocate_memory) << "X86PLT1";
+      fatal(diag::fail_allocate_memory_plt);
 
     m_Section.setSize(m_Section.size() + plt1_entry->getEntrySize());
 
@@ -152,7 +158,7 @@ void X86PLT::applyPLT0() {
   data = static_cast<unsigned char*>(malloc(plt0->getEntrySize()));
 
   if (!data)
-    fatal(diag::fail_allocate_memory) << "plt0";
+    fatal(diag::fail_allocate_memory_plt);
 
   memcpy(data, m_PLT0, plt0->getEntrySize());
 
@@ -200,7 +206,7 @@ void X86PLT::applyPLT1() {
     data = static_cast<unsigned char*>(malloc(plt1->getEntrySize()));
 
     if (!data)
-      fatal(diag::fail_allocate_memory) << "plt1";
+      fatal(diag::fail_allocate_memory_plt);
 
     memcpy(data, m_PLT1, plt1->getEntrySize());
 

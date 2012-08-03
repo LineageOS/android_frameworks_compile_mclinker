@@ -5,8 +5,6 @@ mcld_mc_SRC_FILES := \
   ContextFactory.cpp  \
   InputFactory.cpp  \
   InputTree.cpp \
-  MCBitcodeInterceptor.cpp  \
-  MCFragmentRef.cpp \
   MCLDAttribute.cpp \
   MCLDDirectory.cpp \
   MCLDDriver.cpp  \
@@ -16,7 +14,6 @@ mcld_mc_SRC_FILES := \
   MCLDOptions.cpp \
   MCLDOutput.cpp  \
   MCLinker.cpp  \
-  MCRegionFragment.cpp  \
   SearchDirs.cpp  \
   SymbolCategory.cpp  \
   ZOption.cpp

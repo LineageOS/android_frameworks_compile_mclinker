@@ -95,6 +95,7 @@ Linker::~Linker() {
   delete mDriver;
   delete mBackend;
   delete mMemAreaFactory;
+  delete mRoot;
 }
 
 enum Linker::ErrorCode Linker::extractFiles(const LinkerConfig& pConfig) {
@@ -103,7 +104,7 @@ enum Linker::ErrorCode Linker::extractFiles(const LinkerConfig& pConfig) {
     return kDelegateLDInfo;
   }
 
-  mRoot = &mLDInfo->inputs().root();
+  mRoot = new mcld::InputTree::iterator(mLDInfo->inputs().root());
   mShared = pConfig.isShared();
   mSOName = pConfig.getSOName();
 
@@ -122,9 +123,9 @@ enum Linker::ErrorCode Linker::config(const LinkerConfig& pConfig) {
     return kCreateBackend;
   }
 
-  mDriver = new mcld::MCLDDriver(*mLDInfo, *mBackend);
-
   mMemAreaFactory = new MemoryFactory();
+
+  mDriver = new mcld::MCLDDriver(*mLDInfo, *mBackend, *mMemAreaFactory);
 
   mDriver->initMCLinker();
 
@@ -354,12 +355,8 @@ enum Linker::ErrorCode Linker::setOutput(int pFileHandler) {
 enum Linker::ErrorCode Linker::link() {
   mDriver->normalize();
 
-  if (!mDriver->readSections() || !mDriver->mergeSections()) {
+  if (!mDriver->mergeSections()) {
     return kReadSections;
-  }
-
-  if (!mDriver->readSymbolTables()) {
-    return kReadSymbols;
   }
 
   if (!mDriver->addStandardSymbols() || !mDriver->addTargetSymbols()) {

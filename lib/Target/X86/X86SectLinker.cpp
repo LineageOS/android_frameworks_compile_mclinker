@@ -47,3 +47,4 @@ extern "C" void LLVMInitializeX86SectLinker() {
   // Register the linker frontend
   mcld::TargetRegistry::RegisterSectLinker(TheX86Target, createX86SectLinker);
 }
+

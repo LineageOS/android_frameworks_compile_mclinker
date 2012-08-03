@@ -49,6 +49,12 @@ public:
     return m_pInfo;
   }
 
+  // -----  search directories  ----- //
+  void addSearchDir(const std::string &pPath);
+
+  void setSysRoot(const mcld::sys::fs::Path &pPath);
+
+  // -----  input operators  ----- //
   void addObject(const std::string &pPath);
 
   void addObject(const mcld::sys::fs::Path &pPath)
@@ -63,6 +69,8 @@ public:
   bool setOutput(const std::string &pPath);
 
   bool setOutput(int pFileHandler);
+
+  bool setOutput(const sys::fs::Path &pPath);
 
   /// getDriver
   MCLDDriver* getDriver() {
@@ -100,6 +108,7 @@ private:
   mcld::TargetLDBackend* m_pBackend;
   mcld::InputTree::iterator m_Root;
   mcld::RegionFactory* m_pRegionFactory;
+  mcld::MemoryAreaFactory* m_pMemAreaFactory;
 
   std::list<mcld::FileHandle*> m_FileHandleList;
   std::list<mcld::MemoryArea*> m_MemAreaList;

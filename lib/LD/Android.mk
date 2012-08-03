@@ -5,6 +5,8 @@ LOCAL_PATH:= $(call my-dir)
 # =====================================================
 
 mcld_ld_SRC_FILES := \
+  AlignFragment.cpp \
+  Archive.cpp \
   ArchiveReader.cpp \
   BranchIsland.cpp  \
   CIE.cpp \
@@ -22,6 +24,9 @@ mcld_ld_SRC_FILES := \
   EhFrameHdr.cpp  \
   ExecWriter.cpp  \
   FDE.cpp \
+  FillFragment.cpp \
+  Fragment.cpp \
+  FragmentRef.cpp \
   Layout.cpp  \
   LDContext.cpp \
   LDFileFormat.cpp  \
@@ -33,11 +38,13 @@ mcld_ld_SRC_FILES := \
   MsgHandler.cpp  \
   NamePool.cpp  \
   ObjectWriter.cpp  \
+  RegionFragment.cpp \
   Relocation.cpp  \
   RelocationFactory.cpp \
   ResolveInfo.cpp \
   ResolveInfoFactory.cpp  \
   Resolver.cpp  \
+  SectionData.cpp \
   SectionMap.cpp  \
   SectionMerger.cpp \
   StaticResolver.cpp  \
