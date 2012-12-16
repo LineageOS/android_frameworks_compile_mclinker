@@ -6,14 +6,8 @@ LOCAL_CFLAGS := \
 
 LOCAL_CPPFLAGS := \
   $(LOCAL_CPPFLAGS) \
-  -Wformat \
-  -Werror=format-security \
-  -Werror=return-type \
-  -Werror=non-virtual-dtor \
-  -Werror=address \
-  -Werror=sequence-point \
-  -Woverloaded-virtual \
-  -Wno-sign-promo
+  -Wall \
+  -Werror
 
 ifeq ($(MCLD_ENABLE_ASSERTION),true)
   LOCAL_CPPFLAGS += \
