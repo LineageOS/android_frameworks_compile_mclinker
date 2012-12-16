@@ -6,20 +6,21 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <mcld/Module.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/Target/TargetMachine.h>
 #include <mcld/Support/TargetSelect.h>
 #include <mcld/Support/TargetRegistry.h>
 #include <mcld/Support/CommandLine.h>
-#include <mcld/Support/DerivedPositionDependentOptions.h>
 #include <mcld/Support/Path.h>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/FileHandle.h>
 #include <mcld/Support/FileSystem.h>
 #include <mcld/Support/raw_ostream.h>
+#include <mcld/Support/ToolOutputFile.h>
 #include <mcld/LD/DiagnosticLineInfo.h>
 #include <mcld/LD/TextDiagnosticPrinter.h>
-#include <mcld/MC/MCLDInfo.h>
-#include <mcld/CodeGen/SectLinkerOption.h>
 
 #include <llvm/Module.h>
 #include <llvm/PassManager.h>
@@ -36,10 +37,27 @@
 #include <llvm/Support/Signals.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/Process.h>
 #include <llvm/Target/TargetData.h>
 #include <llvm/Target/TargetMachine.h>
+
+#if defined(HAVE_UNISTD_H)
+# include <unistd.h>
+#endif
+
+#if defined(_MSC_VER)
+#include <io.h>
+#ifndef STDIN_FILENO
+# define STDIN_FILENO 0
+#endif
+#ifndef STDOUT_FILENO
+# define STDOUT_FILENO 1
+#endif
+#ifndef STDERR_FILENO
+# define STDERR_FILENO 2
+#endif
+#endif
+
 
 using namespace llvm;
 
@@ -230,19 +248,25 @@ SegmentedStacks("segmented-stacks",
 //===----------------------------------------------------------------------===//
 // Command Line Options
 // There are four kinds of command line options:
-//   1. input, (may be a file, such as -m and /tmp/XXXX.o.)
-//   2. attribute of inputs, (describing the attributes of inputs, such as
-//      --as-needed and --whole-archive. usually be positional.)
-//   3. scripting options, (represent a subset of link scripting language, such
-//      as --defsym.)
-//   4. and general options. (the rest of options)
+//   1. Bitcode option. Used to represent a bitcode.
+//   2. Attribute options. Attributes describes the input file after them. For
+//      example, --as-needed affects the input file after this option. Attribute
+//      options are not attributes. Attribute options are the options that is
+//      used to define a legal attribute.
+//   3. Scripting options, Used to represent a subset of link scripting
+//      language, such as --defsym.
+//   4. General options. (the rest of options)
 //===----------------------------------------------------------------------===//
-// General Options
+// Bitcode Options
+//===----------------------------------------------------------------------===//
 static cl::opt<mcld::sys::fs::Path, false, llvm::cl::parser<mcld::sys::fs::Path> >
 ArgBitcodeFilename("dB",
               cl::desc("set default bitcode"),
               cl::value_desc("bitcode"));
 
+//===----------------------------------------------------------------------===//
+// General Options
+//===----------------------------------------------------------------------===//
 static cl::opt<mcld::sys::fs::Path, false, llvm::cl::parser<mcld::sys::fs::Path> >
 ArgOutputFilename("o",
                cl::desc("Output filename"),
@@ -259,7 +283,7 @@ ArgSysRoot("sysroot",
            cl::value_desc("directory"),
            cl::ValueRequired);
 
-static cl::list<mcld::MCLDDirectory, bool, llvm::cl::parser<mcld::MCLDDirectory> >
+static cl::list<std::string>
 ArgSearchDirList("L",
                  cl::ZeroOrMore,
                  cl::desc("Add path searchdir to the list of paths that ld will search for archive libraries and ld control scripts."),
@@ -379,6 +403,16 @@ ArgPIE("pie",
        cl::desc("Emit a position-independent executable file"),
        cl::init(false));
 
+static cl::opt<bool>
+ArgRelocatable("relocatable",
+               cl::desc("Generate relocatable output"),
+               cl::init(false));
+
+static cl::alias
+ArgRelocatableAlias("r",
+                    cl::desc("alias for --relocatable"),
+                    cl::aliasopt(ArgRelocatable));
+
 static cl::opt<Reloc::Model>
 ArgRelocModel("relocation-model",
              cl::desc("Choose relocation model"),
@@ -401,6 +435,7 @@ ArgFPIC("fPIC",
 
 static cl::opt<std::string>
 ArgDyld("dynamic-linker",
+        cl::ZeroOrMore,
         cl::desc("Set the name of the dynamic linker."),
         cl::value_desc("Program"));
 
@@ -426,114 +461,154 @@ ArgColor("color",
       "surround result strings only if the output is a tty"),
     clEnumValEnd));
 
-//===----------------------------------------------------------------------===//
-// Inputs
-static cl::list<mcld::sys::fs::Path>
-ArgInputObjectFiles(cl::Positional,
-                    cl::desc("[input object files]"),
-                    cl::ZeroOrMore);
+/// @{
+/// @name FIXME: begin of unsupported options
+/// @}
+static cl::opt<bool>
+ArgGCSections("gc-sections",
+              cl::desc("Enable garbage collection of unused input sections."),
+              cl::init(false));
+
+static cl::opt<bool>
+ArgNoGCSections("no-gc-sections",
+              cl::desc("disable garbage collection of unused input sections."),
+              cl::init(false));
+
+namespace icf {
+enum Mode {
+  None,
+  All,
+  Safe
+};
+} // namespace of icf
+
+static cl::opt<icf::Mode>
+ArgICF("icf",
+       cl::desc("Identical Code Folding"),
+       cl::init(icf::None),
+       cl::values(
+         clEnumValN(icf::None, "none",
+           "do not perform cold folding"),
+         clEnumValN(icf::All, "all",
+           "always preform cold folding"),
+         clEnumValN(icf::Safe, "safe",
+           "Folds ctors, dtors and functions whose pointers are definitely not taken."),
+         clEnumValEnd));
+
+// FIXME: add this to target options?
+static cl::opt<bool>
+ArgFIXCA8("fix-cortex-a8",
+          cl::desc("Enable Cortex-A8 Thumb-2 branch erratum fix"),
+          cl::init(false));
+
+static cl::opt<bool>
+ArgDiscardLocals("discard-locals",
+                 cl::desc("Delete all temporary local symbols."),
+                 cl::init(false));
+
+static cl::alias
+ArgDiscardLocalsAlias("X",
+                      cl::desc("alias for --discard-locals"),
+                      cl::aliasopt(ArgDiscardLocals));
+
+static cl::opt<bool>
+ArgDiscardAll("discard-all",
+              cl::desc("Delete all local symbols."),
+              cl::init(false));
+
+static cl::alias
+ArgDiscardAllAlias("x",
+                   cl::desc("alias for --discard-all"),
+                   cl::aliasopt(ArgDiscardAll));
+
+static cl::opt<bool>
+ArgNMagic("nmagic",
+          cl::desc("Do not page align data"),
+          cl::init(false));
+
+static cl::alias
+ArgNMagicAlias("n",
+               cl::desc("alias for --nmagic"),
+               cl::aliasopt(ArgNMagic));
+
+static cl::opt<bool>
+ArgOMagic("omagic",
+          cl::desc("Do not page align data, do not make text readonly"),
+          cl::init(false));
+
+static cl::alias
+ArgOMagicAlias("N",
+               cl::desc("alias for --omagic"),
+               cl::aliasopt(ArgOMagic));
+
+static cl::opt<bool>
+ArgStripDebug("strip-debug",
+              cl::desc("Omit debugger symbol information from the output file."),
+              cl::init(false));
+
+static cl::alias
+ArgStripDebugAlias("S",
+                   cl::desc("alias for --strip-debug"),
+                   cl::aliasopt(ArgStripDebug));
+
+static cl::opt<bool>
+ArgExportDynamic("export-dynamic",
+                 cl::desc("Export all dynamic symbols"),
+                 cl::init(false));
+
+static cl::alias
+ArgExportDynamicAlias("E",
+                      cl::desc("alias for --export-dynamic"),
+                      cl::aliasopt(ArgExportDynamic));
+
+static cl::opt<std::string>
+ArgEmulation("m",
+             cl::desc("Set GNU linker emulation"),
+             cl::value_desc("emulation"));
+
+static cl::opt<std::string>
+ArgRuntimePath("rpath",
+               cl::desc("Add a directory to the runtime library search path"),
+               cl::value_desc("dir"));
+
+static cl::opt<std::string>
+ArgRuntimePathLink("rpath-link",
+                   cl::desc("Add a directory to the link time library search path"),
+                   cl::value_desc("dir"));
 
 static cl::list<std::string>
-ArgNameSpecList("l",
-            cl::ZeroOrMore,
-            cl::desc("Add the archive or object file specified by namespec to the list of files to link."),
-            cl::value_desc("namespec"),
-            cl::Prefix);
+ArgExcludeLIBS("exclude-libs",
+               cl::CommaSeparated,
+               cl::desc("Exclude libraries from automatic export"),
+               cl::value_desc("lib1,lib2,..."));
+
+static cl::opt<std::string>
+ArgBuildID("build-id",
+           cl::desc("Request creation of \".note.gnu.build-id\" ELF note section."),
+           cl::value_desc("style"));
+
+static cl::opt<std::string>
+ArgForceUndefined("u",
+                  cl::desc("Force symbol to be undefined in the output file"),
+                  cl::value_desc("symbol"));
 
 static cl::alias
-ArgNameSpecListAlias("library",
-                 cl::desc("alias for -l"),
-                 cl::aliasopt(ArgNameSpecList));
+ArgForceUndefinedAlias("undefined",
+                       cl::desc("alias for -u"),
+                       cl::aliasopt(ArgForceUndefined));
 
-static cl::list<bool>
-ArgStartGroupList("start-group",
-                  cl::ValueDisallowed,
-                  cl::desc("start to record a group of archives"));
+/// @{
+/// @name FIXME: end of unsupported options
+/// @}
 
-static cl::alias
-ArgStartGroupListAlias("(",
-                       cl::desc("alias for --start-group"),
-                       cl::aliasopt(ArgStartGroupList));
-
-static cl::list<bool>
-ArgEndGroupList("end-group",
-                cl::ValueDisallowed,
-                cl::desc("stop recording a group of archives"));
-
-static cl::alias
-ArgEndGroupListAlias(")",
-                     cl::desc("alias for --end-group"),
-                     cl::aliasopt(ArgEndGroupList));
-
-//===----------------------------------------------------------------------===//
-// Attributes of Inputs
-static cl::list<bool>
-ArgWholeArchiveList("whole-archive",
-                    cl::ValueDisallowed,
-                    cl::desc("For each archive mentioned on the command line after the --whole-archive option, include all object files in the archive."));
-
-static cl::list<bool>
-ArgNoWholeArchiveList("no-whole-archive",
-                    cl::ValueDisallowed,
-                    cl::desc("Turn off the effect of the --whole-archive option for subsequent archive files."));
-
-static cl::list<bool>
-ArgAsNeededList("as-needed",
-                cl::ValueDisallowed,
-                cl::desc("This option affects ELF DT_NEEDED tags for dynamic libraries mentioned on the command line after the --as-needed option."));
-
-static cl::list<bool>
-ArgNoAsNeededList("no-as-needed",
-                cl::ValueDisallowed,
-                cl::desc("Turn off the effect of the --as-needed option for subsequent dynamic libraries"));
-
-static cl::list<bool>
-ArgAddNeededList("add-needed",
-                cl::ValueDisallowed,
-                cl::desc("--add-needed causes DT_NEEDED tags are always emitted for those libraries from DT_NEEDED tags. This is the default behavior."));
-
-static cl::list<bool>
-ArgNoAddNeededList("no-add-needed",
-                cl::ValueDisallowed,
-                cl::desc("--no-add-needed causes DT_NEEDED tags will never be emitted for those libraries from DT_NEEDED tags"));
-
-static cl::list<bool>
-ArgBDynamicList("Bdynamic",
-                cl::ValueDisallowed,
-                cl::desc("Link against dynamic library"));
-
-static cl::alias
-ArgBDynamicListAlias1("dy",
-                     cl::desc("alias for --Bdynamic"),
-                     cl::aliasopt(ArgBDynamicList));
-
-static cl::alias
-ArgBDynamicListAlias2("call_shared",
-                     cl::desc("alias for --Bdynamic"),
-                     cl::aliasopt(ArgBDynamicList));
-
-static cl::list<bool>
-ArgBStaticList("Bstatic",
-                cl::ValueDisallowed,
-                cl::desc("Link against static library"));
-
-static cl::alias
-ArgBStaticListAlias1("dn",
-                     cl::desc("alias for --Bstatic"),
-                     cl::aliasopt(ArgBStaticList));
-
-static cl::alias
-ArgBStaticListAlias2("static",
-                     cl::desc("alias for --Bstatic"),
-                     cl::aliasopt(ArgBStaticList));
-
-static cl::alias
-ArgBStaticListAlias3("non_shared",
-                     cl::desc("alias for --Bstatic"),
-                     cl::aliasopt(ArgBStaticList));
+static cl::opt<bool>
+ArgWarnSharedTextrel("warn-shared-textrel",
+                     cl::desc("Warn if adding DT_TEXTREL in a shared object."),
+                     cl::init(false));
 
 //===----------------------------------------------------------------------===//
 // Scripting Options
+//===----------------------------------------------------------------------===//
 static cl::list<std::string>
 ArgWrapList("wrap",
             cl::ZeroOrMore,
@@ -546,15 +621,37 @@ ArgPortList("portable",
             cl::desc("Use a portable function fo symbol."),
             cl::value_desc("symbol"));
 
-//===----------------------------------------------------------------------===//
-/// non-member functions
+static cl::list<std::string>
+ArgAddressMapList("section-start",
+                  cl::ZeroOrMore,
+                  cl::desc("Locate a output section at the given absolute address"),
+                  cl::value_desc("Set address of section"),
+                  cl::Prefix);
 
+static cl::opt<unsigned long long>
+ArgBssSegAddr("Tbss",
+              cl::desc("Set the address of the bss segment"),
+              cl::init(-1U));
+
+static cl::opt<unsigned long long>
+ArgDataSegAddr("Tdata",
+               cl::desc("Set the address of the data segment"),
+               cl::init(-1U));
+
+static cl::opt<unsigned long long>
+ArgTextSegAddr("Ttext",
+               cl::desc("Set the address of the text segment"),
+               cl::init(-1U));
+
+//===----------------------------------------------------------------------===//
+// non-member functions
+//===----------------------------------------------------------------------===//
 /// GetOutputStream - get the output stream.
-static tool_output_file *GetOutputStream(const char* pTargetName,
-                                         Triple::OSType pOSType,
-                                         mcld::CodeGenFileType pFileType,
-                                         const mcld::sys::fs::Path& pInputFilename,
-                                         mcld::sys::fs::Path& pOutputFilename)
+static mcld::ToolOutputFile *GetOutputStream(const char* pTargetName,
+                                             Triple::OSType pOSType,
+                                             mcld::CodeGenFileType pFileType,
+                                             const mcld::sys::fs::Path& pInputFilename,
+                                             mcld::sys::fs::Path& pOutputFilename)
 {
   if (pOutputFilename.empty()) {
     if (0 == pInputFilename.native().compare("-"))
@@ -586,6 +683,19 @@ static tool_output_file *GetOutputStream(const char* pTargetName,
           pOutputFilename.native() += ".obj";
         else
           pOutputFilename.native() += ".o";
+      }
+      break;
+
+      case mcld::CGFT_PARTIAL: {
+        if (Triple::Win32 == pOSType) {
+          if (0 == pInputFilename.native().compare("-"))
+            pOutputFilename.assign("_out");
+          else
+            pOutputFilename.assign(pInputFilename.stem().native());
+          pOutputFilename.native() += ".obj";
+        }
+        else
+          pOutputFilename.assign("a.out");
       }
       break;
 
@@ -623,31 +733,28 @@ static tool_output_file *GetOutputStream(const char* pTargetName,
     } // end of ! pInputFilename == "-"
   } // end of if empty pOutputFilename
 
-  // Decide if we need "binary" output.
-  unsigned int fd_flags = 0x0;
+  mcld::FileHandle::Permission permission;
   switch (pFileType) {
   default: assert(0 && "Unknown file type");
   case mcld::CGFT_ASMFile:
-    break;
   case mcld::CGFT_OBJFile:
+  case mcld::CGFT_PARTIAL:
+    permission = 0644;
+    break;
   case mcld::CGFT_DSOFile:
   case mcld::CGFT_EXEFile:
   case mcld::CGFT_NULLFile:
-    fd_flags |= raw_fd_ostream::F_Binary;
+    permission = 0755;
     break;
   }
 
   // Open the file.
-  std::string err_mesg;
-  tool_output_file *result_output =
-                            new tool_output_file(pOutputFilename.c_str(),
-                                                 err_mesg,
-                                                 fd_flags);
-  if (!err_mesg.empty()) {
-    errs() << err_mesg << '\n';
-    delete result_output;
-    return NULL;
-  }
+  mcld::ToolOutputFile* result_output =
+                      new mcld::ToolOutputFile(pOutputFilename,
+                                                 mcld::FileHandle::ReadWrite |
+                                                 mcld::FileHandle::Create |
+                                                 mcld::FileHandle::Truncate,
+                                               permission);
 
   return result_output;
 }
@@ -658,46 +765,79 @@ static bool ShouldColorize()
    return term && (0 != strcmp(term, "dumb"));
 }
 
-static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
+static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   // -----  Set up General Options  ----- //
+  // set up colorize
+  switch (ArgColor) {
+    case color::Never:
+      pConfig.options().setColor(false);
+    break;
+    case color::Always:
+      pConfig.options().setColor(true);
+    break;
+    case color::Auto:
+      bool color_option = ShouldColorize() &&
+                 llvm::sys::Process::FileDescriptorIsDisplayed(STDOUT_FILENO);
+      pConfig.options().setColor(color_option);
+    break;
+  }
+
+  mcld::outs().setColor(pConfig.options().color());
+  mcld::errs().setColor(pConfig.options().color());
+
   // set up soname
-  pLDInfo.output().setSOName(ArgSOName);
+  pConfig.options().setSOName(ArgSOName);
+
+  // -shared or -pie
+  if (true == ArgShared || true == ArgPIE) {
+    ArgFileType = mcld::CGFT_DSOFile;
+  }
+  else if (true == ArgRelocatable) {
+    ArgFileType = mcld::CGFT_PARTIAL;
+  }
+
+  // -V
+  if (ArgVersion) {
+    mcld::outs() << "MCLinker - "
+                 << mcld::LinkerConfig::version()
+                 << "\n";
+  }
 
   // set up sysroot
   if (!ArgSysRoot.empty()) {
     if (exists(ArgSysRoot) && is_directory(ArgSysRoot))
-      pLDInfo.options().setSysroot(ArgSysRoot);
+      pConfig.options().setSysroot(ArgSysRoot);
   }
 
   // add all search directories
-  cl::list<mcld::MCLDDirectory>::iterator sd;
-  cl::list<mcld::MCLDDirectory>::iterator sdEnd = ArgSearchDirList.end();
+  cl::list<std::string>::iterator sd;
+  cl::list<std::string>::iterator sdEnd = ArgSearchDirList.end();
   for (sd=ArgSearchDirList.begin(); sd!=sdEnd; ++sd) {
-    if (sd->isInSysroot())
-      sd->setSysroot(pLDInfo.options().sysroot());
-    if (exists(sd->path()) && is_directory(sd->path())) {
-      pLDInfo.options().directories().add(*sd);
-    }
-    else {
+    if (!pConfig.options().directories().insert(*sd)) {
       // FIXME: need a warning function
       errs() << "WARNING: can not open search directory `-L"
-             << sd->name()
+             << *sd
              << "'.\n";
     }
   }
 
-  pLDInfo.options().setPIE(ArgPIE);
-  pLDInfo.options().setTrace(ArgTrace);
-  pLDInfo.options().setVerbose(ArgVerbose);
-  pLDInfo.options().setMaxErrorNum(ArgMaxErrorNum);
-  pLDInfo.options().setMaxWarnNum(ArgMaxWarnNum);
-  pLDInfo.options().setEntry(ArgEntry);
-  pLDInfo.options().setBsymbolic(ArgBsymbolic);
-  pLDInfo.options().setBgroup(ArgBgroup);
-  pLDInfo.options().setDyld(ArgDyld);
-  pLDInfo.options().setNoUndefined(ArgNoUndefined);
-  pLDInfo.options().setMulDefs(ArgAllowMulDefs);
-  pLDInfo.options().setEhFrameHdr(ArgEhFrameHdr);
+  pConfig.options().setPIE(ArgPIE);
+  pConfig.options().setTrace(ArgTrace);
+  pConfig.options().setVerbose(ArgVerbose);
+  pConfig.options().setMaxErrorNum(ArgMaxErrorNum);
+  pConfig.options().setMaxWarnNum(ArgMaxWarnNum);
+  pConfig.options().setEntry(ArgEntry);
+  pConfig.options().setBsymbolic(ArgBsymbolic);
+  pConfig.options().setBgroup(ArgBgroup);
+  pConfig.options().setDyld(ArgDyld);
+  pConfig.options().setNoUndefined(ArgNoUndefined);
+  pConfig.options().setMulDefs(ArgAllowMulDefs);
+  pConfig.options().setEhFrameHdr(ArgEhFrameHdr);
+  pConfig.options().setNMagic(ArgNMagic);
+  pConfig.options().setOMagic(ArgOMagic);
+  pConfig.options().setStripDebug(ArgStripDebug);
+  pConfig.options().setExportDynamic(ArgExportDynamic);
+  pConfig.options().setWarnSharedTextrel(ArgWarnSharedTextrel);
 
   // set up rename map, for --wrap
   cl::list<std::string>::iterator wname;
@@ -707,7 +847,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
 
     // add wname -> __wrap_wname
     mcld::StringEntry<llvm::StringRef>* to_wrap =
-                    pLDInfo.scripts().renameMap().insert(*wname, exist);
+                    pConfig.scripts().renameMap().insert(*wname, exist);
 
     std::string to_wrap_str = "__wrap_" + *wname;
     to_wrap->setValue(to_wrap_str);
@@ -718,7 +858,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
     // add __real_wname -> wname
     std::string from_real_str = "__real_" + *wname;
     mcld::StringEntry<llvm::StringRef>* from_real =
-             pLDInfo.scripts().renameMap().insert(from_real_str, exist);
+             pConfig.scripts().renameMap().insert(from_real_str, exist);
     from_real->setValue(*wname);
     if (exist)
       mcld::warning(mcld::diag::rewrap) << *wname << from_real_str;
@@ -732,7 +872,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
 
     // add pname -> pname_portable
     mcld::StringEntry<llvm::StringRef>* to_port =
-                  pLDInfo.scripts().renameMap().insert(*pname, exist);
+                  pConfig.scripts().renameMap().insert(*pname, exist);
 
     std::string to_port_str = *pname + "_portable";
     to_port->setValue(to_port_str);
@@ -743,154 +883,88 @@ static bool ProcessLinkerOptionsFromCommand(mcld::MCLDInfo& pLDInfo) {
     // add __real_pname -> pname
     std::string from_real_str = "__real_" + *pname;
     mcld::StringEntry<llvm::StringRef>* from_real =
-             pLDInfo.scripts().renameMap().insert(from_real_str, exist);
+             pConfig.scripts().renameMap().insert(from_real_str, exist);
 
     from_real->setValue(*pname);
     if (exist)
       mcld::warning(mcld::diag::rewrap) << *pname << from_real_str;
   } // end of for
 
-  // set up colorize
-  switch (ArgColor) {
-    case color::Never:
-      pLDInfo.options().setColor(false);
-    break;
-    case color::Always:
-      pLDInfo.options().setColor(true);
-    break;
-    case color::Auto:
-      bool color_option = ShouldColorize() &&
-                 llvm::sys::Process::FileDescriptorIsDisplayed(STDOUT_FILENO);
-      pLDInfo.options().setColor(color_option);
-    break;
-  }
-
   // add -z options
   cl::list<mcld::ZOption>::iterator zOpt;
   cl::list<mcld::ZOption>::iterator zOptEnd = ArgZOptionList.end();
   for (zOpt = ArgZOptionList.begin(); zOpt != zOptEnd; ++zOpt) {
-    pLDInfo.options().addZOption(*zOpt);
+    pConfig.options().addZOption(*zOpt);
   }
 
-  // -----  Set up Script Options  ----- //
-
-  return true;
-}
-
-static bool ProcessLinkerInputsFromCommand(mcld::SectLinkerOption &pOption) {
-  // -----  Set up Inputs  ----- //
-  // add all start-group
-  cl::list<bool>::iterator sg;
-  cl::list<bool>::iterator sgEnd = ArgStartGroupList.end();
-  for (sg=ArgStartGroupList.begin(); sg!=sgEnd; ++sg) {
-    // calculate position
-    pOption.appendOption(new mcld::StartGroupOption(
-                                    ArgStartGroupList.getPosition(sg-ArgStartGroupList.begin())));
+  if (ArgGCSections) {
+    mcld::warning(mcld::diag::warn_unsupported_option) << ArgGCSections.ArgStr;
   }
 
-  // add all end-group
-  cl::list<bool>::iterator eg;
-  cl::list<bool>::iterator egEnd = ArgEndGroupList.end();
-  for (eg=ArgEndGroupList.begin(); eg!=egEnd; ++eg) {
-    // calculate position
-    pOption.appendOption(new mcld::EndGroupOption(
-                                    ArgEndGroupList.getPosition(eg-ArgEndGroupList.begin())));
+  // set up icf mode
+  switch (ArgICF) {
+    case icf::None:
+      break;
+    case icf::All:
+    case icf::Safe:
+    default:
+      mcld::warning(mcld::diag::warn_unsupported_option) << ArgICF.ArgStr;
+      break;
   }
 
-  // add all namespecs
-  cl::list<std::string>::iterator ns;
-  cl::list<std::string>::iterator nsEnd = ArgNameSpecList.end();
-  for (ns=ArgNameSpecList.begin(); ns!=nsEnd; ++ns) {
-    // calculate position
-    pOption.appendOption(new mcld::NamespecOption(
-                                    ArgNameSpecList.getPosition(ns-ArgNameSpecList.begin()),
-                                    *ns));
+  if (ArgFIXCA8) {
+    mcld::warning(mcld::diag::warn_unsupported_option) << ArgFIXCA8.ArgStr;
   }
 
-  // add all object files
-  cl::list<mcld::sys::fs::Path>::iterator obj;
-  cl::list<mcld::sys::fs::Path>::iterator objEnd = ArgInputObjectFiles.end();
-  for (obj=ArgInputObjectFiles.begin(); obj!=objEnd; ++obj) {
-    // calculate position
-    pOption.appendOption(new mcld::InputFileOption(
-                                    ArgInputObjectFiles.getPosition(obj-ArgInputObjectFiles.begin()),
-                                    *obj));
+  if (ArgDiscardLocals) {
+    mcld::warning(mcld::diag::warn_unsupported_option) << ArgDiscardLocals.ArgStr;
   }
 
-  // -----  Set up Attributes of Inputs  ----- //
-  // --whole-archive
-  cl::list<bool>::iterator attr = ArgWholeArchiveList.begin();
-  cl::list<bool>::iterator attrEnd = ArgWholeArchiveList.end();
-  for (; attr!=attrEnd; ++attr) {
-    pOption.appendOption(new mcld::WholeArchiveOption(
-                                    ArgWholeArchiveList.getPosition(attr-ArgWholeArchiveList.begin())));
+  if (ArgDiscardAll) {
+    mcld::warning(mcld::diag::warn_unsupported_option) << ArgDiscardAll.ArgStr;
   }
 
-  // --no-whole-archive
-  attr = ArgNoWholeArchiveList.begin();
-  attrEnd = ArgNoWholeArchiveList.end();
-  for (; attr!=attrEnd; ++attr) {
-    pOption.appendOption(new mcld::NoWholeArchiveOption(
-                                    ArgNoWholeArchiveList.getPosition(attr-ArgNoWholeArchiveList.begin())));
+  // add address mappings
+  // -Ttext
+  if (-1U != ArgTextSegAddr) {
+    bool exist = false;
+    mcld::StringEntry<uint64_t>* text_mapping =
+      pConfig.scripts().addressMap().insert(".text", exist);
+    text_mapping->setValue(ArgTextSegAddr);
   }
-
-  // --as-needed
-  attr = ArgAsNeededList.begin();
-  attrEnd = ArgAsNeededList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::AsNeededOption(
-                                    ArgAsNeededList.getPosition(attr-ArgAsNeededList.begin())));
-    ++attr;
+  // -Tdata
+  if (-1U != ArgDataSegAddr) {
+    bool exist = false;
+    mcld::StringEntry<uint64_t>* data_mapping =
+      pConfig.scripts().addressMap().insert(".data", exist);
+    data_mapping->setValue(ArgDataSegAddr);
   }
-
-  // --no-as-needed
-  attr = ArgNoAsNeededList.begin();
-  attrEnd = ArgNoAsNeededList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::NoAsNeededOption(
-                                    ArgNoAsNeededList.getPosition(attr-ArgNoAsNeededList.begin())));
-    ++attr;
+  // -Tbss
+  if (-1U != ArgBssSegAddr) {
+    bool exist = false;
+    mcld::StringEntry<uint64_t>* bss_mapping =
+      pConfig.scripts().addressMap().insert(".bss", exist);
+    bss_mapping->setValue(ArgBssSegAddr);
   }
-
-  // --add-needed
-  attr = ArgAddNeededList.begin();
-  attrEnd = ArgAddNeededList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::AddNeededOption(
-                                    ArgAddNeededList.getPosition(attr-ArgAddNeededList.begin())));
-    ++attr;
-  }
-
-  // --no-add-needed
-  attr = ArgNoAddNeededList.begin();
-  attrEnd = ArgNoAddNeededList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::NoAddNeededOption(
-                                    ArgNoAddNeededList.getPosition(attr-ArgNoAddNeededList.begin())));
-    ++attr;
-  }
-
-  // -Bdynamic
-  attr = ArgBDynamicList.begin();
-  attrEnd = ArgBDynamicList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::BDynamicOption(
-                                    ArgBDynamicList.getPosition(attr-ArgBDynamicList.begin())));
-  }
-
-  // -Bstatic
-  attr = ArgBStaticList.begin();
-  attrEnd = ArgBStaticList.end();
-  while(attr != attrEnd) {
-    pOption.appendOption(new mcld::BStaticOption(
-                                    ArgBStaticList.getPosition(attr-ArgBStaticList.begin())));
-    ++attr;
+  // --section-start SECTION=ADDRESS
+  for (cl::list<std::string>::iterator
+         it = ArgAddressMapList.begin(), ie = ArgAddressMapList.end();
+       it != ie; ++it) {
+    // FIXME: Add a cl::parser
+    size_t pos = (*it).find_last_of('=');
+    llvm::StringRef script(*it);
+    uint64_t address = 0x0;
+    script.substr(pos + 1).getAsInteger(0, address);
+    bool exist = false;
+    mcld::StringEntry<uint64_t>* addr_mapping =
+      pConfig.scripts().addressMap().insert(script.substr(0, pos), exist);
+    addr_mapping->setValue(address);
   }
 
   return true;
 }
 
-int main( int argc, char* argv[] )
+int main(int argc, char* argv[])
 {
   LLVMContext &Context = getGlobalContext();
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
@@ -909,26 +983,27 @@ int main( int argc, char* argv[] )
   InitializeAllTargetMCs();
   mcld::InitializeAllTargets();
   mcld::InitializeAllLinkers();
+  mcld::InitializeAllEmulations();
   mcld::InitializeAllDiagnostics();
 
   // Load the module to be compiled...
-  std::auto_ptr<Module> M;
+  std::auto_ptr<llvm::Module> M;
 
-  // -shared
-  if (true == ArgShared) {
-    ArgFileType = mcld::CGFT_DSOFile;
-  }
+  // Load the module to be linked...
+  mcld::Module LDIRModule;
 
-  // -V
-  if (ArgVersion) {
-    outs() << "MCLinker - ";
-    outs() << mcld::MCLDInfo::version();
-    outs() << "\n";
+  mcld::LinkerConfig LDConfig;
+
+  // Process the linker input from the command line
+  if (!ProcessLinkerOptionsFromCommand(LDConfig)) {
+    errs() << argv[0] << ": failed to process linker options from command line!\n";
+    return 1;
   }
 
   if (ArgBitcodeFilename.empty() &&
       (mcld::CGFT_DSOFile != ArgFileType &&
-       mcld::CGFT_EXEFile != ArgFileType)) {
+       mcld::CGFT_EXEFile != ArgFileType &&
+       mcld::CGFT_PARTIAL != ArgFileType)) {
     // If the file is not given, forcefully read from stdin
     if (ArgVerbose >= 0) {
       errs() << "** The bitcode/llvm asm file is not given. Read from stdin.\n"
@@ -1011,6 +1086,8 @@ int main( int argc, char* argv[] )
       return 1;
     }
   }
+  // Set up mcld::LinkerConfig
+  LDConfig.setTriple(TheTriple);
 
   // Package up features to be passed to target/subtarget
   std::string FeaturesStr;
@@ -1060,34 +1137,26 @@ int main( int argc, char* argv[] )
   Options.TrapFuncName = TrapFuncName;
   Options.EnableSegmentedStacks = SegmentedStacks;
 
-  std::auto_ptr<mcld::LLVMTargetMachine> target_machine(
+  std::auto_ptr<mcld::MCLDTargetMachine> target_machine(
           TheTarget->createTargetMachine(TheTriple.getTriple(),
                                          MCPU, FeaturesStr, Options,
                                          ArgRelocModel, CMModel, OLvl));
   assert(target_machine.get() && "Could not allocate target machine!");
-  mcld::LLVMTargetMachine &TheTargetMachine = *target_machine.get();
+  mcld::MCLDTargetMachine &TheTargetMachine = *target_machine.get();
 
   TheTargetMachine.getTM().setMCUseLoc(false);
   TheTargetMachine.getTM().setMCUseCFI(false);
 
-  // Set up mcld::outs() and mcld::errs()
-  InitializeOStreams(TheTargetMachine.getLDInfo());
-
-  // Set up MsgHandler
+  // FIXME: Move the initialization of LineInfo to mcld::Linker when we
+  // finish LineInfo's implementation.
   OwningPtr<mcld::DiagnosticLineInfo>
     diag_line_info(TheTarget->createDiagnosticLineInfo(*TheTarget,
                                                        TheTriple.getTriple()));
-  OwningPtr<mcld::DiagnosticPrinter>
-    diag_printer(new mcld::TextDiagnosticPrinter(mcld::errs(),
-                                                TheTargetMachine.getLDInfo()));
 
-  mcld::InitializeDiagnosticEngine(TheTargetMachine.getLDInfo(),
-                                   diag_line_info.take(),
-                                   diag_printer.get());
-
+  mcld::getDiagnosticEngine().setLineInfo(*diag_line_info.take());
 
   // Figure out where we are going to send the output...
-  OwningPtr<tool_output_file>
+  OwningPtr<mcld::ToolOutputFile>
   Out(GetOutputStream(TheTarget->get()->getName(),
                       TheTriple.getOS(),
                       ArgFileType,
@@ -1110,30 +1179,14 @@ int main( int argc, char* argv[] )
   // Override default to generate verbose assembly.
   TheTargetMachine.getTM().setAsmVerbosityDefault(true);
 
-  // Process the linker input from the command line
-  mcld::SectLinkerOption *LinkerOpt =
-      new mcld::SectLinkerOption(TheTargetMachine.getLDInfo());
-
-  if (!ProcessLinkerOptionsFromCommand(TheTargetMachine.getLDInfo())) {
-    errs() << argv[0] << ": failed to process linker options from command line!\n";
-    return 1;
-  }
-
-  if (!ProcessLinkerInputsFromCommand(*LinkerOpt)) {
-    errs() << argv[0] << ": failed to process inputs from command line!\n";
-    return 1;
-  }
-
   {
-    formatted_raw_ostream FOS(Out->os());
-
     // Ask the target to add backend passes as necessary.
     if( TheTargetMachine.addPassesToEmitFile(PM,
-                                             FOS,
-                                             ArgOutputFilename.native(),
+                                             *Out,
                                              ArgFileType,
                                              OLvl,
-                                             LinkerOpt,
+                                             LDIRModule,
+                                             LDConfig,
                                              NoVerify)) {
       errs() << argv[0] << ": target does not support generation of this"
              << " file type!\n";
@@ -1148,20 +1201,6 @@ int main( int argc, char* argv[] )
 
   // Declare success.
   Out->keep();
-
-  // clean up
-  delete LinkerOpt;
-
-  if (0 != diag_printer->getNumErrors()) {
-    // If we reached here, we are failing ungracefully. Run the interrupt handlers
-    // to make sure any special cleanups get done, in particular that we remove
-    // files registered with RemoveFileOnSignal.
-    llvm::sys::RunInterruptHandlers();
-    diag_printer->finish();
-    exit(1);
-  }
-
-  diag_printer->finish();
   return 0;
 }
 

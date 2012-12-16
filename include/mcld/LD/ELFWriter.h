@@ -13,17 +13,20 @@
 #endif
 
 #include <llvm/Support/ELF.h>
-#include <mcld/MC/MCLDOutput.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class MCLDInfo;
-class Layout;
+class Module;
+class FragmentLinker;
+class LinkerConfig;
 class GNULDBackend;
 class Relocation;
 class LDSection;
 class SectionData;
+class RelocData;
+class Output;
+class MemoryRegion;
+class MemoryArea;
 
 /** \class ELFWriter
  *  \brief ELFWriter provides basic functions to write ELF sections, symbols,
@@ -48,54 +51,47 @@ public:
   const GNULDBackend& target() const
   { return f_Backend; }
 
-  virtual void writeELF32Header(const MCLDInfo& pInfo,
-                                const Layout& pLayout,
-                                const GNULDBackend& pBackend,
-                                Output& pOutput) const;
+  virtual void writeELF32Header(const LinkerConfig& pConfig,
+                                const Module& pModule,
+                                MemoryArea& pOutput) const;
 
-  virtual void writeELF64Header(const MCLDInfo& pInfo,
-                                const Layout& pLayout,
-                                const GNULDBackend& pBackend,
-                                Output& pOutput) const;
+  virtual void writeELF64Header(const LinkerConfig& pConfig,
+                                const Module& pModule,
+                                MemoryArea& pOutput) const;
 
-  virtual uint64_t getEntryPoint(const MCLDInfo& pInfo,
-                                 const Layout& pLayout,
-                                 const GNULDBackend& pBackend,
-                                 const Output& pOutput) const;
+  virtual uint64_t getEntryPoint(const LinkerConfig& pConfig,
+                                 const Module& pModule) const;
 
 protected:
-  void emitELF32SectionHeader(Output& pOutput, MCLinker& pLinker) const;
+  void emitELF32SectionHeader(const Module& pModule,
+                              const LinkerConfig& pConfig,
+                              MemoryArea& pOutput) const;
 
-  void emitELF64SectionHeader(Output& pOutput, MCLinker& pLinker) const;
+  void emitELF64SectionHeader(const Module& pModule,
+                              const LinkerConfig& pConfig,
+                              MemoryArea& pOutput) const;
 
-  void emitELF32ProgramHeader(Output& pOutput,
-                              const GNULDBackend& pBackend) const;
+  void emitELF32ProgramHeader(MemoryArea& pOutput) const;
 
-  void emitELF64ProgramHeader(Output& pOutput,
-                              const GNULDBackend& pBackend) const;
+  void emitELF64ProgramHeader(MemoryArea& pOutput) const;
 
   // emitShStrTab - emit .shstrtab
-  void emitELF32ShStrTab(Output& pOutput, MCLinker& pLinker) const;
+  void emitELFShStrTab(const LDSection& pShStrTab, const Module& pModule,
+                       MemoryArea& pOutput);
 
-  void emitELF64ShStrTab(Output& pOutput, MCLinker& pLinker) const;
-
-  void emitSectionData(const Layout& pLayout,
-                       const LDSection& pSection,
+  void emitSectionData(const LDSection& pSection,
                        MemoryRegion& pRegion) const;
 
-  void emitRelocation(const Layout& pLayout,
-                      const Output& pOutput,
+  void emitRelocation(const LinkerConfig& pConfig,
                       const LDSection& pSection,
                       MemoryRegion& pRegion) const;
 
-  void emitRel(const Layout& pLayout,
-               const Output& pOutput,
-               const SectionData& pSectionData,
+  void emitRel(const LinkerConfig& pConfig,
+               const RelocData& pRelocData,
                MemoryRegion& pRegion) const;
 
-  void emitRela(const Layout& pLayout,
-                const Output& pOutput,
-                const SectionData& pSectionData,
+  void emitRela(const LinkerConfig& pConfig,
+                const RelocData& pRelocData,
                 MemoryRegion& pRegion) const;
 
 private:
@@ -106,14 +102,17 @@ private:
   uint64_t getELF64SectEntrySize(const LDSection& pSection) const;
 
   // getSectEntrySize - compute ElfXX_Shdr::sh_link
-  uint64_t getSectLink(const LDSection& pSection, const Output& pOutput) const;
+  uint64_t getSectLink(const LDSection& pSection,
+                       const LinkerConfig& pConfig) const;
 
   // getSectEntrySize - compute ElfXX_Shdr::sh_info
-  uint64_t getSectInfo(const LDSection& pSection, const Output& pOutput) const;
+  uint64_t getSectInfo(const LDSection& pSection) const;
 
-  uint64_t getELF32LastStartOffset(const Output& pOutput) const;
+  uint64_t getELF32LastStartOffset(const Module& pModule) const;
 
-  uint64_t getELF64LastStartOffset(const Output& pOutput) const;
+  uint64_t getELF64LastStartOffset(const Module& pModule) const;
+
+  void emitSectionData(const SectionData& pSD, MemoryRegion& pRegion) const;
 
 protected:
   GNULDBackend& f_Backend;

@@ -7,28 +7,26 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ARMTargetMachine.h"
-
-#include "mcld/Support/TargetRegistry.h"
-#include "mcld/MC/MCLDInfo.h"
 #include "ARM.h"
 
-extern "C" void LLVMInitializeARMLDTarget() {
-  // Register createTargetMachine function pointer to mcld::Target
-  mcld::RegisterTargetMachine<mcld::ARMBaseTargetMachine> X(mcld::TheARMTarget);
-  mcld::RegisterTargetMachine<mcld::ARMBaseTargetMachine> Y(mcld::TheThumbTarget);
-}
+#include <mcld/Support/TargetRegistry.h>
 
 mcld::ARMBaseTargetMachine::ARMBaseTargetMachine(llvm::TargetMachine& pPM,
                                                  const mcld::Target &pTarget,
                                                  const std::string& pTriple)
-  : mcld::LLVMTargetMachine(pPM, pTarget, pTriple) {
-  // arg1 - the number of total attributes
-  // arg2 - the most possible number of input files
-  m_pLDInfo = new MCLDInfo(pTriple, 32, 64);
+  : mcld::MCLDTargetMachine(pPM, pTarget, pTriple) {
 }
 
 mcld::ARMBaseTargetMachine::~ARMBaseTargetMachine()
 {
-  delete m_pLDInfo;
+}
+
+//===----------------------------------------------------------------------===//
+// Initialize MCLDTargetMachine
+//===----------------------------------------------------------------------===//
+extern "C" void MCLDInitializeARMLDTarget() {
+  // Register createTargetMachine function pointer to mcld::Target
+  mcld::RegisterTargetMachine<mcld::ARMBaseTargetMachine> X(mcld::TheARMTarget);
+  mcld::RegisterTargetMachine<mcld::ARMBaseTargetMachine> Y(mcld::TheThumbTarget);
 }
 

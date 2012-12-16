@@ -13,14 +13,17 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/DataTypes.h>
+#include <mcld/Support/Allocators.h>
+#include <mcld/Config/Config.h>
 #include <mcld/LD/LDFileFormat.h>
 #include <string>
 
 namespace mcld {
 
 class SectionData;
+class RelocData;
+class EhFrame;
 
 /** \class LDSection
  *  \brief LDSection represents a section header entry. It is a unified
@@ -28,14 +31,33 @@ class SectionData;
  */
 class LDSection
 {
-public:
+private:
+  friend class Chunk<LDSection, MCLD_SECTIONS_PER_INPUT>;
+
+  LDSection();
+
   LDSection(const std::string& pName,
             LDFileFormat::Kind pKind,
             uint32_t pType,
             uint32_t pFlag,
             uint64_t pSize = 0,
-            uint64_t pOffset = 0,
             uint64_t pAddr = 0);
+
+public:
+  ~LDSection();
+
+  static LDSection* Create(const std::string& pName,
+                           LDFileFormat::Kind pKind,
+                           uint32_t pType,
+                           uint32_t pFlag,
+                           uint64_t pSize = 0,
+                           uint64_t pAddr = 0);
+
+  static void Destroy(LDSection*& pSection);
+
+  static void Clear();
+
+  bool hasOffset() const;
 
   /// name - the name of this section.
   const std::string& name() const
@@ -128,17 +150,29 @@ public:
   void setType(uint32_t type)
   { m_Type = type; }
 
-  SectionData* getSectionData()
-  { return m_pSectionData; }
+  // -----  SectionData  ----- //
+  const SectionData* getSectionData() const { return m_Data.sect_data; }
+  SectionData*       getSectionData()       { return m_Data.sect_data; }
 
-  const SectionData* getSectionData() const
-  { return m_pSectionData; }
+  void setSectionData(SectionData* pSD) { m_Data.sect_data = pSD; }
 
-  void setSectionData(SectionData* pSD)
-  { m_pSectionData = pSD; }
+  bool hasSectionData() const;
 
-  bool hasSectionData() const
-  { return (NULL != m_pSectionData); }
+  // ------  RelocData  ------ //
+  const RelocData* getRelocData() const { return m_Data.reloc_data; }
+  RelocData*       getRelocData()       { return m_Data.reloc_data; }
+
+  void setRelocData(RelocData* pRD) { m_Data.reloc_data = pRD; }
+
+  bool hasRelocData() const;
+
+  // ------  EhFrame  ------ //
+  const EhFrame* getEhFrame() const { return m_Data.eh_frame; }
+  EhFrame*       getEhFrame()       { return m_Data.eh_frame; }
+
+  void setEhFrame(EhFrame* pEhFrame) { m_Data.eh_frame = pEhFrame; }
+
+  bool hasEhFrame() const;
 
   /// setLink - set the sections should link with.
   /// if pLink is NULL, no Link section is set.
@@ -152,7 +186,16 @@ public:
   { m_Index = pIndex; }
 
 private:
+  union SectOrRelocData
+  {
+    SectionData* sect_data;
+    RelocData*   reloc_data;
+    EhFrame*     eh_frame;
+  };
+
+private:
   std::string m_Name;
+
   LDFileFormat::Kind m_Kind;
   uint32_t m_Type;
   uint32_t m_Flag;
@@ -165,9 +208,10 @@ private:
   size_t m_Info;
   LDSection* m_pLink;
 
-  SectionData* m_pSectionData;
+  /// m_Data - the SectionData or RelocData of this section
+  SectOrRelocData m_Data;
 
-  // the index of the file
+  /// m_Index - the index of the file
   size_t m_Index;
 
 }; // end of LDSection

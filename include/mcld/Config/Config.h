@@ -23,7 +23,12 @@
 # define MCLD_ON_WIN32 1
 #endif
 
-#define MCLD_VERSION "Phoenix - 1.4.0"
+#define MCLD_VERSION "RockBull - 2.0.0"
+
+#define MCLD_REGION_CHUNK_SIZE 32
+#define MCLD_NUM_OF_INPUTS 32
+#define MCLD_SECTIONS_PER_INPUT 16
+#define MCLD_SYMBOLS_PER_INPUT 128
 
 #endif
 

@@ -10,10 +10,12 @@
 #include <llvm/Support/DataTypes.h>
 
 #include <mcld/ADT/SizeTraits.h>
-#include <mcld/MC/MCLDInfo.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/LD/Diagnostic.h>
 #include <mcld/LD/DiagnosticInfos.h>
 #include <mcld/LD/DiagnosticPrinter.h>
+
+#include <algorithm>
 
 using namespace mcld;
 
@@ -85,8 +87,9 @@ static const DiagStaticInfo* getDiagInfo(unsigned int pID, bool pInLoC = false)
 
 //===----------------------------------------------------------------------===//
 //  DiagnosticInfos
-DiagnosticInfos::DiagnosticInfos(const MCLDInfo& pLDInfo)
-  : m_LDInfo(pLDInfo) {
+//===----------------------------------------------------------------------===//
+DiagnosticInfos::DiagnosticInfos(const LinkerConfig& pConfig)
+  : m_Config(pConfig) {
 }
 
 DiagnosticInfos::~DiagnosticInfos()
@@ -111,7 +114,7 @@ bool DiagnosticInfos::process(DiagnosticEngine& pEngine) const
 
   switch (ID) {
     case diag::multiple_definitions: {
-      if (m_LDInfo.options().hasMulDefs()) {
+      if (m_Config.options().hasMulDefs()) {
         severity = DiagnosticEngine::Ignore;
       }
       break;
@@ -119,22 +122,23 @@ bool DiagnosticInfos::process(DiagnosticEngine& pEngine) const
     case diag::undefined_reference: {
       // we have not implement --unresolved-symbols=method yet. So far, MCLinker
       // provides the easier --allow-shlib-undefined and --no-undefined (i.e. -z defs)
-      switch(m_LDInfo.output().type()) {
-        case Output::Object:
-          if (m_LDInfo.options().isNoUndefined())
+      switch(m_Config.codeGenType()) {
+        case LinkerConfig::Object:
+          if (m_Config.options().isNoUndefined())
             severity = DiagnosticEngine::Error;
           else
             severity = DiagnosticEngine::Ignore;
-        break;
-        case Output::DynObj:
-          if (m_LDInfo.options().isNoUndefined() || !m_LDInfo.options().isAllowShlibUndefined())
+          break;
+        case LinkerConfig::DynObj:
+          if (m_Config.options().isNoUndefined() || !m_Config.options().isAllowShlibUndefined())
             severity = DiagnosticEngine::Error;
           else
             severity = DiagnosticEngine::Ignore;
-        break;
-        case Output::Exec:
+          break;
+        case LinkerConfig::Exec:
+        default:
           severity = DiagnosticEngine::Error;
-        break;
+          break;
       }
       break;
     }

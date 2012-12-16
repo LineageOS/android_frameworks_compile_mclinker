@@ -11,10 +11,9 @@
 #include <llvm/Support/DataTypes.h>
 #include <llvm/Support/ELF.h>
 #include <llvm/Support/Host.h>
-#include <mcld/MC/MCLDInfo.h>
-#include <mcld/LD/Layout.h>
+#include <mcld/Fragment/FragmentLinker.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/Support/MsgHandling.h>
-
 #include "ARMRelocationFactory.h"
 #include "ARMRelocationFunctions.h"
 
@@ -28,7 +27,6 @@ DECL_ARM_APPLY_RELOC_FUNCS
 /// the prototype of applying function
 typedef RelocationFactory::Result (*ApplyFunctionType)(
                                                Relocation& pReloc,
-                                               const MCLDInfo& pLDInfo,
                                                ARMRelocationFactory& pParent);
 
 // the table entry of applying functions
@@ -58,17 +56,14 @@ ARMRelocationFactory::~ARMRelocationFactory()
 }
 
 RelocationFactory::Result
-ARMRelocationFactory::applyRelocation(Relocation& pRelocation,
-                                      const MCLDInfo& pLDInfo)
+ARMRelocationFactory::applyRelocation(Relocation& pRelocation)
 {
   Relocation::Type type = pRelocation.type();
   if (type > 130) { // 131-255 doesn't noted in ARM spec
-    fatal(diag::unknown_relocation) << (int)type
-                                    << pRelocation.symInfo()->name();
     return RelocationFactory::Unknown;
   }
 
-  return ApplyFunctions[type].func(pRelocation, pLDInfo, *this);
+  return ApplyFunctions[type].func(pRelocation, *this);
 }
 
 const char* ARMRelocationFactory::getName(RelocationFactory::Type pType) const
@@ -117,117 +112,114 @@ uint64_t helper_bit_select(uint64_t pA, uint64_t pB, uint64_t pMask)
 // Check if symbol can use relocation R_ARM_RELATIVE
 static bool
 helper_use_relative_reloc(const ResolveInfo& pSym,
-                          const MCLDInfo& pLDInfo,
                           const ARMRelocationFactory& pFactory)
 {
   // if symbol is dynamic or undefine or preemptible
   if (pSym.isDyn() ||
       pSym.isUndef() ||
-      pFactory.getTarget().isSymbolPreemptible(pSym,
-                                               pLDInfo,
-                                               pLDInfo.output()))
+      pFactory.getTarget().isSymbolPreemptible(pSym))
     return false;
   return true;
 }
 
 static
-GOTEntry& helper_get_GOT_and_init(Relocation& pReloc,
-                                  const MCLDInfo& pLDInfo,
-                                  ARMRelocationFactory& pParent)
+GOT::Entry& helper_get_GOT_and_init(Relocation& pReloc,
+                                    ARMRelocationFactory& pParent)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   ARMGNULDBackend& ld_backend = pParent.getTarget();
 
-  bool exist;
-  GOTEntry& got_entry = *ld_backend.getGOT().getEntry(*rsym, exist);
-  if (!exist) {
+  GOT::Entry* got_entry = pParent.getSymGOTMap().lookUp(*rsym);
+  if (NULL == got_entry) {
+    got_entry = ld_backend.getGOT().consumeGOT();
+    pParent.getSymGOTMap().record(*rsym, *got_entry);
     // If we first get this GOT entry, we should initialize it.
     if (rsym->reserved() & ARMGNULDBackend::ReserveGOT) {
       // No corresponding dynamic relocation, initialize to the symbol value.
-      got_entry.setContent(pReloc.symValue());
+      got_entry->setContent(pReloc.symValue());
     }
     else if (rsym->reserved() & ARMGNULDBackend::GOTRel) {
 
       // Initialize corresponding dynamic relocation.
-      Relocation& rel_entry =
-        *ld_backend.getRelDyn().getEntry(*rsym, true, exist);
-      assert(!exist && "GOT entry not exist, but DynRel entry exist!");
+      Relocation& rel_entry = *ld_backend.getRelDyn().consumeEntry();
       if ( rsym->isLocal() ||
-          helper_use_relative_reloc(*rsym, pLDInfo, pParent)) {
+          helper_use_relative_reloc(*rsym, pParent)) {
         // Initialize got entry to target symbol address
-        got_entry.setContent(pReloc.symValue());
+        got_entry->setContent(pReloc.symValue());
         rel_entry.setType(llvm::ELF::R_ARM_RELATIVE);
         rel_entry.setSymInfo(0);
       }
       else {
         // Initialize got entry to 0 for corresponding dynamic relocation.
-        got_entry.setContent(0);
+        got_entry->setContent(0);
         rel_entry.setType(llvm::ELF::R_ARM_GLOB_DAT);
         rel_entry.setSymInfo(rsym);
       }
-      rel_entry.targetRef().assign(got_entry);
+      rel_entry.targetRef().assign(*got_entry);
     }
     else {
       fatal(diag::reserve_entry_number_mismatch_got);
     }
   }
-  return got_entry;
+  return *got_entry;
 }
 
 static
 ARMRelocationFactory::Address helper_GOT_ORG(ARMRelocationFactory& pParent)
 {
-  return pParent.getTarget().getGOT().getSection().addr();
+  return pParent.getTarget().getGOT().addr();
 }
 
 
 static
 ARMRelocationFactory::Address helper_GOT(Relocation& pReloc,
-                                         const MCLDInfo& pLDInfo,
                                          ARMRelocationFactory& pParent)
 {
-  GOTEntry& got_entry = helper_get_GOT_and_init(pReloc, pLDInfo, pParent);
-  return helper_GOT_ORG(pParent) + pParent.getLayout().getOutputOffset(got_entry);
+  GOT::Entry& got_entry = helper_get_GOT_and_init(pReloc, pParent);
+  return helper_GOT_ORG(pParent) + got_entry.getOffset();
 }
 
 
 static
-PLTEntry& helper_get_PLT_and_init(Relocation& pReloc,
-                                  ARMRelocationFactory& pParent)
+PLT::Entry& helper_get_PLT_and_init(Relocation& pReloc,
+                                    ARMRelocationFactory& pParent)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   ARMGNULDBackend& ld_backend = pParent.getTarget();
 
-  bool exist;
-  PLTEntry& plt_entry = *ld_backend.getPLT().getPLTEntry(*rsym, exist);
-  if (!exist) {
-    // If we first get this PLT entry, we should initialize it.
-    if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
-      GOTEntry& gotplt_entry =
-        *ld_backend.getPLT().getGOTPLTEntry(*rsym, exist);
-      // Initialize corresponding dynamic relocation.
-      Relocation& rel_entry =
-        *ld_backend.getRelPLT().getEntry(*rsym, true, exist);
-      assert(!exist && "PLT entry not exist, but DynRel entry exist!");
-      rel_entry.setType(llvm::ELF::R_ARM_JUMP_SLOT);
-      rel_entry.targetRef().assign(gotplt_entry);
-      rel_entry.setSymInfo(rsym);
-    }
-    else {
-      fatal(diag::reserve_entry_number_mismatch_plt);
-    }
+  PLT::Entry* plt_entry = pParent.getSymPLTMap().lookUp(*rsym);
+  if (NULL != plt_entry)
+    return *plt_entry;
+
+  plt_entry = ld_backend.getPLT().consume();
+  pParent.getSymPLTMap().record(*rsym, *plt_entry);
+
+  // If we first get this PLT entry, we should initialize it.
+  if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
+    GOT::Entry* gotplt_entry = pParent.getSymGOTPLTMap().lookUp(*rsym);
+    assert(NULL == gotplt_entry && "PLT entry not exist, but DynRel entry exist!");
+    gotplt_entry = ld_backend.getGOT().consumeGOTPLT();
+    pParent.getSymGOTPLTMap().record(*rsym, *gotplt_entry);
+
+    // Initialize corresponding dynamic relocation.
+    Relocation& rel_entry = *ld_backend.getRelPLT().consumeEntry();
+    rel_entry.setType(llvm::ELF::R_ARM_JUMP_SLOT);
+    rel_entry.targetRef().assign(*gotplt_entry);
+    rel_entry.setSymInfo(rsym);
   }
-  return plt_entry;
+  else {
+    fatal(diag::reserve_entry_number_mismatch_plt);
+  }
+
+  return *plt_entry;
 }
-
-
 
 static
 ARMRelocationFactory::Address helper_PLT_ORG(ARMRelocationFactory& pParent)
 {
-  return pParent.getTarget().getPLT().getSection().addr();
+  return pParent.getTarget().getPLT().addr();
 }
 
 
@@ -235,8 +227,8 @@ static
 ARMRelocationFactory::Address helper_PLT(Relocation& pReloc,
                                          ARMRelocationFactory& pParent)
 {
-  PLTEntry& plt_entry = helper_get_PLT_and_init(pReloc, pParent);
-  return helper_PLT_ORG(pParent) + pParent.getLayout().getOutputOffset(plt_entry);
+  PLT::Entry& plt_entry = helper_get_PLT_and_init(pReloc, pParent);
+  return helper_PLT_ORG(pParent) + plt_entry.getOffset();
 }
 
 // Get an relocation entry in .rel.dyn and set its type to pType,
@@ -249,10 +241,8 @@ void helper_DynRel(Relocation& pReloc,
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   ARMGNULDBackend& ld_backend = pParent.getTarget();
-  bool exist;
 
-  Relocation& rel_entry =
-    *ld_backend.getRelDyn().getEntry(*rsym, false, exist);
+  Relocation& rel_entry = *ld_backend.getRelDyn().consumeEntry();
   rel_entry.setType(pType);
   rel_entry.targetRef() = pReloc.targetRef();
 
@@ -282,39 +272,27 @@ helper_insert_val_movw_movt_inst(ARMRelocationFactory::DWord pTarget,
 }
 
 static ARMRelocationFactory::DWord
-helper_extract_thumb_movw_movt_addend(ARMRelocationFactory::DWord pTarget)
+helper_extract_thumb_movw_movt_addend(ARMRelocationFactory::DWord pValue)
 {
-  // Consider the endianness problem, get the target data value from lower
-  // and upper 16 bits
-  ARMRelocationFactory::DWord val =
-    (*(reinterpret_cast<uint16_t*>(&pTarget)) << 16) |
-    *(reinterpret_cast<uint16_t*>(&pTarget) + 1);
-
   // imm16: [19-16][26][14-12][7-0]
-  return helper_sign_extend((((val >> 4) & 0xf000U) |
-                             ((val >> 15) & 0x0800U) |
-                             ((val >> 4) & 0x0700U) |
-                             (val & 0x00ffU)),
+  return helper_sign_extend((((pValue >> 4) & 0xf000U) |
+                             ((pValue >> 15) & 0x0800U) |
+                             ((pValue >> 4) & 0x0700U) |
+                             (pValue& 0x00ffU)),
                             16);
 }
 
 static ARMRelocationFactory::DWord
-helper_insert_val_thumb_movw_movt_inst(ARMRelocationFactory::DWord pTarget,
+helper_insert_val_thumb_movw_movt_inst(ARMRelocationFactory::DWord pValue,
                                        ARMRelocationFactory::DWord pImm)
 {
-  ARMRelocationFactory::DWord val;
   // imm16: [19-16][26][14-12][7-0]
-  pTarget &= 0xfbf08f00U;
-  pTarget |= (pImm & 0xf000U) << 4;
-  pTarget |= (pImm & 0x0800U) << 15;
-  pTarget |= (pImm & 0x0700U) << 4;
-  pTarget |= (pImm & 0x00ffU);
-
-  // Consider the endianness problem, write back data from lower and
-  // upper 16 bits
-  val = (*(reinterpret_cast<uint16_t*>(&pTarget)) << 16) |
-        *(reinterpret_cast<uint16_t*>(&pTarget) + 1);
-  return val;
+  pValue &= 0xfbf08f00U;
+  pValue |= (pImm & 0xf000U) << 4;
+  pValue |= (pImm & 0x0800U) << 15;
+  pValue |= (pImm & 0x0700U) << 4;
+  pValue |= (pImm & 0x00ffU);
+  return pValue;
 }
 
 static ARMRelocationFactory::DWord
@@ -377,7 +355,6 @@ helper_check_signed_overflow(ARMRelocationFactory::DWord pValue,
 
 // R_ARM_NONE
 ARMRelocationFactory::Result none(Relocation& pReloc,
-                                  const MCLDInfo& pLDInfo,
                                   ARMRelocationFactory& pParent)
 {
   return ARMRelocationFactory::OK;
@@ -385,7 +362,6 @@ ARMRelocationFactory::Result none(Relocation& pReloc,
 
 // R_ARM_ABS32: (S + A) | T
 ARMRelocationFactory::Result abs32(Relocation& pReloc,
-                                   const MCLDInfo& pLDInfo,
                                    ARMRelocationFactory& pParent)
 {
   ResolveInfo* rsym = pReloc.symInfo();
@@ -393,13 +369,11 @@ ARMRelocationFactory::Result abs32(Relocation& pReloc,
   ARMRelocationFactory::DWord A = pReloc.target() + pReloc.addend();
   ARMRelocationFactory::DWord S = pReloc.symValue();
 
-  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                  *(pReloc.targetRef().frag()));
-  assert(NULL != target_sect);
+  LDSection& target_sect = pReloc.targetRef().frag()->getParent()->getSection();
 
   // If the flag of target section is not ALLOC, we will not scan this relocation
   // but perform static relocation. (e.g., applying .debug section)
-  if (0x0 == (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+  if (0x0 == (llvm::ELF::SHF_ALLOC & target_sect.flag())) {
     pReloc.target() = (S + A) | T;
     return ARMRelocationFactory::OK;
   }
@@ -416,13 +390,12 @@ ARMRelocationFactory::Result abs32(Relocation& pReloc,
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
       T = 0 ; // PLT is not thumb
-      pReloc.target() = (S + A) | T;
     }
     // If we generate a dynamic relocation (except R_ARM_RELATIVE)
     // for a place, we should not perform static relocation on it
     // in order to keep the addend store in the place correct.
     if (rsym->reserved() & ARMGNULDBackend::ReserveRel) {
-      if (helper_use_relative_reloc(*rsym, pLDInfo, pParent)) {
+      if (helper_use_relative_reloc(*rsym, pParent)) {
         helper_DynRel(pReloc, llvm::ELF::R_ARM_RELATIVE, pParent);
       }
       else {
@@ -440,31 +413,39 @@ ARMRelocationFactory::Result abs32(Relocation& pReloc,
 
 // R_ARM_REL32: ((S + A) | T) - P
 ARMRelocationFactory::Result rel32(Relocation& pReloc,
-                                   const MCLDInfo& pLDInfo,
                                    ARMRelocationFactory& pParent)
 {
   // perform static relocation
-  ARMRelocationFactory::DWord T = getThumbBit(pReloc);
-  ARMRelocationFactory::DWord A = pReloc.target() + pReloc.addend();
-  pReloc.target() = ((pReloc.symValue() + A) | T)
-      - pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::Address S = pReloc.symValue();
+  ARMRelocationFactory::DWord   T = getThumbBit(pReloc);
+  ARMRelocationFactory::DWord   A = pReloc.target() + pReloc.addend();
+
+  // An external symbol may need PLT (this reloc is from stub)
+  if (!pReloc.symInfo()->isLocal()) {
+    if (pReloc.symInfo()->reserved() & ARMGNULDBackend::ReservePLT) {
+      S = helper_PLT(pReloc, pParent);
+      T = 0;  // PLT is not thumb.
+    }
+  }
+
+  // perform relocation
+  pReloc.target() = ((S + A) | T) - pReloc.place();
+
   return ARMRelocationFactory::OK;
 }
 
 // R_ARM_BASE_PREL: B(S) + A - P
 ARMRelocationFactory::Result base_prel(Relocation& pReloc,
-                                       const MCLDInfo& pLDInfo,
                                        ARMRelocationFactory& pParent)
 {
   // perform static relocation
   ARMRelocationFactory::DWord A = pReloc.target() + pReloc.addend();
-  pReloc.target() = pReloc.symValue() + A - pReloc.place(pParent.getLayout());
+  pReloc.target() = pReloc.symValue() + A - pReloc.place();
   return ARMRelocationFactory::OK;
 }
 
 // R_ARM_GOTOFF32: ((S + A) | T) - GOT_ORG
 ARMRelocationFactory::Result gotoff32(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
                                       ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
@@ -478,14 +459,13 @@ ARMRelocationFactory::Result gotoff32(Relocation& pReloc,
 
 // R_ARM_GOT_BREL: GOT(S) + A - GOT_ORG
 ARMRelocationFactory::Result got_brel(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
                                       ARMRelocationFactory& pParent)
 {
   if (!(pReloc.symInfo()->reserved() &
       (ARMGNULDBackend::ReserveGOT | ARMGNULDBackend::GOTRel))) {
     return ARMRelocationFactory::BadReloc;
   }
-  ARMRelocationFactory::Address GOT_S   = helper_GOT(pReloc, pLDInfo, pParent);
+  ARMRelocationFactory::Address GOT_S   = helper_GOT(pReloc, pParent);
   ARMRelocationFactory::DWord   A       = pReloc.target() + pReloc.addend();
   ARMRelocationFactory::Address GOT_ORG = helper_GOT_ORG(pParent);
   // Apply relocation.
@@ -495,16 +475,16 @@ ARMRelocationFactory::Result got_brel(Relocation& pReloc,
 
 // R_ARM_GOT_PREL: GOT(S) + A - P
 ARMRelocationFactory::Result got_prel(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
                                       ARMRelocationFactory& pParent)
 {
   if (!(pReloc.symInfo()->reserved() &
       (ARMGNULDBackend::ReserveGOT | ARMGNULDBackend::GOTRel))) {
     return ARMRelocationFactory::BadReloc;
   }
-  ARMRelocationFactory::Address GOT_S   = helper_GOT(pReloc, pLDInfo, pParent);
+  ARMRelocationFactory::Address GOT_S   = helper_GOT(pReloc, pParent);
   ARMRelocationFactory::DWord   A       = pReloc.target() + pReloc.addend();
-  ARMRelocationFactory::Address P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::Address P = pReloc.place();
+
   // Apply relocation.
   pReloc.target() = GOT_S + A - P;
   return ARMRelocationFactory::OK;
@@ -514,13 +494,8 @@ ARMRelocationFactory::Result got_prel(Relocation& pReloc,
 // R_ARM_JUMP24: ((S + A) | T) - P
 // R_ARM_CALL: ((S + A) | T) - P
 ARMRelocationFactory::Result call(Relocation& pReloc,
-                                  const MCLDInfo& pLDInfo,
                                   ARMRelocationFactory& pParent)
 {
-  // TODO: Some issue have not been considered:
-  // 1. Add stub when switching mode or jump target too far
-  // 2. We assume the blx is available
-
   // If target is undefined weak symbol, we only need to jump to the
   // next instruction unless it has PLT entry. Rewrite instruction
   // to NOP.
@@ -538,7 +513,7 @@ ARMRelocationFactory::Result call(Relocation& pReloc,
   ARMRelocationFactory::DWord   A =
     helper_sign_extend((pReloc.target() & 0x00FFFFFFu) << 2, 26)
     + pReloc.addend();
-  ARMRelocationFactory::Address P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::Address P = pReloc.place();
 
   S = pReloc.symValue();
   if (pReloc.symInfo()->reserved() & ARMGNULDBackend::ReservePLT) {
@@ -546,12 +521,15 @@ ARMRelocationFactory::Result call(Relocation& pReloc,
     T = 0;  // PLT is not thumb.
   }
 
-  // If the jump target is thumb instruction, switch mode is needed, rewrite
-  // the instruction to BLX
+  // At this moment (after relaxation), if the jump target is thumb instruction,
+  // switch mode is needed, rewrite the instruction to BLX
+  // FIXME: check if we can use BLX instruction (check from .ARM.attribute
+  // CPU ARCH TAG, which should be ARMv5 or above)
   if (T != 0) {
-    // cannot rewrite R_ARM_JUMP24 instruction to blx
-    assert((pReloc.type() != llvm::ELF::R_ARM_JUMP24)&&
-      "Invalid instruction to rewrite to blx for switching mode.");
+    // cannot rewrite to blx for R_ARM_JUMP24
+    if (pReloc.type() == llvm::ELF::R_ARM_JUMP24)
+      return ARMRelocationFactory::BadReloc;
+
     pReloc.target() = (pReloc.target() & 0xffffff) |
                       0xfa000000 |
                       (((S + A - P) & 2) << 23);
@@ -569,7 +547,6 @@ ARMRelocationFactory::Result call(Relocation& pReloc,
 // R_ARM_THM_CALL: ((S + A) | T) - P
 // R_ARM_THM_JUMP24: (((S + A) | T) - P)
 ARMRelocationFactory::Result thm_call(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
                                       ARMRelocationFactory& pParent)
 {
   // If target is undefined weak symbol, we only need to jump to the
@@ -584,13 +561,13 @@ ARMRelocationFactory::Result thm_call(Relocation& pReloc,
   }
 
   // get lower and upper 16 bit instructions from relocation targetData
-  uint16_t upper16 = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
-  uint16_t lower16 = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
 
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
-  ARMRelocationFactory::DWord A = helper_thumb32_branch_offset(upper16,
-                                                               lower16);
-  ARMRelocationFactory::Address P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord A = helper_thumb32_branch_offset(upper_inst,
+                                                               lower_inst);
+  ARMRelocationFactory::Address P = pReloc.place();
   ARMRelocationFactory::Address S;
 
   // if symbol has plt
@@ -604,45 +581,44 @@ ARMRelocationFactory::Result thm_call(Relocation& pReloc,
 
   S = S + A;
 
+  // At this moment (after relaxation), if the jump target is arm
+  // instruction, switch mode is needed, rewrite the instruction to BLX
   // FIXME: check if we can use BLX instruction (check from .ARM.attribute
   // CPU ARCH TAG, which should be ARMv5 or above)
-
-  // If the jump target is not thumb, switch mode is needed, rewrite
-  // instruction to BLX
   if (T == 0) {
+    // cannot rewrite to blx for R_ARM_THM_JUMP24
+    if (pReloc.type() == llvm::ELF::R_ARM_THM_JUMP24)
+      return ARMRelocationFactory::BadReloc;
+
     // for BLX, select bit 1 from relocation base address to jump target
     // address
     S = helper_bit_select(S, P, 0x2);
     // rewrite instruction to BLX
-    lower16 &= ~0x1000U;
+    lower_inst &= ~0x1000U;
   }
   else {
     // otherwise, the instruction should be BL
-    lower16 |= 0x1000U;
+    lower_inst |= 0x1000U;
   }
 
   ARMRelocationFactory::DWord X = (S | T) - P;
-
-  // TODO: check if we need stub when building non-shared object,
-  // overflow or switch-mode.
 
   // FIXME: Check bit size is 24(thumb2) or 22?
   if (helper_check_signed_overflow(X, 25)) {
     return ARMRelocationFactory::Overflow;
   }
 
-  upper16 = helper_thumb32_branch_upper(upper16, X);
-  lower16 = helper_thumb32_branch_lower(lower16, X);
+  upper_inst = helper_thumb32_branch_upper(upper_inst, X);
+  lower_inst = helper_thumb32_branch_lower(lower_inst, X);
 
- *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper16;
- *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower16;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
 
- return ARMRelocationFactory::OK;
+  return ARMRelocationFactory::OK;
 }
 
 // R_ARM_MOVW_ABS_NC: (S + A) | T
 ARMRelocationFactory::Result movw_abs_nc(Relocation& pReloc,
-                                         const MCLDInfo& pLDInfo,
                                          ARMRelocationFactory& pParent)
 {
   ResolveInfo* rsym = pReloc.symInfo();
@@ -652,12 +628,11 @@ ARMRelocationFactory::Result movw_abs_nc(Relocation& pReloc,
       helper_extract_movw_movt_addend(pReloc.target()) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
-  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                 *(pReloc.targetRef().frag()));
-  assert(NULL != target_sect);
+  LDSection& target_sect = pReloc.targetRef().frag()->getParent()->getSection();
+
   // If the flag of target section is not ALLOC, we will not scan this
   // relocation but perform static relocation. (e.g., applying .debug section)
-  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect.flag())) {
     // use plt
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
@@ -674,12 +649,11 @@ ARMRelocationFactory::Result movw_abs_nc(Relocation& pReloc,
 
 // R_ARM_MOVW_PREL_NC: ((S + A) | T) - P
 ARMRelocationFactory::Result movw_prel_nc(Relocation& pReloc,
-                                          const MCLDInfo& pLDInfo,
                                           ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::Address S = pReloc.symValue();
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
-  ARMRelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord P = pReloc.place();
   ARMRelocationFactory::DWord A =
       helper_extract_movw_movt_addend(pReloc.target()) + pReloc.addend();
   ARMRelocationFactory::DWord X;
@@ -696,7 +670,6 @@ ARMRelocationFactory::Result movw_prel_nc(Relocation& pReloc,
 
 // R_ARM_MOVT_ABS: S + A
 ARMRelocationFactory::Result movt_abs(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
                                       ARMRelocationFactory& pParent)
 {
   ResolveInfo* rsym = pReloc.symInfo();
@@ -705,12 +678,11 @@ ARMRelocationFactory::Result movt_abs(Relocation& pReloc,
     helper_extract_movw_movt_addend(pReloc.target()) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
-  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                  *(pReloc.targetRef().frag()));
-  assert(NULL != target_sect);
+  LDSection& target_sect = pReloc.targetRef().frag()->getParent()->getSection();
+
   // If the flag of target section is not ALLOC, we will not scan this relocation
   // but perform static relocation. (e.g., applying .debug section)
-  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect.flag())) {
     // use plt
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
@@ -726,13 +698,12 @@ ARMRelocationFactory::Result movt_abs(Relocation& pReloc,
 
 // R_ARM_MOVT_PREL: S + A - P
 ARMRelocationFactory::Result movt_prel(Relocation& pReloc,
-                                       const MCLDInfo& pLDInfo,
                                        ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::Address S = pReloc.symValue();
-  ARMRelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord P = pReloc.place();
   ARMRelocationFactory::DWord A =
-      helper_extract_movw_movt_addend(pReloc.target()) + pReloc.addend();
+            helper_extract_movw_movt_addend(pReloc.target()) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
   X = S + A - P;
@@ -744,22 +715,24 @@ ARMRelocationFactory::Result movt_prel(Relocation& pReloc,
 
 // R_ARM_THM_MOVW_ABS_NC: (S + A) | T
 ARMRelocationFactory::Result thm_movw_abs_nc(Relocation& pReloc,
-                                             const MCLDInfo& pLDInfo,
                                              ARMRelocationFactory& pParent)
 {
   ResolveInfo* rsym = pReloc.symInfo();
   ARMRelocationFactory::Address S = pReloc.symValue();
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
+
+  // get lower and upper 16 bit instructions from relocation targetData
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  ARMRelocationFactory::DWord val = ((upper_inst) << 16) | (lower_inst);
   ARMRelocationFactory::DWord A =
-      helper_extract_thumb_movw_movt_addend(pReloc.target()) + pReloc.addend();
+      helper_extract_thumb_movw_movt_addend(val) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
-  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                  *(pReloc.targetRef().frag()));
-  assert(NULL != target_sect);
+  LDSection& target_sect = pReloc.targetRef().frag()->getParent()->getSection();
   // If the flag of target section is not ALLOC, we will not scan this relocation
   // but perform static relocation. (e.g., applying .debug section)
-  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect.flag())) {
     // use plt
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
@@ -767,69 +740,84 @@ ARMRelocationFactory::Result thm_movw_abs_nc(Relocation& pReloc,
     }
   }
   X = (S + A) | T;
-  pReloc.target() = helper_insert_val_thumb_movw_movt_inst(pReloc.target(),
-                                                           X);
+
+  val = helper_insert_val_thumb_movw_movt_inst(val, X);
+  *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
+
   return ARMRelocationFactory::OK;
 }
 
 // R_ARM_THM_MOVW_PREL_NC: ((S + A) | T) - P
 ARMRelocationFactory::Result thm_movw_prel_nc(Relocation& pReloc,
-                                              const MCLDInfo& pLDInfo,
                                               ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::Address S = pReloc.symValue();
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
-  ARMRelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord P = pReloc.place();
+
+  // get lower and upper 16 bit instructions from relocation targetData
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  ARMRelocationFactory::DWord val = ((upper_inst) << 16) | (lower_inst);
   ARMRelocationFactory::DWord A =
-      helper_extract_thumb_movw_movt_addend(pReloc.target()) + pReloc.addend();
+      helper_extract_thumb_movw_movt_addend(val) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
   X = ((S + A) | T) - P;
 
-  // check 16-bit overflow
-  pReloc.target() = helper_insert_val_thumb_movw_movt_inst(pReloc.target(),
-                                                           X);
+  val = helper_insert_val_thumb_movw_movt_inst(val, X);
+  *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
+
   return ARMRelocationFactory::OK;
 }
 
 // R_ARM_THM_MOVW_BREL_NC: ((S + A) | T) - B(S)
 // R_ARM_THM_MOVW_BREL: ((S + A) | T) - B(S)
 ARMRelocationFactory::Result thm_movw_brel(Relocation& pReloc,
-                                              const MCLDInfo& pLDInfo,
                                               ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::Address S = pReloc.symValue();
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
-  ARMRelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord P = pReloc.place();
+
+  // get lower and upper 16 bit instructions from relocation targetData
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  ARMRelocationFactory::DWord val = ((upper_inst) << 16) | (lower_inst);
   ARMRelocationFactory::DWord A =
-      helper_extract_thumb_movw_movt_addend(pReloc.target()) + pReloc.addend();
+      helper_extract_thumb_movw_movt_addend(val) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
   X = ((S + A) | T) - P;
 
-  // check 16-bit overflow
-  pReloc.target() = helper_insert_val_thumb_movw_movt_inst(pReloc.target(),
-                                                           X);
+  val = helper_insert_val_thumb_movw_movt_inst(val, X);
+  *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
+
   return ARMRelocationFactory::OK;
 }
 
 // R_ARM_THM_MOVT_ABS: S + A
 ARMRelocationFactory::Result thm_movt_abs(Relocation& pReloc,
-                                          const MCLDInfo& pLDInfo,
                                           ARMRelocationFactory& pParent)
 {
   ResolveInfo* rsym = pReloc.symInfo();
   ARMRelocationFactory::Address S = pReloc.symValue();
+
+  // get lower and upper 16 bit instructions from relocation targetData
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  ARMRelocationFactory::DWord val = ((upper_inst) << 16) | (lower_inst);
   ARMRelocationFactory::DWord A =
-      helper_extract_thumb_movw_movt_addend(pReloc.target()) + pReloc.addend();
+      helper_extract_thumb_movw_movt_addend(val) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
-  const LDSection* target_sect = pParent.getLayout().getOutputLDSection(
-                                                  *(pReloc.targetRef().frag()));
-  assert(NULL != target_sect);
+  LDSection& target_sect = pReloc.targetRef().frag()->getParent()->getSection();
   // If the flag of target section is not ALLOC, we will not scan this relocation
   // but perform static relocation. (e.g., applying .debug section)
-  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect->flag())) {
+  if (0x0 != (llvm::ELF::SHF_ALLOC & target_sect.flag())) {
     // use plt
     if (rsym->reserved() & ARMGNULDBackend::ReservePLT) {
       S = helper_PLT(pReloc, pParent);
@@ -843,8 +831,9 @@ ARMRelocationFactory::Result thm_movt_abs(Relocation& pReloc,
   if (helper_check_signed_overflow(X, 16)) {
     return ARMRelocationFactory::Overflow;
   } else {
-    pReloc.target() = helper_insert_val_thumb_movw_movt_inst(pReloc.target(),
-                                                             X);
+    val = helper_insert_val_thumb_movw_movt_inst(val, X);
+    *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+    *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
     return ARMRelocationFactory::OK;
   }
 }
@@ -852,31 +841,38 @@ ARMRelocationFactory::Result thm_movt_abs(Relocation& pReloc,
 // R_ARM_THM_MOVT_PREL: S + A - P
 // R_ARM_THM_MOVT_BREL: S + A - B(S)
 ARMRelocationFactory::Result thm_movt_prel(Relocation& pReloc,
-                                           const MCLDInfo& pLDInfo,
                                            ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::Address S = pReloc.symValue();
-  ARMRelocationFactory::DWord P = pReloc.place(pParent.getLayout());
+  ARMRelocationFactory::DWord P = pReloc.place();
+
+  // get lower and upper 16 bit instructions from relocation targetData
+  uint16_t upper_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()));
+  uint16_t lower_inst = *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1);
+  ARMRelocationFactory::DWord val = ((upper_inst) << 16) | (lower_inst);
   ARMRelocationFactory::DWord A =
-      helper_extract_thumb_movw_movt_addend(pReloc.target()) + pReloc.addend();
+      helper_extract_thumb_movw_movt_addend(val) + pReloc.addend();
   ARMRelocationFactory::DWord X;
 
   X = S + A - P;
   X >>= 16;
-  pReloc.target() = helper_insert_val_thumb_movw_movt_inst(pReloc.target(),
-                                                             X);
+
+  val = helper_insert_val_thumb_movw_movt_inst(val, X);
+  *(reinterpret_cast<uint16_t*>(&pReloc.target())) = upper_inst;
+  *(reinterpret_cast<uint16_t*>(&pReloc.target()) + 1) = lower_inst;
+
   return ARMRelocationFactory::OK;
 }
 
-// R_ARM_PREL31: (S + A) | T
+// R_ARM_PREL31: ((S + A) | T) - P
 ARMRelocationFactory::Result prel31(Relocation& pReloc,
-                                    const MCLDInfo& pLDInfo,
                                     ARMRelocationFactory& pParent)
 {
   ARMRelocationFactory::DWord target = pReloc.target();
   ARMRelocationFactory::DWord T = getThumbBit(pReloc);
   ARMRelocationFactory::DWord A = helper_sign_extend(target, 31) +
                                   pReloc.addend();
+  ARMRelocationFactory::DWord P = pReloc.place();
   ARMRelocationFactory::Address S;
 
   S = pReloc.symValue();
@@ -886,7 +882,7 @@ ARMRelocationFactory::Result prel31(Relocation& pReloc,
     T = 0;  // PLT is not thumb.
   }
 
-  ARMRelocationFactory::DWord X = (S + A) | T ;
+  ARMRelocationFactory::DWord X = ((S + A) | T) - P;
   pReloc.target() = helper_bit_select(target, X, 0x7fffffffU);
   if (helper_check_signed_overflow(X, 31))
     return ARMRelocationFactory::Overflow;
@@ -897,14 +893,12 @@ ARMRelocationFactory::Result prel31(Relocation& pReloc,
 // R_ARM_TLS_IE32: GOT(S) + A - P
 // R_ARM_TLS_LE32: S + A - tp
 ARMRelocationFactory::Result tls(Relocation& pReloc,
-                                 const MCLDInfo& pLDInfo,
                                  ARMRelocationFactory& pParent)
 {
   return ARMRelocationFactory::Unsupport;
 }
 
 ARMRelocationFactory::Result unsupport(Relocation& pReloc,
-                                       const MCLDInfo& pLDInfo,
                                        ARMRelocationFactory& pParent)
 {
   return ARMRelocationFactory::Unsupport;

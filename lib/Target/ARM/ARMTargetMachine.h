@@ -8,30 +8,20 @@
 //===----------------------------------------------------------------------===//
 #ifndef MCLD_ARM_TARGET_MACHINE_H
 #define MCLD_ARM_TARGET_MACHINE_H
-#include "mcld/Target/TargetMachine.h"
+
 #include "ARM.h"
+#include <mcld/Target/TargetMachine.h>
 
-namespace mcld
+namespace mcld {
+
+class ARMBaseTargetMachine : public MCLDTargetMachine
 {
-
-class ARMBaseTargetMachine : public LLVMTargetMachine
-{
-protected:
-  MCLDInfo *m_pLDInfo;
-
 public:
   ARMBaseTargetMachine(llvm::TargetMachine &pTM,
                        const mcld::Target &pTarget,
                        const std::string &pTriple);
 
   virtual ~ARMBaseTargetMachine();
-
-  mcld::MCLDInfo& getLDInfo()
-  { return *m_pLDInfo; }
-
-  const mcld::MCLDInfo& getLDInfo() const
-  { return *m_pLDInfo; }
-
 };
 
 } // namespace of mcld

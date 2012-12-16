@@ -13,7 +13,7 @@
 #include <mcld/LD/ELFDynObjReader.h>
 #include <mcld/LD/ELFReader.h>
 #include <mcld/MC/MCLDInput.h>
-#include <mcld/MC/MCLinker.h>
+#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Target/GNULDBackend.h>
 #include <mcld/Support/MemoryRegion.h>
 
@@ -21,9 +21,10 @@
 
 using namespace mcld;
 
-//==========================
+//===----------------------------------------------------------------------===//
 // ELFDynObjReader
-ELFDynObjReader::ELFDynObjReader(GNULDBackend& pBackend, MCLinker& pLinker)
+//===----------------------------------------------------------------------===//
+ELFDynObjReader::ELFDynObjReader(GNULDBackend& pBackend, FragmentLinker& pLinker)
   : DynObjReader(),
     m_pELFReader(0),
     m_Linker(pLinker) {
@@ -55,14 +56,14 @@ bool ELFDynObjReader::isMyFormat(Input &pInput) const
     result = false;
   else if (!m_pELFReader->isMyMachine(ELF_hdr))
     result = false;
-  else if (MCLDFile::DynObj != m_pELFReader->fileType(ELF_hdr))
+  else if (Input::DynObj != m_pELFReader->fileType(ELF_hdr))
     result = false;
   pInput.memArea()->release(region);
   return result;
 }
 
-/// readDSO
-bool ELFDynObjReader::readDSO(Input& pInput)
+/// readHeader
+bool ELFDynObjReader::readHeader(Input& pInput)
 {
   assert(pInput.hasMemArea());
 
@@ -71,7 +72,7 @@ bool ELFDynObjReader::readDSO(Input& pInput)
                                                    hdr_size);
   uint8_t* ELF_hdr = region->start();
 
-  bool shdr_result = m_pELFReader->readSectionHeaders(pInput, m_Linker, ELF_hdr);
+  bool shdr_result = m_pELFReader->readSectionHeaders(pInput, ELF_hdr);
   pInput.memArea()->release(region);
 
   // read .dynamic to get the correct SONAME

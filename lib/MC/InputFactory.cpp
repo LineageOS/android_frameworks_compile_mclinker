@@ -6,19 +6,29 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include "mcld/MC/InputFactory.h"
-#include "mcld/MC/AttributeFactory.h"
+#include <mcld/MC/InputFactory.h>
+#include <mcld/LinkerConfig.h>
+#include <mcld/MC/AttributeSet.h>
+#include <mcld/AttributeOption.h>
 
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // InputFactory
-InputFactory::InputFactory(size_t pNum, AttributeFactory& pAttrFactory)
-  : GCFactory<Input,0>(pNum), m_AttrFactory(pAttrFactory) {
+//===----------------------------------------------------------------------===//
+InputFactory::InputFactory(size_t pNum, const LinkerConfig& pConfig)
+  : GCFactory<Input,0>(pNum) {
+
+  m_pAttrSet = new AttributeSet(16, pConfig.attribute().predefined());
+  m_pLast = new AttributeProxy(*m_pAttrSet,
+                               pConfig.attribute().predefined(),
+                               pConfig.attribute().constraint());
 }
 
 InputFactory::~InputFactory()
 {
+  delete m_pAttrSet;
+  delete m_pLast;
 }
 
 Input* InputFactory::produce(llvm::StringRef pName,
@@ -26,8 +36,8 @@ Input* InputFactory::produce(llvm::StringRef pName,
                              unsigned int pType,
                              off_t pFileOffset)
 {
-  mcld::Input* result = Alloc::allocate();
-  new (result) mcld::Input(pName, pPath, m_AttrFactory.last(), pType, pFileOffset);
+  Input* result = Alloc::allocate();
+  new (result) Input(pName, pPath, *m_pLast, pType, pFileOffset);
   return result;
 }
 

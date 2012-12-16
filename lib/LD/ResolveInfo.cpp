@@ -6,13 +6,18 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include "mcld/LD/ResolveInfo.h"
+#include <mcld/LD/ResolveInfo.h>
+#include <cstdlib>
 #include <cstring>
 
 using namespace mcld;
 
-//==========================
+/// g_NullResolveInfo - a pointer to Null ResolveInfo.
+static ResolveInfo* g_NullResolveInfo = NULL;
+
+//===----------------------------------------------------------------------===//
 // ResolveInfo
+//===----------------------------------------------------------------------===//
 ResolveInfo::ResolveInfo()
   : m_Size(0), m_BitField(0) {
   m_Ptr.sym_ptr = 0;
@@ -128,6 +133,11 @@ void ResolveInfo::setIsSymbol(bool pIsSymbol)
     m_BitField &= ~symbol_flag;
 }
 
+bool ResolveInfo::isNull() const
+{
+  return (this == Null());
+}
+
 bool ResolveInfo::isDyn() const
 {
   return (dynamic_flag == (m_BitField & DYN_MASK));
@@ -224,5 +234,48 @@ bool ResolveInfo::compare(const ResolveInfo::key_type& pKey)
   if (length != pKey.size())
     return false;
   return (0 == std::memcmp(m_Name, pKey.data(), length));
+}
+
+//===----------------------------------------------------------------------===//
+// ResolveInfo Factory Methods
+//===----------------------------------------------------------------------===//
+ResolveInfo* ResolveInfo::Create(const ResolveInfo::key_type& pKey)
+{
+  ResolveInfo* result = static_cast<ResolveInfo*>(
+                          malloc(sizeof(ResolveInfo)+pKey.size()+1));
+  if (NULL == result)
+    return NULL;
+
+  new (result) ResolveInfo();
+  std::memcpy(result->m_Name, pKey.data(), pKey.size());
+  result->m_Name[pKey.size()] = '\0';
+  result->m_BitField &= ~ResolveInfo::RESOLVE_MASK;
+  result->m_BitField |= (pKey.size() << ResolveInfo::NAME_LENGTH_OFFSET);
+  return result;
+}
+
+void ResolveInfo::Destroy(ResolveInfo*& pInfo)
+{
+  if (pInfo->isNull())
+    return;
+
+  if (NULL != pInfo) {
+    pInfo->~ResolveInfo();
+    free(pInfo);
+  }
+
+  pInfo = NULL;
+}
+
+ResolveInfo* ResolveInfo::Null()
+{
+  if (NULL == g_NullResolveInfo) {
+    g_NullResolveInfo = static_cast<ResolveInfo*>(
+                          malloc(sizeof(ResolveInfo) + 1));
+    new (g_NullResolveInfo) ResolveInfo();
+    g_NullResolveInfo->m_Name[0] = '\0';
+    g_NullResolveInfo->m_BitField = 0x0;
+  }
+  return g_NullResolveInfo;
 }
 

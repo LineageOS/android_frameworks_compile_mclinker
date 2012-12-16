@@ -74,6 +74,16 @@ class DefaultLinkerConfig : public
 #endif
 { };
 
+#if !defined(TARGET_BUILD)
+//===----------------------------------------------------------------------===//
+// General target
+//===----------------------------------------------------------------------===//
+class GeneralLinkerConfig : public LinkerConfig {
+public:
+  GeneralLinkerConfig(const std::string& pTriple);
+};
+#endif // !defined(TARGET_BUILD)
+
 } // end namespace alone
 
 #endif // ALONE_SUPPORT_LINKER_CONFIG_H

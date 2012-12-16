@@ -7,13 +7,17 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ReadStageTest.h"
+
+#include <mcld/Module.h>
 #include <mcld/LD/LDContext.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/LD/SectionData.h>
-#include <mcld/LD/Fragment.h>
-#include <mcld/LD/FragmentRef.h>
+#include <mcld/Fragment/Fragment.h>
+#include <mcld/Fragment/FragmentRef.h>
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/LD/ResolveInfo.h>
+#include <mcld/MC/InputFactory.h>
+#include <mcld/Support/FileHandle.h>
 
 #include <sstream>
 #include <iostream>
@@ -41,13 +45,13 @@ void ReadStageTest::SetUp()
   m_pLinker->initialize("arm-none-linux-gnueabi");
 
   // set up target-dependent constraints of attributes
-  m_pLinker->config()->attrFactory().constraint().enableWholeArchive();
-  m_pLinker->config()->attrFactory().constraint().disableAsNeeded();
-  m_pLinker->config()->attrFactory().constraint().setSharedSystem();
+  m_pLinker->config()->attribute().constraint().enableWholeArchive();
+  m_pLinker->config()->attribute().constraint().disableAsNeeded();
+  m_pLinker->config()->attribute().constraint().setSharedSystem();
 
   // set up the predefined attributes
-  m_pLinker->config()->attrFactory().predefined().setWholeArchive();
-  m_pLinker->config()->attrFactory().predefined().setDynamic();
+  m_pLinker->config()->attribute().predefined().setWholeArchive();
+  m_pLinker->config()->attribute().predefined().setDynamic();
 
   // set up target dependent options
   mcld::sys::fs::Path path = TOPDIR;
@@ -68,17 +72,17 @@ void ReadStageTest::TearDown()
 void ReadStageTest::dumpInput(const mcld::Input &pInput, mcld::FileHandle &pFile, size_t pIdent)
 {
   stringstream sstream;
-  for (int i=0; i < pIdent; ++i)
+  for (size_t i=0; i < pIdent; ++i)
     sstream << " ";
   sstream << "<input name=\"" << pInput.name() << "\">\n";
 
   LDContext::const_sect_iterator sect, sectEnd = pInput.context()->sectEnd();
   for (sect = pInput.context()->sectBegin(); sect != sectEnd; ++sect) {
-    for (int i=0; i < (pIdent+1); ++i)
+    for (size_t i=0; i < (pIdent+1); ++i)
       sstream << " ";
     sstream << "<section name=\"" << (*sect)->name() << "\"/>\n";
   }
-  for (int i=0; i < pIdent; ++i)
+  for (size_t i=0; i < pIdent; ++i)
     sstream << " ";
   sstream << "</input>\n";
 
@@ -87,20 +91,20 @@ void ReadStageTest::dumpInput(const mcld::Input &pInput, mcld::FileHandle &pFile
   pFile.write(sstream.str().data(), org_size, sstream.str().size());
 }
 
-void ReadStageTest::dumpOutput(const mcld::Output &pOutput, mcld::FileHandle &pFile, size_t pIdent)
+void ReadStageTest::dumpOutput(const mcld::Module& pModule, mcld::FileHandle &pFile, size_t pIdent)
 {
   stringstream sstream;
-  for (int i=0; i < pIdent; ++i)
+  for (size_t i=0; i < pIdent; ++i)
     sstream << " ";
-  sstream << "<output name=\"" << pOutput.name() << "\">\n";
+  sstream << "<output name=\"" << m_pLinker->module()->name() << "\">\n";
 
-  LDContext::const_sect_iterator sect, sectEnd = pOutput.context()->sectEnd();
-  for (sect = pOutput.context()->sectBegin(); sect != sectEnd; ++sect) {
-    for (int i=0; i < (pIdent+1); ++i)
+  Module::const_iterator sect, sectEnd = pModule.end();
+  for (sect = pModule.begin(); sect != sectEnd; ++sect) {
+    for (size_t i=0; i < (pIdent+1); ++i)
       sstream << " ";
     sstream << "<section name=\"" << (*sect)->name() << "\"/>\n";
   }
-  for (int i=0; i < pIdent; ++i)
+  for (size_t i=0; i < pIdent; ++i)
     sstream << " ";
   sstream << "</output>\n";
 
@@ -115,7 +119,7 @@ TEST_F(ReadStageTest, quake) {
   mcld::sys::fs::Path top_level = TOPDIR;
 
   // set up output
-  m_pLinker->config()->output().setType(mcld::Output::DynObj);
+  m_pLinker->config()->setCodeGenType(mcld::LinkerConfig::DynObj);
   m_pLinker->setOutput(top_level + "unittests/plasma.so");
 
 
@@ -129,19 +133,19 @@ TEST_F(ReadStageTest, quake) {
   m_pLinker->addObject(top_level + "test/libs/ARM/Android/android-14/crtend_so.o");
 
   // dump status
-  m_pLinker->getDriver()->normalize();
+  m_pLinker->getObjLinker()->normalize();
 
   FileHandle file;
   file.open(top_level + "unittests/read_stage.xml",
      FileHandle::ReadWrite | FileHandle::Create | FileHandle::Truncate, 0644);
 
-  InputTree::iterator input, inEnd = m_pLinker->config()->inputs().end();
-  for (input = m_pLinker->config()->inputs().begin(); input != inEnd; ++input) {
+  Module::input_iterator input, inEnd = m_pLinker->module()->input_end();
+  for (input = m_pLinker->module()->input_begin(); input != inEnd; ++input) {
     dumpInput(**input, file, 1);
   }
 
-  dumpOutput(m_pLinker->config()->output(), file, 1);
+  dumpOutput(*m_pLinker->module(), file, 1);
   // dump status
-  ASSERT_TRUE(m_pLinker->getDriver()->mergeSections());
+  ASSERT_TRUE(m_pLinker->getObjLinker()->mergeSections());
 }
 

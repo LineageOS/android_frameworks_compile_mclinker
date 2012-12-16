@@ -8,21 +8,22 @@
 //===----------------------------------------------------------------------===//
 
 #include <mcld/Target/PLT.h>
+#include <mcld/IRBuilder.h>
 
 using namespace mcld;
 
 class GOT;
 
 //===----------------------------------------------------------------------===//
-// PLTEntry
+// PLT::Entry
 //===----------------------------------------------------------------------===//
-PLTEntry::PLTEntry(size_t pSize, SectionData* pParent)
-   : TargetFragment(Fragment::Target, pParent),
-     m_EntrySize(pSize), m_pContent(NULL)
+PLT::Entry::Entry(size_t pSize, SectionData& pParent)
+  : TargetFragment(Fragment::Target, &pParent),
+    m_EntrySize(pSize), m_pContent(NULL)
 {
 }
 
-PLTEntry::~PLTEntry()
+PLT::Entry::~Entry()
 {
   if (m_pContent) {
     free(m_pContent);
@@ -33,10 +34,10 @@ PLTEntry::~PLTEntry()
 //===----------------------------------------------------------------------===//
 // PLT
 //===----------------------------------------------------------------------===//
-PLT::PLT(LDSection& pSection, SectionData& pSectionData)
-  :m_Section(pSection),
-   m_SectionData(pSectionData)
+PLT::PLT(LDSection& pSection)
+  :m_Section(pSection)
 {
+  m_SectionData = IRBuilder::CreateSectionData(pSection);
 }
 
 PLT::~PLT()

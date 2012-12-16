@@ -9,23 +9,22 @@
 #ifndef MCLD_ARM_PLT_H
 #define MCLD_ARM_PLT_H
 
-#include <mcld/LD/SectionData.h>
+#include <mcld/Target/GOT.h>
 #include <mcld/Target/PLT.h>
 
 namespace mcld {
 
 class ARMGOT;
-class GOTEntry;
 class MemoryRegion;
 
-class ARMPLT0 : public PLTEntry {
+class ARMPLT0 : public PLT::Entry {
 public:
-  ARMPLT0(SectionData* pParent);
+  ARMPLT0(SectionData& pParent);
 };
 
-class ARMPLT1 : public PLTEntry {
+class ARMPLT1 : public PLT::Entry {
 public:
-  ARMPLT1(SectionData* pParent);
+  ARMPLT1(SectionData& pParent);
 };
 
 /** \class ARMPLT
@@ -33,34 +32,19 @@ public:
  */
 class ARMPLT : public PLT
 {
-  typedef llvm::DenseMap<const ResolveInfo*, ARMPLT1*> SymbolIndexType;
-
 public:
-  typedef SectionData::iterator iterator;
-  typedef SectionData::const_iterator const_iterator;
-
-public:
-  ARMPLT(LDSection& pSection, SectionData& pSectionData, ARMGOT& pGOTPLT);
+  ARMPLT(LDSection& pSection, ARMGOT& pGOTPLT);
   ~ARMPLT();
 
-// Override virtual function.
-public:
+  // finalizeSectionSize - set LDSection size
+  void finalizeSectionSize();
 
-  // reserveEntry is ARMGOT friend function.
+  // hasPLT1 - return if this plt section has any plt1 entry
+  bool hasPLT1() const;
+
   void reserveEntry(size_t pNum = 1) ;
 
-  PLTEntry* getPLTEntry(const ResolveInfo& pSymbol, bool& pExist) ;
-
-  GOTEntry* getGOTPLTEntry(const ResolveInfo& pSymbol, bool& pExist);
-
-public:
-  iterator begin() { return m_SectionData.begin(); }
-
-  const_iterator begin() const { return m_SectionData.begin(); }
-
-  iterator end() { return m_SectionData.end(); }
-
-  const_iterator end() const { return m_SectionData.end(); }
+  ARMPLT1* consume();
 
   ARMPLT0* getPLT0() const;
 
@@ -73,11 +57,8 @@ public:
 private:
   ARMGOT& m_GOT;
 
-  // Used by getEntry() for mapping a ResolveInfo
-  // instance to a PLT1 Entry.
+  // Used by getEntry() for mapping a ResolveInfo instance to a PLT1 Entry.
   iterator m_PLTEntryIterator;
-
-  SymbolIndexType m_PLTEntryMap;
 };
 
 } // namespace of mcld

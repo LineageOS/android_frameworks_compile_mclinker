@@ -9,9 +9,30 @@
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/FileSystem.h>
 #include <errno.h>
-#include <fcntl.h>
+
+#if defined(HAVE_UNISTD_H)
+# include <unistd.h>
+#endif
+#if defined(HAVE_FCNTL_H)
+# include <fcntl.h>
+#endif
+
 #include <sys/stat.h>
 #include <sys/mman.h>
+
+#if defined(_MSC_VER)
+#include <io.h>
+#include <fcntl.h>
+#ifndef STDIN_FILENO
+# define STDIN_FILENO 0
+#endif
+#ifndef STDOUT_FILENO
+# define STDOUT_FILENO 1
+#endif
+#ifndef STDERR_FILENO
+# define STDERR_FILENO 2
+#endif
+#endif
 
 using namespace mcld;
 
@@ -39,18 +60,18 @@ inline static int oflag(FileHandle::OpenMode pMode)
 
   if (FileHandle::ReadWrite == (pMode & FileHandle::ReadWrite))
     result |= O_RDWR;
-  else if (pMode & FileHandle::ReadOnly)
+  else if (FileHandle::ReadOnly == (pMode & FileHandle::ReadOnly))
     result |= O_RDONLY;
-  else if (pMode & FileHandle::WriteOnly)
+  else if (FileHandle::WriteOnly == (pMode & FileHandle::WriteOnly))
     result |= O_WRONLY;
 
-  if (pMode & FileHandle::Append)
+  if (FileHandle::Append == (pMode & FileHandle::Append))
     result |= O_APPEND;
 
-  if (pMode & FileHandle::Create)
+  if (FileHandle::Create == (pMode & FileHandle::Create))
     result |= O_CREAT;
 
-  if (pMode & FileHandle::Truncate)
+  if (FileHandle::Truncate == (pMode & FileHandle::Truncate))
     result |= O_TRUNC;
 
   return result;
@@ -68,31 +89,6 @@ inline static bool get_size(int pHandler, unsigned int &pSize)
 }
 
 bool FileHandle::open(const sys::fs::Path& pPath,
-                      FileHandle::OpenMode pMode)
-{
-  if (isOpened() || Unknown == pMode) {
-    setState(BadBit);
-    return false;
-  }
-
-  m_OpenMode = pMode;
-  m_Handler = ::open(pPath.native().c_str(), oflag(pMode));
-  m_Path = pPath;
-  if (-1 == m_Handler) {
-    m_OpenMode = NotOpen;
-    setState(FailBit);
-    return false;
-  }
-
-  if (!get_size(m_Handler, m_Size)) {
-    setState(FailBit);
-    return false;
-  }
-
-  return true;
-}
-
-bool FileHandle::open(const sys::fs::Path& pPath,
                       FileHandle::OpenMode pMode,
                       FileHandle::Permission pPerm)
 {
@@ -102,7 +98,11 @@ bool FileHandle::open(const sys::fs::Path& pPath,
   }
 
   m_OpenMode = pMode;
-  m_Handler = sys::fs::detail::open(pPath, oflag(pMode), (int)pPerm);
+  if (System == pPerm)
+    m_Handler = sys::fs::detail::open(pPath, oflag(pMode));
+  else
+    m_Handler = sys::fs::detail::open(pPath, oflag(pMode), (int)pPerm);
+
   m_Path = pPath;
   if (-1 == m_Handler) {
     m_OpenMode = NotOpen;

@@ -14,8 +14,9 @@
 #include <string>
 #include <list>
 
-#include <mcld/MC/MCLDDriver.h>
-#include <mcld/MC/MCLinker.h>
+#include <mcld/Module.h>
+#include <mcld/Object/ObjectLinker.h>
+#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/LD/DiagnosticPrinter.h>
 #include <mcld/LD/DiagnosticLineInfo.h>
 #include <mcld/Support/TargetRegistry.h>
@@ -23,12 +24,16 @@
 
 namespace mcld {
 
-class MCLDInfo;
+class FileHandle;
+class LinkerConfig;
 class TargetLDBackend;
 class RegionFactory;
+class InputFactory;
+class MemoryAreaFactory;
+class ContextFactory;
+class InputBuilder;
 
-namespace test
-{
+namespace test {
 
 class TestLinker
 {
@@ -39,15 +44,18 @@ public:
 
   bool initialize(const std::string &pTriple);
 
-  MCLDInfo* config() {
-    assert(NULL != m_pInfo);
-    return m_pInfo;
+  LinkerConfig* config() {
+    assert(NULL != m_pConfig);
+    return m_pConfig;
   }
 
-  const MCLDInfo* config() const {
-    assert(NULL != m_pInfo);
-    return m_pInfo;
+  const LinkerConfig* config() const {
+    assert(NULL != m_pConfig);
+    return m_pConfig;
   }
+
+  const Module* module() const { return &m_Module; }
+  Module*       module()       { return &m_Module; }
 
   // -----  search directories  ----- //
   void addSearchDir(const std::string &pPath);
@@ -72,28 +80,32 @@ public:
 
   bool setOutput(const sys::fs::Path &pPath);
 
-  /// getDriver
-  MCLDDriver* getDriver() {
-    assert(NULL != m_pDriver);
-    return m_pDriver;
+  const MemoryArea* getOutput() const { return m_pOutput; }
+
+  MemoryArea*       getOutput()       { return m_pOutput; }
+
+  /// getObjLinker
+  ObjectLinker* getObjLinker() {
+    assert(NULL != m_pObjLinker);
+    return m_pObjLinker;
   }
 
-  /// getDriver
-  const MCLDDriver* getDriver() const {
-    assert(NULL != m_pDriver);
-    return m_pDriver;
+  /// getObjLinker
+  const ObjectLinker* getObjLinker() const {
+    assert(NULL != m_pObjLinker);
+    return m_pObjLinker;
   }
 
   /// getLinker
-  MCLinker* getLinker() {
-    assert(NULL != m_pDriver);
-    return m_pDriver->getLinker();
+  FragmentLinker* getLinker() {
+    assert(NULL != m_pObjLinker);
+    return m_pObjLinker->getLinker();
   }
 
   /// getLinker
-  const MCLinker* getLinker() const {
-    assert(NULL != m_pDriver);
-    return m_pDriver->getLinker();
+  const FragmentLinker* getLinker() const {
+    assert(NULL != m_pObjLinker);
+    return m_pObjLinker->getLinker();
   }
 
 private:
@@ -101,21 +113,27 @@ private:
 
 private:
   const mcld::Target* m_pTarget;
-  mcld::MCLDDriver *m_pDriver;
-  mcld::MCLDInfo* m_pInfo;
+  mcld::ObjectLinker *m_pObjLinker;
+  mcld::LinkerConfig* m_pConfig;
+  mcld::Module m_Module;
   mcld::DiagnosticLineInfo* m_pDiagLineInfo;
   mcld::DiagnosticPrinter* m_pDiagPrinter;
   mcld::TargetLDBackend* m_pBackend;
   mcld::InputTree::iterator m_Root;
-  mcld::RegionFactory* m_pRegionFactory;
+  mcld::InputFactory* m_pInputFactory;
   mcld::MemoryAreaFactory* m_pMemAreaFactory;
+  mcld::ContextFactory* m_pContextFactory;
+
+  mcld::InputBuilder* m_pBuilder;
 
   std::list<mcld::FileHandle*> m_FileHandleList;
   std::list<mcld::MemoryArea*> m_MemAreaList;
 
+  mcld::MemoryArea* m_pOutput;
 };
 
 } // namespace of test
 } // namespace of mcld
+
 #endif
 

@@ -19,14 +19,11 @@
 #include <mcld/ADT/HashTable.h>
 #include <mcld/ADT/StringHash.h>
 #include <mcld/ADT/Uncopyable.h>
-#include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/Resolver.h>
-#include <mcld/LD/ResolveInfoFactory.h>
+#include <mcld/LD/ResolveInfo.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class Resolver;
 class StringTable;
 class SymbolTableIF;
 class SectionData;
@@ -39,15 +36,17 @@ class SectionData;
 class NamePool : private Uncopyable
 {
 public:
-  typedef HashTable<ResolveInfo, StringHash<ELF>, ResolveInfoFactory> Table;
+  typedef HashTable<ResolveInfo, StringHash<ELF> > Table;
   typedef size_t size_type;
 
 public:
-  NamePool(const Resolver& pResolver, size_type pSize = 3);
+  explicit NamePool(size_type pSize = 3);
+
   ~NamePool();
 
   // -----  modifiers  ----- //
   /// createSymbol - create a symbol but do not insert into the pool.
+  /// The created symbol did not go through the path of symbol resolution.
   ResolveInfo* createSymbol(const llvm::StringRef& pName,
                             bool pIsDyn,
                             ResolveInfo::Type pType,
@@ -73,12 +72,12 @@ public:
                     Resolver::Result& pResult);
 
   /// findSymbol - find the resolved output LDSymbol
-  LDSymbol* findSymbol(const llvm::StringRef& pName);
   const LDSymbol* findSymbol(const llvm::StringRef& pName) const;
+  LDSymbol*       findSymbol(const llvm::StringRef& pName);
 
   /// findInfo - find the resolved ResolveInfo
-  ResolveInfo* findInfo(const llvm::StringRef& pName);
   const ResolveInfo* findInfo(const llvm::StringRef& pName) const;
+  ResolveInfo*       findInfo(const llvm::StringRef& pName);
 
   /// insertString - insert a string
   /// if the string has existed, modify pString to the existing string
@@ -98,7 +97,7 @@ public:
   size_type capacity() const;
 
 private:
-  const Resolver* m_pResolver;
+  Resolver* m_pResolver;
   Table m_Table;
 
 };

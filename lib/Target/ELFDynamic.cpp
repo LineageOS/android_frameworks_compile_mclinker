@@ -11,8 +11,9 @@
 #include <mcld/Target/ELFDynamic.h>
 #include <mcld/Target/GNULDBackend.h>
 #include <mcld/LD/ELFFileFormat.h>
-#include <mcld/MC/MCLDInfo.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MsgHandling.h>
 
 using namespace mcld;
 using namespace elf_dynamic;
@@ -30,7 +31,7 @@ EntryIF::~EntryIF()
 //===----------------------------------------------------------------------===//
 // ELFDynamic
 ELFDynamic::ELFDynamic(const GNULDBackend& pParent)
-  : m_pEntryFactory(NULL), m_Idx(0) {
+  : m_pEntryFactory(NULL), m_Backend(pParent), m_Idx(0) {
   if (32 == pParent.bitclass() && pParent.isLittleEndian()) {
     m_pEntryFactory = new Entry<32, true>();
   }
@@ -85,13 +86,13 @@ void ELFDynamic::applyOne(uint64_t pTag, uint64_t pValue)
 }
 
 /// reserveEntries - reserve entries
-void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
+void ELFDynamic::reserveEntries(const LinkerConfig& pConfig,
                                 const ELFFileFormat& pFormat)
 {
-  if (pLDInfo.output().type() == Output::DynObj) {
+  if (LinkerConfig::DynObj == pConfig.codeGenType()) {
     reserveOne(llvm::ELF::DT_SONAME); // DT_SONAME
 
-    if (pLDInfo.options().Bsymbolic())
+    if (pConfig.options().Bsymbolic())
       reserveOne(llvm::ELF::DT_SYMBOLIC); // DT_SYMBOLIC
   }
 
@@ -146,24 +147,29 @@ void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
     reserveOne(llvm::ELF::DT_RELAENT); // DT_RELAENT
   }
 
-  if (pLDInfo.options().hasOrigin() ||
-      pLDInfo.options().Bsymbolic() ||
-      pLDInfo.options().hasNow()) {
-    // TODO: add checks for DF_TEXTREL and DF_STATIC_TLS
+  if (pConfig.options().hasOrigin() ||
+      pConfig.options().Bsymbolic() ||
+      pConfig.options().hasNow()    ||
+      m_Backend.hasTextRel()        ||
+      (m_Backend.hasStaticTLS() &&
+        (LinkerConfig::DynObj == pConfig.codeGenType()))) {
     reserveOne(llvm::ELF::DT_FLAGS); // DT_FLAGS
   }
 
-  if (pLDInfo.options().hasNow()          ||
-      pLDInfo.options().hasLoadFltr()     ||
-      pLDInfo.options().hasOrigin()       ||
-      pLDInfo.options().hasInterPose()    ||
-      pLDInfo.options().hasNoDefaultLib() ||
-      pLDInfo.options().hasNoDump()       ||
-      pLDInfo.options().Bgroup()          ||
-      ((pLDInfo.output().type() == Output::DynObj) &&
-       (pLDInfo.options().hasNoDelete()  ||
-        pLDInfo.options().hasInitFirst() ||
-        pLDInfo.options().hasNoDLOpen()))) {
+  if (m_Backend.hasTextRel())
+    reserveOne(llvm::ELF::DT_TEXTREL); // DT_TEXTREL
+
+  if (pConfig.options().hasNow()          ||
+      pConfig.options().hasLoadFltr()     ||
+      pConfig.options().hasOrigin()       ||
+      pConfig.options().hasInterPose()    ||
+      pConfig.options().hasNoDefaultLib() ||
+      pConfig.options().hasNoDump()       ||
+      pConfig.options().Bgroup()          ||
+      ((LinkerConfig::DynObj == pConfig.codeGenType()) &&
+       (pConfig.options().hasNoDelete()  ||
+        pConfig.options().hasInitFirst() ||
+        pConfig.options().hasNoDLOpen()))) {
     reserveOne(llvm::ELF::DT_FLAGS_1); // DT_FLAGS_1
   }
 
@@ -171,11 +177,11 @@ void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
 }
 
 /// applyEntries - apply entries
-void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
+void ELFDynamic::applyEntries(const LinkerConfig& pConfig,
                               const ELFFileFormat& pFormat)
 {
-  if (pInfo.output().type() == Output::DynObj &&
-      pInfo.options().Bsymbolic()) {
+  if (LinkerConfig::DynObj == pConfig.codeGenType() &&
+      pConfig.options().Bsymbolic()) {
       applyOne(llvm::ELF::DT_SYMBOLIC, 0x0); // DT_SYMBOLIC
   }
 
@@ -238,39 +244,51 @@ void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
     applyOne(llvm::ELF::DT_RELAENT, m_pEntryFactory->relaSize()); // DT_RELAENT
   }
 
+  if (m_Backend.hasTextRel()) {
+    applyOne(llvm::ELF::DT_TEXTREL, 0x0); // DT_TEXTREL
+
+    if (pConfig.options().warnSharedTextrel() &&
+        LinkerConfig::DynObj == pConfig.codeGenType())
+      mcld::warning(mcld::diag::warn_shared_textrel);
+  }
+
   uint64_t dt_flags = 0x0;
-  if (pInfo.options().hasOrigin())
+  if (pConfig.options().hasOrigin())
     dt_flags |= llvm::ELF::DF_ORIGIN;
-  if (pInfo.options().Bsymbolic())
+  if (pConfig.options().Bsymbolic())
     dt_flags |= llvm::ELF::DF_SYMBOLIC;
-  if (pInfo.options().hasNow())
+  if (pConfig.options().hasNow())
     dt_flags |= llvm::ELF::DF_BIND_NOW;
-  // TODO: add checks for DF_TEXTREL and DF_STATIC_TLS
+  if (m_Backend.hasTextRel())
+    dt_flags |= llvm::ELF::DF_TEXTREL;
+  if (m_Backend.hasStaticTLS() &&
+      (LinkerConfig::DynObj == pConfig.codeGenType()))
+    dt_flags |= llvm::ELF::DF_STATIC_TLS;
   if (0x0 != dt_flags) {
     applyOne(llvm::ELF::DT_FLAGS, dt_flags); // DT_FLAGS
   }
 
   uint64_t dt_flags_1 = 0x0;
-  if (pInfo.options().hasNow())
+  if (pConfig.options().hasNow())
     dt_flags_1 |= llvm::ELF::DF_1_NOW;
-  if (pInfo.options().hasLoadFltr())
+  if (pConfig.options().hasLoadFltr())
     dt_flags_1 |= llvm::ELF::DF_1_LOADFLTR;
-  if (pInfo.options().hasOrigin())
+  if (pConfig.options().hasOrigin())
     dt_flags_1 |= llvm::ELF::DF_1_ORIGIN;
-  if (pInfo.options().hasInterPose())
+  if (pConfig.options().hasInterPose())
     dt_flags_1 |= llvm::ELF::DF_1_INTERPOSE;
-  if (pInfo.options().hasNoDefaultLib())
+  if (pConfig.options().hasNoDefaultLib())
     dt_flags_1 |= llvm::ELF::DF_1_NODEFLIB;
-  if (pInfo.options().hasNoDump())
+  if (pConfig.options().hasNoDump())
     dt_flags_1 |= llvm::ELF::DF_1_NODUMP;
-  if (pInfo.options().Bgroup())
+  if (pConfig.options().Bgroup())
     dt_flags_1 |= llvm::ELF::DF_1_GROUP;
-  if (pInfo.output().type() == Output::DynObj) {
-    if (pInfo.options().hasNoDelete())
+  if (LinkerConfig::DynObj == pConfig.codeGenType()) {
+    if (pConfig.options().hasNoDelete())
       dt_flags_1 |= llvm::ELF::DF_1_NODELETE;
-    if (pInfo.options().hasInitFirst())
+    if (pConfig.options().hasInitFirst())
       dt_flags_1 |= llvm::ELF::DF_1_INITFIRST;
-    if (pInfo.options().hasNoDLOpen())
+    if (pConfig.options().hasNoDLOpen())
       dt_flags_1 |= llvm::ELF::DF_1_NOOPEN;
   }
   if (0x0 != dt_flags_1)

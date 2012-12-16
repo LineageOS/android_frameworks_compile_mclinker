@@ -12,19 +12,23 @@
 #include <gtest.h>
 #endif
 
+#include <mcld/InputTree.h>
 #include <mcld/ADT/HashEntry.h>
 #include <mcld/ADT/HashTable.h>
 #include <mcld/ADT/StringHash.h>
 #include <mcld/Support/GCFactory.h>
-#include <mcld/MC/InputTree.h>
 
 #include <vector>
 #include <string>
 
-namespace mcld
-{
-class InputTree;
+namespace mcld {
+
 class Input;
+class InputFactory;
+class InputBuilder;
+class AttributeFactory;
+class ContextFactory;
+class MemoryAreaFactory;
 
 /** \class Archive
  *  \brief This class define the interfacee to Archive files
@@ -63,13 +67,12 @@ private:
   {
     size_t operator()(uint32_t pKey) const
     {
-      size_t h;
-      h ^= h >> 16;
-      h *= 0x85ebca6b;
-      h ^= h >> 13;
-      h *= 0xc2b2ae35;
-      h ^= h >> 16;
-      return h;
+      pKey ^= pKey >> 16;
+      pKey *= 0x85ebca6b;
+      pKey ^= pKey >> 13;
+      pKey *= 0xc2b2ae35;
+      pKey ^= pKey >> 16;
+      return pKey;
     }
   };
 
@@ -126,7 +129,7 @@ public:
   typedef std::vector<Symbol*> SymTabType;
 
 public:
-  Archive(Input& pInputFile, InputFactory& pInputFactory);
+  Archive(Input& pInputFile, InputBuilder& pBuilder);
 
   ~Archive();
 
@@ -223,6 +226,21 @@ public:
   /// getStrTable - get the extended name table
   const std::string& getStrTable() const;
 
+  /// hasStrTable - return true if this archive has extended name table
+  bool hasStrTable() const;
+
+  /// getMemberFile       - get the member file in an archive member
+  /// @param pArchiveFile - Input reference of the archive member
+  /// @param pIsThinAR    - denote the archive menber is a Thin Archive or not
+  /// @param pName        - the name of the member file we want to get
+  /// @param pPath        - the path of the member file
+  /// @param pFileOffset  - the file offset of the member file in a regular AR
+  Input* getMemberFile(Input& pArchiveFile,
+                       bool isThinAR,
+                       const std::string& pName,
+                       const sys::fs::Path& pPath,
+                       off_t pFileOffset = 0);
+
 private:
   typedef GCFactory<Symbol, 0> SymbolFactory;
 
@@ -235,6 +253,7 @@ private:
   SymTabType m_SymTab;
   size_t m_SymTabSize;
   std::string m_StrTab;
+  InputBuilder& m_Builder;
 };
 
 } // namespace of mcld

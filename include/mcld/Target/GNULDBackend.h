@@ -11,46 +11,36 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
+#include <mcld/Target/TargetLDBackend.h>
 
 #include <llvm/Support/ELF.h>
 #include <mcld/ADT/HashTable.h>
 #include <mcld/ADT/HashEntry.h>
-#include <mcld/LD/EhFrameHdr.h>
 #include <mcld/LD/ELFDynObjFileFormat.h>
+#include <mcld/LD/ELFExecFileFormat.h>
+#include <mcld/LD/ELFObjectFileFormat.h>
+#include <mcld/LD/GNUArchiveReader.h>
+#include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFDynObjReader.h>
 #include <mcld/LD/ELFDynObjWriter.h>
-#include <mcld/LD/ELFExecFileFormat.h>
 #include <mcld/LD/ELFExecWriter.h>
-#include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFObjectWriter.h>
 #include <mcld/LD/ELFSegment.h>
 #include <mcld/LD/ELFSegmentFactory.h>
-#include <mcld/LD/GNUArchiveReader.h>
-#include <mcld/Support/GCFactory.h>
 #include <mcld/Target/ELFDynamic.h>
-#include <mcld/Target/TargetLDBackend.h>
 
-namespace mcld
-{
+#include <mcld/Support/GCFactory.h>
+#include <mcld/Module.h>
 
-struct SymCompare
-{
-  bool operator()(const LDSymbol* X, const LDSymbol* Y) const
-  { return (X==Y); }
-};
+namespace mcld {
 
-struct PtrHash
-{
-  size_t operator()(const LDSymbol* pKey) const
-  {
-    return (unsigned((uintptr_t)pKey) >> 4) ^
-           (unsigned((uintptr_t)pKey) >> 9);
-  }
-};
-
-class MCLDInfo;
+class Module;
+class LinkerConfig;
 class Layout;
-class SymbolCategory;
+class EhFrame;
+class EhFrameHdr;
+class BranchIslandFactory;
+class StubFactory;
 
 /** \class GNULDBackend
  *  \brief GNULDBackend provides a common interface for all GNU Unix-OS
@@ -59,82 +49,54 @@ class SymbolCategory;
 class GNULDBackend : public TargetLDBackend
 {
 protected:
-  GNULDBackend();
+  GNULDBackend(const LinkerConfig& pConfig);
 
 public:
   virtual ~GNULDBackend();
 
   // -----  readers/writers  ----- //
-  bool initArchiveReader(MCLinker& pLinker,
-                         MCLDInfo& pInfo,
-                         MemoryAreaFactory& pMemAreaFactory);
-  bool initObjectReader(MCLinker& pLinker);
-  bool initDynObjReader(MCLinker& pLinker);
-  bool initObjectWriter(MCLinker& pLinker);
-  bool initDynObjWriter(MCLinker& pLinker);
-  bool initExecWriter(MCLinker& pLinker);
-
-  GNUArchiveReader *getArchiveReader();
-  const GNUArchiveReader *getArchiveReader() const;
-
-  ELFObjectReader *getObjectReader();
-  const ELFObjectReader *getObjectReader() const;
-
-  ELFDynObjReader *getDynObjReader();
-  const ELFDynObjReader *getDynObjReader() const;
-
-  ELFObjectWriter *getObjectWriter();
-  const ELFObjectWriter *getObjectWriter() const;
-
-  ELFDynObjWriter *getDynObjWriter();
-  const ELFDynObjWriter *getDynObjWriter() const;
-
-  ELFExecWriter *getExecWriter();
-  const ELFExecWriter *getExecWriter() const;
+  GNUArchiveReader* createArchiveReader(Module& pModule);
+  ELFObjectReader* createObjectReader(FragmentLinker& pLinker);
+  ELFDynObjReader* createDynObjReader(FragmentLinker& pLinker);
+  ELFObjectWriter* createObjectWriter(FragmentLinker& pLinker);
+  ELFDynObjWriter* createDynObjWriter(FragmentLinker& pLinker);
+  ELFExecWriter*   createExecWriter(FragmentLinker& pLinker);
 
   // -----  output sections  ----- //
-  /// initExecSections - initialize sections of the output executable file.
-  bool initExecSections(MCLinker& pMCLinker);
-
-  /// initDynObjSections - initialize sections of the output shared object.
-  bool initDynObjSections(MCLinker& pMCLinker);
+  /// initStdSections - initialize standard sections of the output file.
+  bool initStdSections(ObjectBuilder& pBuilder);
 
   /// getOutputFormat - get the sections of the output file.
-  ELFFileFormat* getOutputFormat(const Output& pOutput);
-  const ELFFileFormat* getOutputFormat(const Output& pOutput) const;
-
-  ELFDynObjFileFormat* getDynObjFileFormat();
-  const ELFDynObjFileFormat* getDynObjFileFormat() const;
-
-  ELFExecFileFormat* getExecFileFormat();
-  const ELFExecFileFormat* getExecFileFormat() const;
+  const ELFFileFormat* getOutputFormat() const;
+  ELFFileFormat*       getOutputFormat();
 
   // -----  target symbols ----- //
   /// initStandardSymbols - initialize standard symbols.
   /// Some section symbols is undefined in input object, and linkers must set
   /// up its value. Take __init_array_begin for example. This symbol is an
-  /// undefined symbol in input objects. MCLinker must finalize its value
+  /// undefined symbol in input objects. FragmentLinker must finalize its value
   /// to the begin of the .init_array section, then relocation enties to
   /// __init_array_begin can be applied without emission of "undefined
   /// reference to `__init_array_begin'".
-  bool initStandardSymbols(MCLinker& pLinker, const Output& pOutput);
+  bool initStandardSymbols(FragmentLinker& pLinker, Module& pModule);
 
   /// finalizeSymbol - Linker checks pSymbol.reserved() if it's not zero,
   /// then it will ask backend to finalize the symbol value.
   /// @return ture - if backend set the symbol value sucessfully
   /// @return false - if backend do not recognize the symbol
-  bool finalizeSymbols(MCLinker& pLinker, const Output& pOutput) {
-    return (finalizeStandardSymbols(pLinker, pOutput) &&
-            finalizeTargetSymbols(pLinker, pOutput));
+  bool finalizeSymbols(FragmentLinker& pLinker) {
+    return (finalizeStandardSymbols(pLinker) &&
+            finalizeTargetSymbols(pLinker));
   }
 
   /// finalizeStandardSymbols - set the value of standard symbols
-  virtual bool finalizeStandardSymbols(MCLinker& pLinker,
-                                       const Output& pOutput);
+  virtual bool finalizeStandardSymbols(FragmentLinker& pLinker);
 
   /// finalizeTargetSymbols - set the value of target symbols
-  virtual bool finalizeTargetSymbols(MCLinker& pLinker,
-                                     const Output& pOutput) = 0;
+  virtual bool finalizeTargetSymbols(FragmentLinker& pLinker) = 0;
+
+  /// finalizeTLSSymbol - set the value of a TLS symbol
+  virtual bool finalizeTLSSymbol(LDSymbol& pSymbol);
 
   size_t sectionStartOffset() const;
 
@@ -169,42 +131,45 @@ public:
   virtual uint64_t defaultTextSegmentAddr() const
   { return 0x0; }
 
+  bool hasTextRel() const
+  { return m_bHasTextRel; }
+
+  bool hasStaticTLS() const
+  { return m_bHasStaticTLS; }
+
   /// segmentStartAddr - this function returns the start address of the segment
-  uint64_t segmentStartAddr(const Output& pOutput,
-                            const MCLDInfo& pInfo) const;
+  uint64_t segmentStartAddr(const FragmentLinker& pLinker) const;
+
+  /// partialScanRelocation - When doing partial linking, fix the relocation
+  /// offset after section merge
+  void partialScanRelocation(Relocation& pReloc,
+                             FragmentLinker& pLinker,
+                             Module& pModule,
+                             const LDSection& pSection);
 
   /// sizeNamePools - compute the size of regular name pools
   /// In ELF executable files, regular name pools are .symtab, .strtab.,
   /// .dynsym, .dynstr, and .hash
-  virtual void sizeNamePools(const Output& pOutput,
-                             const SymbolCategory& pSymbols,
-                             const MCLDInfo& pLDInfo);
+  virtual void sizeNamePools(const Module& pModule, bool pIsStaticLink);
 
   /// emitSectionData - emit target-dependent section data
-  virtual uint64_t emitSectionData(const Output& pOutput,
-                                   const LDSection& pSection,
-                                   const MCLDInfo& pInfo,
-                                   const Layout& pLayout,
+  virtual uint64_t emitSectionData(const LDSection& pSection,
                                    MemoryRegion& pRegion) const = 0;
 
   /// emitRegNamePools - emit regular name pools - .symtab, .strtab
-  virtual void emitRegNamePools(Output& pOutput,
-                                SymbolCategory& pSymbols,
-                                const Layout& pLayout,
-                                const MCLDInfo& pLDInfo);
+  virtual void emitRegNamePools(const Module& pModule,
+                                MemoryArea& pOutput);
 
   /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
-  virtual void emitDynNamePools(Output& pOutput,
-                                SymbolCategory& pSymbols,
-                                const Layout& pLayout,
-                                const MCLDInfo& pLDInfo);
+  virtual void emitDynNamePools(const Module& pModule,
+                                MemoryArea& pOutput);
 
   /// sizeInterp - compute the size of program interpreter's name
   /// In ELF executables, this is the length of dynamic linker's path name
-  virtual void sizeInterp(const Output& pOutput, const MCLDInfo& pLDInfo);
+  virtual void sizeInterp();
 
   /// emitInterp - emit the .interp
-  virtual void emitInterp(Output& pOutput, const MCLDInfo& pLDInfo);
+  virtual void emitInterp(MemoryArea& pOutput);
 
   /// getSectionOrder - compute the layout order of the section
   /// Layout calls this function to get the default order of the pSectHdr.
@@ -215,9 +180,7 @@ public:
   /// this function.
   ///
   /// @see getTargetSectionOrder
-  virtual unsigned int getSectionOrder(const Output& pOutput,
-                                       const LDSection& pSectHdr,
-                                       const MCLDInfo& pInfo) const;
+  virtual unsigned int getSectionOrder(const LDSection& pSectHdr) const;
 
   /// getTargetSectionOrder - compute the layout order of target section
   /// If the target favors certain order for the given gSectHdr, please
@@ -225,10 +188,7 @@ public:
   ///
   /// By default, this function returns the maximun order, and pSectHdr
   /// will be the last section to be laid out.
-  virtual unsigned int
-  getTargetSectionOrder(const Output& pOutput,
-                        const LDSection& pSectHdr,
-                        const MCLDInfo& pInfo) const
+  virtual unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const
   { return (unsigned int)-1; }
 
   /// numOfSegments - return the number of segments
@@ -248,11 +208,11 @@ public:
   /// commonPageSize - the common page size of the target machine, and we set it
   /// to 4K here. If target favors the different size, please override this
   /// function
-  virtual uint64_t commonPageSize(const MCLDInfo& pInfo) const;
+  virtual uint64_t commonPageSize() const;
 
   /// abiPageSize - the abi page size of the target machine, and we set it to 4K
   /// here. If target favors the different size, please override this function
-  virtual uint64_t abiPageSize(const MCLDInfo& pInfo) const;
+  virtual uint64_t abiPageSize() const;
 
   /// getSymbolIdx - get the symbol index of ouput symbol table
   size_t getSymbolIdx(LDSymbol* pSymbol) const;
@@ -265,22 +225,44 @@ public:
   /// allocateCommonSymbols - allocate common symbols in the corresponding
   /// sections.
   /// Different concrete target backend may overlap this function.
-  virtual bool allocateCommonSymbols(const MCLDInfo& pLDInfo, MCLinker& pLinker) const;
+  virtual bool allocateCommonSymbols(Module& pModule);
 
   /// isSymbolPreemtible - whether the symbol can be preemted by other
   /// link unit
   /// @ref Google gold linker, symtab.h:551
-  bool isSymbolPreemptible(const ResolveInfo& pSym,
-                           const MCLDInfo& pLDInfo,
-                           const Output& pOutput) const;
+  bool isSymbolPreemptible(const ResolveInfo& pSym) const;
 
   /// symbolNeedsDynRel - return whether the symbol needs a dynamic relocation
   /// @ref Google gold linker, symtab.h:645
-  bool symbolNeedsDynRel(const ResolveInfo& pSym,
+  bool symbolNeedsDynRel(const FragmentLinker& pLinker,
+                         const ResolveInfo& pSym,
                          bool pSymHasPLT,
-                         const MCLDInfo& pLDInfo,
-                         const Output& pOutput,
                          bool isAbsReloc) const;
+
+  // getTDATASymbol - get section symbol of .tdata
+  LDSymbol& getTDATASymbol();
+  const LDSymbol& getTDATASymbol() const;
+
+  /// getTBSSSymbol - get section symbol of .tbss
+  LDSymbol& getTBSSSymbol();
+  const LDSymbol& getTBSSSymbol() const;
+
+  //  -----  relaxation  -----  //
+  /// initBRIslandFactory - initialize the branch island factory for relaxation
+  bool initBRIslandFactory();
+
+  /// initStubFactory - initialize the stub factory for relaxation
+  bool initStubFactory();
+
+  /// getBRIslandFactory
+  BranchIslandFactory* getBRIslandFactory() { return m_pBRIslandFactory; }
+
+  /// getStubFactory
+  StubFactory*         getStubFactory()     { return m_pStubFactory; }
+
+  /// maxBranchOffset - return the max (forward) branch offset of the backend.
+  /// Target can override this function if needed.
+  virtual uint64_t maxBranchOffset() { return (uint64_t)-1; }
 
 protected:
   uint64_t getSymbolSize(const LDSymbol& pSymbol) const;
@@ -289,7 +271,7 @@ protected:
 
   uint64_t getSymbolValue(const LDSymbol& pSymbol) const;
 
-  uint64_t getSymbolShndx(const LDSymbol& pSymbol, const Layout& pLayout) const;
+  uint64_t getSymbolShndx(const LDSymbol& pSymbol) const;
 
   /// getHashBucketCount - calculate hash bucket count.
   /// @ref Google gold linker, dynobj.cc:791
@@ -297,35 +279,59 @@ protected:
 
   /// isDynamicSymbol
   /// @ref Google gold linker: symtab.cc:311
-  static bool isDynamicSymbol(const LDSymbol& pSymbol, const Output& pOutput);
+  bool isDynamicSymbol(const LDSymbol& pSymbol);
 
-  /// isOutputPIC - return whether the output is position-independent
-  bool isOutputPIC(const Output& pOutput, const MCLDInfo& pInfo) const;
-
-  /// isStaticLink - return whether we're doing static link
-  bool isStaticLink(const Output& pOutput, const MCLDInfo& pInfo) const;
+  /// isDynamicSymbol
+  /// @ref Google gold linker: symtab.cc:311
+  bool isDynamicSymbol(const ResolveInfo& pResolveInfo);
 
   /// symbolNeedsPLT - return whether the symbol needs a PLT entry
   /// @ref Google gold linker, symtab.h:596
-  bool symbolNeedsPLT(const ResolveInfo& pSym,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput) const;
+  bool symbolNeedsPLT(const FragmentLinker& pLinker,
+                      const ResolveInfo& pSym) const;
 
   /// symbolNeedsCopyReloc - return whether the symbol needs a copy relocation
-  bool symbolNeedsCopyReloc(const Layout& pLayout,
+  bool symbolNeedsCopyReloc(const FragmentLinker& pLinker,
                             const Relocation& pReloc,
-                            const ResolveInfo& pSym,
-                            const MCLDInfo& pLDInfo,
-                            const Output& pOutput) const;
+                            const ResolveInfo& pSym) const;
+
+  /// symbolHasFinalValue - return true if the symbol's value can be decided at
+  /// link time
+  bool symbolFinalValueIsKnown(const FragmentLinker& pLinker,
+                               const ResolveInfo& pSym) const;
+
+  /// emitSymbol32 - emit an ELF32 symbol
+  void emitSymbol32(llvm::ELF::Elf32_Sym& pSym32,
+                    LDSymbol& pSymbol,
+                    char* pStrtab,
+                    size_t pStrtabsize,
+                    size_t pSymtabIdx);
+
+  /// emitSymbol64 - emit an ELF64 symbol
+  void emitSymbol64(llvm::ELF::Elf64_Sym& pSym64,
+                    LDSymbol& pSymbol,
+                    char* pStrtab,
+                    size_t pStrtabsize,
+                    size_t pSymtabIdx);
+
+  /// checkAndSetHasTextRel - check pSection flag to set HasTextRel
+  void checkAndSetHasTextRel(const LDSection& pSection);
+
+  void setHasStaticTLS(bool pVal = true)
+  { m_bHasStaticTLS = pVal; }
 
 private:
   /// createProgramHdrs - base on output sections to create the program headers
-  void createProgramHdrs(Output& pOutput,
-                         const MCLDInfo& pInfo);
+  void createProgramHdrs(Module& pModule, const FragmentLinker& pLinker);
+
+  /// doCreateProgramHdrs - backend can implement this function to create the
+  /// target-dependent segments
+  virtual void doCreateProgramHdrs(Module& pModule,
+                                   const FragmentLinker& pLinker) = 0;
 
   /// setupProgramHdrs - set up the attributes of segments
   ///  (i.e., offset, addresses, file/mem size, flag,  and alignment)
-  void setupProgramHdrs(const Output& pOutput, const MCLDInfo& pInfo);
+  void setupProgramHdrs(const FragmentLinker& pLinker);
 
   /// getSegmentFlag - give a section flag and return the corresponding segment
   /// flag
@@ -339,41 +345,64 @@ private:
     return flag;
   }
 
-  /// createGNUStackInfo - create an output GNU stack section or segment if needed
-  void createGNUStackInfo(const Output& pOutput,
-                          const MCLDInfo& pInfo,
-                          MCLinker& pLinker);
+  /// setupGNUStackInfo - setup the section flag of .note.GNU-stack in output
+  void setupGNUStackInfo(Module& pModule, FragmentLinker& pLinker);
+
+  /// setupRelro - setup the offset constraint of PT_RELRO
+  void setupRelro(Module& pModule);
+
+  /// setOutputSectionOffset - helper function to set a group of output sections'
+  /// offset, and set pSectBegin to pStartOffset if pStartOffset is not -1U.
+  void setOutputSectionOffset(Module& pModule,
+                              Module::iterator pSectBegin,
+                              Module::iterator pSectEnd,
+                              uint64_t pStartOffset = -1U);
+
+  /// setOutputSectionOffset - helper function to set output sections' address.
+  void setOutputSectionAddress(FragmentLinker& pLinker,
+                               Module& pModule,
+                               Module::iterator pSectBegin,
+                               Module::iterator pSectEnd);
 
   /// preLayout - Backend can do any needed modification before layout
-  void preLayout(const Output& pOutput,
-                 const MCLDInfo& pInfo,
-                 MCLinker& pLinker);
+  void preLayout(Module& pModule, FragmentLinker& pLinker);
 
   /// postLayout -Backend can do any needed modification after layout
-  void postLayout(const Output& pOutput,
-                 const MCLDInfo& pInfo,
-                 MCLinker& pLinker);
+  void postLayout(Module& pModule, FragmentLinker& pLinker);
 
   /// preLayout - Backend can do any needed modification before layout
-  virtual void doPreLayout(const Output& pOutput,
-                         const MCLDInfo& pInfo,
-                         MCLinker& pLinker) = 0;
+  virtual void doPreLayout(FragmentLinker& pLinker) = 0;
 
   /// postLayout -Backend can do any needed modification after layout
-  virtual void doPostLayout(const Output& pOutput,
-                          const MCLDInfo& pInfo,
-                          MCLinker& pLinker) = 0;
+  virtual void doPostLayout(Module& pModule, FragmentLinker& pLinker) = 0;
 
   /// postProcessing - Backend can do any needed modification in the final stage
-  void postProcessing(const Output& pOutput,
-                      const MCLDInfo& pInfo,
-                      MCLinker& pLinker);
+  void postProcessing(FragmentLinker& pLinker, MemoryArea& pOutput);
 
   /// dynamic - the dynamic section of the target machine.
   virtual ELFDynamic& dynamic() = 0;
 
   /// dynamic - the dynamic section of the target machine.
   virtual const ELFDynamic& dynamic() const = 0;
+
+  /// relax - the relaxation pass
+  bool relax(Module& pModule, FragmentLinker& pLinker);
+
+  /// mayRelax - Backends should override this function if they need relaxation
+  virtual bool mayRelax() { return false; }
+
+  /// doRelax - Backend can orevride this function to add its relaxation
+  /// implementation. Return true if the output (e.g., .text) is "relaxed"
+  /// (i.e. layout is changed), and set pFinished to true if everything is fit,
+  /// otherwise set it to false.
+  virtual bool doRelax(Module& pModule, FragmentLinker& pLinker, bool& pFinished)
+  { return false; }
+
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  virtual size_t getRelEntrySize() = 0;
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  virtual size_t getRelaEntrySize() = 0;
 
 protected:
   // Based on Kind in LDFileFormat to define basic section orders for ELF, and
@@ -403,33 +432,63 @@ protected:
     SHO_SMALL_BSS,           // .sbss
     SHO_BSS,                 // .bss
     SHO_LARGE_BSS,           // .lbss
-    SHO_UNDEFINED = ~(0U)    // default order
+    SHO_UNDEFINED,           // default order
+    SHO_STRTAB               // .strtab
   };
 
-  typedef HashEntry<LDSymbol*, size_t, SymCompare> HashEntryType;
-  typedef HashTable<HashEntryType, PtrHash, EntryFactory<HashEntryType> > HashTableType;
+  struct SymCompare
+  {
+    bool operator()(const LDSymbol* X, const LDSymbol* Y) const
+    { return (X==Y); }
+  };
+
+  struct SymPtrHash
+  {
+    size_t operator()(const LDSymbol* pKey) const
+    {
+      return (unsigned((uintptr_t)pKey) >> 4) ^
+             (unsigned((uintptr_t)pKey) >> 9);
+    }
+  };
+
+  typedef HashEntry<LDSymbol*, size_t, SymCompare> SymHashEntryType;
+  typedef HashTable<SymHashEntryType,
+                    SymPtrHash,
+                    EntryFactory<SymHashEntryType> > HashTableType;
+
 
 protected:
-  // ----- readers and writers ----- //
-  GNUArchiveReader* m_pArchiveReader;
   ELFObjectReader* m_pObjectReader;
-  ELFDynObjReader* m_pDynObjReader;
-  ELFObjectWriter* m_pObjectWriter;
-  ELFDynObjWriter* m_pDynObjWriter;
-  ELFExecWriter*   m_pExecWriter;
 
   // -----  file formats  ----- //
   ELFDynObjFileFormat* m_pDynObjFileFormat;
-  ELFExecFileFormat* m_pExecFileFormat;
+  ELFExecFileFormat*   m_pExecFileFormat;
+  ELFObjectFileFormat* m_pObjectFileFormat;
 
   // ELF segment factory
   ELFSegmentFactory m_ELFSegmentTable;
 
+  // branch island factory
+  BranchIslandFactory* m_pBRIslandFactory;
+
+  // stub factory
+  StubFactory* m_pStubFactory;
+
   // map the LDSymbol to its index in the output symbol table
   HashTableType* m_pSymIndexMap;
 
+  /// m_pEhFrame - section .eh_frame
+  EhFrame* m_pEhFrame;
+
   // section .eh_frame_hdr
   EhFrameHdr* m_pEhFrameHdr;
+
+  // ----- dynamic flags ----- //
+  // DF_TEXTREL of DT_FLAGS
+  bool m_bHasTextRel;
+
+  // DF_STATIC_TLS of DT_FLAGS
+  bool m_bHasStaticTLS;
 
   // -----  standard symbols  ----- //
   // section symbols
@@ -440,6 +499,11 @@ protected:
   LDSymbol* f_pFiniArrayStart;
   LDSymbol* f_pFiniArrayEnd;
   LDSymbol* f_pStack;
+  LDSymbol* f_pDynamic;
+
+  // section symbols for .tdata and .tbss
+  LDSymbol* f_pTDATA;
+  LDSymbol* f_pTBSS;
 
   // segment symbols
   LDSymbol* f_pExecutableStart;

@@ -10,6 +10,10 @@
 #include "ARMELFDynamic.h"
 #include "ARMLDBackend.h"
 #include "ARMRelocationFactory.h"
+#include "ARMToARMStub.h"
+#include "ARMToTHMStub.h"
+#include "THMToTHMStub.h"
+#include "THMToARMStub.h"
 
 #include <cstring>
 
@@ -18,30 +22,39 @@
 #include <llvm/Support/ELF.h>
 #include <llvm/Support/Casting.h>
 
-#include <mcld/LD/SectionMap.h>
-#include <mcld/LD/FillFragment.h>
-#include <mcld/LD/AlignFragment.h>
-#include <mcld/LD/RegionFragment.h>
-#include <mcld/MC/MCLDInfo.h>
-#include <mcld/MC/MCLDOutput.h>
-#include <mcld/MC/MCLinker.h>
+#include <mcld/IRBuilder.h>
+#include <mcld/LinkerConfig.h>
+#include <mcld/Fragment/FillFragment.h>
+#include <mcld/Fragment/AlignFragment.h>
+#include <mcld/Fragment/RegionFragment.h>
+#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Support/TargetRegistry.h>
+#include <mcld/Fragment/Stub.h>
+#include <mcld/LD/BranchIslandFactory.h>
+#include <mcld/LD/StubFactory.h>
+#include <mcld/Object/ObjectBuilder.h>
+#include <mcld/Fragment/NullFragment.h>
+#include <mcld/LD/LDContext.h>
 
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // ARMGNULDBackend
 //===----------------------------------------------------------------------===//
-ARMGNULDBackend::ARMGNULDBackend()
-  : m_pRelocFactory(NULL),
+ARMGNULDBackend::ARMGNULDBackend(const LinkerConfig& pConfig)
+  : GNULDBackend(pConfig),
+    m_pRelocFactory(NULL),
     m_pGOT(NULL),
     m_pPLT(NULL),
     m_pRelDyn(NULL),
     m_pRelPLT(NULL),
     m_pDynamic(NULL),
     m_pGOTSymbol(NULL),
+    m_pEXIDXStart(NULL),
+    m_pEXIDXEnd(NULL),
     m_pEXIDX(NULL),
     m_pEXTAB(NULL),
     m_pAttributes(NULL) {
@@ -49,25 +62,19 @@ ARMGNULDBackend::ARMGNULDBackend()
 
 ARMGNULDBackend::~ARMGNULDBackend()
 {
-  if (NULL != m_pRelocFactory)
-    delete m_pRelocFactory;
-  if (NULL != m_pGOT)
-    delete m_pGOT;
-  if (NULL != m_pPLT)
-    delete m_pPLT;
-  if (NULL != m_pRelDyn)
-    delete m_pRelDyn;
-  if (NULL != m_pRelPLT)
-    delete m_pRelPLT;
-  if (NULL != m_pDynamic)
-    delete m_pDynamic;
+  delete m_pRelocFactory;
+  delete m_pGOT;
+  delete m_pPLT;
+  delete m_pRelDyn;
+  delete m_pRelPLT;
+  delete m_pDynamic;
 }
 
-bool ARMGNULDBackend::initRelocFactory(const MCLinker& pLinker)
+bool ARMGNULDBackend::initRelocFactory(const FragmentLinker& pLinker)
 {
   if (NULL == m_pRelocFactory) {
     m_pRelocFactory = new ARMRelocationFactory(1024, *this);
-    m_pRelocFactory->setLayout(pLinker.getLayout());
+    m_pRelocFactory->setFragmentLinker(pLinker);
   }
   return true;
 }
@@ -78,41 +85,58 @@ RelocationFactory* ARMGNULDBackend::getRelocFactory()
   return m_pRelocFactory;
 }
 
-bool ARMGNULDBackend::initTargetSectionMap(SectionMap& pSectionMap)
-{
-  if (!pSectionMap.push_back(".ARM.exidx", ".ARM.exidx") ||
-      !pSectionMap.push_back(".ARM.extab", ".ARM.extab") ||
-      !pSectionMap.push_back(".ARM.attributes", ".ARM.attributes"))
-    return false;
-  return true;
-}
-
-void ARMGNULDBackend::initTargetSections(MCLinker& pLinker)
+void ARMGNULDBackend::initTargetSections(Module& pModule, ObjectBuilder& pBuilder)
 {
  // FIXME: Currently we set exidx and extab to "Exception" and directly emit
  // them from input
-  m_pEXIDX        = &pLinker.getOrCreateOutputSectHdr(".ARM.exidx",
-                                                      LDFileFormat::Target,
-                                                      llvm::ELF::SHT_ARM_EXIDX,
-                                                      llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_LINK_ORDER,
-                                                      bitclass() / 8);
-  m_pEXTAB        = &pLinker.getOrCreateOutputSectHdr(".ARM.extab",
-                                                      LDFileFormat::Target,
-                                                      llvm::ELF::SHT_PROGBITS,
-                                                      llvm::ELF::SHF_ALLOC,
-                                                      0x1);
-  m_pAttributes   = &pLinker.getOrCreateOutputSectHdr(".ARM.attributes",
-                                                      LDFileFormat::Target,
-                                                      llvm::ELF::SHT_ARM_ATTRIBUTES,
-                                                      0x0,
-                                                      0x1);
+  m_pEXIDX        = pBuilder.CreateSection(".ARM.exidx",
+                                           LDFileFormat::Target,
+                                           llvm::ELF::SHT_ARM_EXIDX,
+                                           llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_LINK_ORDER,
+                                           bitclass() / 8);
+  m_pEXTAB        = pBuilder.CreateSection(".ARM.extab",
+                                           LDFileFormat::Target,
+                                           llvm::ELF::SHT_PROGBITS,
+                                           llvm::ELF::SHF_ALLOC,
+                                           0x1);
+  m_pAttributes   = pBuilder.CreateSection(".ARM.attributes",
+                                           LDFileFormat::Target,
+                                           llvm::ELF::SHT_ARM_ATTRIBUTES,
+                                           0x0,
+                                           0x1);
+
+  if (LinkerConfig::Object != config().codeGenType()) {
+    ELFFileFormat* file_format = getOutputFormat();
+
+    // initialize .got
+    LDSection& got = file_format->getGOT();
+    m_pGOT = new ARMGOT(got);
+
+    // initialize .plt
+    LDSection& plt = file_format->getPLT();
+    m_pPLT = new ARMPLT(plt, *m_pGOT);
+
+    // initialize .rel.plt
+    LDSection& relplt = file_format->getRelPlt();
+    relplt.setLink(&plt);
+    // create SectionData and ARMRelDynSection
+    m_pRelPLT = new OutputRelocSection(pModule,
+                                       relplt,
+                                       getRelEntrySize());
+
+    // initialize .rel.dyn
+    LDSection& reldyn = file_format->getRelDyn();
+    m_pRelDyn = new OutputRelocSection(pModule,
+                                       reldyn,
+                                       getRelEntrySize());
+  }
 }
 
-void ARMGNULDBackend::initTargetSymbols(MCLinker& pLinker, const Output& pOutput)
+void ARMGNULDBackend::initTargetSymbols(FragmentLinker& pLinker)
 {
   // Define the symbol _GLOBAL_OFFSET_TABLE_ if there is a symbol with the
   // same name in input
-  m_pGOTSymbol = pLinker.defineSymbol<MCLinker::AsRefered, MCLinker::Resolve>(
+  m_pGOTSymbol = pLinker.defineSymbol<FragmentLinker::AsRefered, FragmentLinker::Resolve>(
                    "_GLOBAL_OFFSET_TABLE_",
                    false,
                    ResolveInfo::Object,
@@ -120,25 +144,76 @@ void ARMGNULDBackend::initTargetSymbols(MCLinker& pLinker, const Output& pOutput
                    ResolveInfo::Local,
                    0x0,  // size
                    0x0,  // value
-                   NULL, // FragRef
+                   FragmentRef::Null(), // FragRef
                    ResolveInfo::Hidden);
+
+  FragmentRef* exidx_start = NULL;
+  FragmentRef* exidx_end = NULL;
+  ResolveInfo::Desc desc = ResolveInfo::Undefined;
+  if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size()) {
+    exidx_start = FragmentRef::Create(m_pEXIDX->getSectionData()->front(), 0x0);
+    exidx_end = FragmentRef::Create(m_pEXIDX->getSectionData()->back(), 0x0);
+    desc = ResolveInfo::Define;
+  }
+  else {
+    exidx_start = FragmentRef::Null();
+    exidx_end = FragmentRef::Null();
+  }
+  m_pEXIDXStart =
+    pLinker.defineSymbol<FragmentLinker::Force,
+                         FragmentLinker::Resolve>("__exidx_start",
+                                                  false,
+                                                  ResolveInfo::NoType,
+                                                  desc, // ResolveInfo::Desc
+                                                  ResolveInfo::Global,
+                                                  0x0,  // size
+                                                  0x0,  // value
+                                                  exidx_start, // FragRef
+                                                  ResolveInfo::Hidden);
+
+  m_pEXIDXEnd =
+    pLinker.defineSymbol<FragmentLinker::Force,
+                         FragmentLinker::Resolve>("__exidx_end",
+                                                  false,
+                                                  ResolveInfo::NoType,
+                                                  desc, //ResolveInfo::Desc
+                                                  ResolveInfo::Global,
+                                                  0x0,  // size
+                                                  0x0,  // value
+                                                  exidx_end, // FragRef
+                                                  ResolveInfo::Hidden);
 }
 
-void ARMGNULDBackend::doPreLayout(const Output& pOutput,
-                                  const MCLDInfo& pInfo,
-                                  MCLinker& pLinker)
+void ARMGNULDBackend::doPreLayout(FragmentLinker& pLinker)
 {
-  // when building shared object, the .got section is must.
-  if (pOutput.type() == Output::DynObj && (NULL == m_pGOT)) {
-      createARMGOT(pLinker, pOutput);
+  // set .got size
+  // when building shared object, the .got section is must
+  if (LinkerConfig::Object != config().codeGenType()) {
+    if (LinkerConfig::DynObj == config().codeGenType() ||
+        m_pGOT->hasGOT1() ||
+        NULL != m_pGOTSymbol) {
+      m_pGOT->finalizeSectionSize();
+      defineGOTSymbol(pLinker);
+    }
+
+    // set .plt size
+    if (m_pPLT->hasPLT1())
+      m_pPLT->finalizeSectionSize();
+
+    // set .rel.dyn size
+    if (!m_pRelDyn->empty())
+      m_pRelDyn->finalizeSectionSize();
+
+    // set .rel.plt size
+    if (!m_pRelPLT->empty())
+      m_pRelPLT->finalizeSectionSize();
   }
 }
 
-void ARMGNULDBackend::doPostLayout(const Output& pOutput,
-                                   const MCLDInfo& pInfo,
-                                   MCLinker& pLinker)
+void ARMGNULDBackend::doPostLayout(Module& pModule,
+                                   FragmentLinker& pLinker)
 {
-  const ELFFileFormat *file_format = getOutputFormat(pOutput);
+  const ELFFileFormat *file_format = getOutputFormat();
 
   // apply PLT
   if (file_format->hasPLT()) {
@@ -153,7 +228,7 @@ void ARMGNULDBackend::doPostLayout(const Output& pOutput,
   if (file_format->hasGOT()) {
     // Since we already have the size of GOT, m_pGOT should not be NULL.
     assert(NULL != m_pGOT);
-    if (pOutput.type() == Output::DynObj)
+    if (LinkerConfig::DynObj == config().codeGenType())
       m_pGOT->applyGOT0(file_format->getDynamic().addr());
     else {
       // executable file and object file? should fill with zero.
@@ -180,17 +255,11 @@ const ARMELFDynamic& ARMGNULDBackend::dynamic() const
   return *m_pDynamic;
 }
 
-void ARMGNULDBackend::createARMGOT(MCLinker& pLinker, const Output& pOutput)
+void ARMGNULDBackend::defineGOTSymbol(FragmentLinker& pLinker)
 {
-  // get .got LDSection and create SectionData
-  ELFFileFormat* file_format = getOutputFormat(pOutput);
-
-  LDSection& got = file_format->getGOT();
-  m_pGOT = new ARMGOT(got, pLinker.getOrCreateSectData(got));
-
   // define symbol _GLOBAL_OFFSET_TABLE_ when .got create
   if (m_pGOTSymbol != NULL) {
-    pLinker.defineSymbol<MCLinker::Force, MCLinker::Unresolve>(
+    pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Unresolve>(
                      "_GLOBAL_OFFSET_TABLE_",
                      false,
                      ResolveInfo::Object,
@@ -198,11 +267,11 @@ void ARMGNULDBackend::createARMGOT(MCLinker& pLinker, const Output& pOutput)
                      ResolveInfo::Local,
                      0x0, // size
                      0x0, // value
-                     pLinker.getLayout().getFragmentRef(*(m_pGOT->begin()), 0x0),
+                     FragmentRef::Create(*(m_pGOT->begin()), 0x0),
                      ResolveInfo::Hidden);
   }
   else {
-    m_pGOTSymbol = pLinker.defineSymbol<MCLinker::Force, MCLinker::Resolve>(
+    m_pGOTSymbol = pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Resolve>(
                      "_GLOBAL_OFFSET_TABLE_",
                      false,
                      ResolveInfo::Object,
@@ -210,80 +279,44 @@ void ARMGNULDBackend::createARMGOT(MCLinker& pLinker, const Output& pOutput)
                      ResolveInfo::Local,
                      0x0, // size
                      0x0, // value
-                     pLinker.getLayout().getFragmentRef(*(m_pGOT->begin()), 0x0),
+                     FragmentRef::Create(*(m_pGOT->begin()), 0x0),
                      ResolveInfo::Hidden);
   }
 
-}
-
-void ARMGNULDBackend::createARMPLTandRelPLT(MCLinker& pLinker,
-                                            const Output& pOutput)
-{
-  ELFFileFormat* file_format = getOutputFormat(pOutput);
-
-  // get .plt and .rel.plt LDSection
-  LDSection& plt = file_format->getPLT();
-  LDSection& relplt = file_format->getRelPlt();
-  // create SectionData and ARMPLT
-  m_pPLT = new ARMPLT(plt, pLinker.getOrCreateSectData(plt), *m_pGOT);
-  // set info of .rel.plt to .plt
-  relplt.setLink(&plt);
-  // create SectionData and ARMRelDynSection
-  m_pRelPLT = new OutputRelocSection(relplt,
-                                     pLinker.getOrCreateSectData(relplt),
-                                     8);
-}
-
-void ARMGNULDBackend::createARMRelDyn(MCLinker& pLinker,
-                                      const Output& pOutput)
-{
-  ELFFileFormat* file_format = getOutputFormat(pOutput);
-
-  // get .rel.dyn LDSection and create SectionData
-  LDSection& reldyn = file_format->getRelDyn();
-  // create SectionData and ARMRelDynSection
-  m_pRelDyn = new OutputRelocSection(reldyn,
-                                     pLinker.getOrCreateSectData(reldyn),
-                                     8);
 }
 
 void ARMGNULDBackend::addCopyReloc(ResolveInfo& pSym)
 {
-  bool exist;
-  Relocation& rel_entry = *m_pRelDyn->getEntry(pSym, false, exist);
+  Relocation& rel_entry = *m_pRelDyn->consumeEntry();
   rel_entry.setType(llvm::ELF::R_ARM_COPY);
   assert(pSym.outSymbol()->hasFragRef());
   rel_entry.targetRef().assign(*pSym.outSymbol()->fragRef());
   rel_entry.setSymInfo(&pSym);
 }
 
-LDSymbol& ARMGNULDBackend::defineSymbolforCopyReloc(MCLinker& pLinker,
-                                                    const ResolveInfo& pSym)
+/// defineSymbolForCopyReloc
+/// For a symbol needing copy relocation, define a copy symbol in the BSS
+/// section and all other reference to this symbol should refer to this
+/// copy.
+/// This is executed at scan relocation stage.
+LDSymbol&
+ARMGNULDBackend::defineSymbolforCopyReloc(FragmentLinker& pLinker,
+                                          const ResolveInfo& pSym)
 {
-  // For a symbol needing copy relocation, define a copy symbol in the BSS
-  // section and all other reference to this symbol should refer to this
-  // copy.
-
   // get or create corresponding BSS LDSection
   LDSection* bss_sect_hdr = NULL;
-  if (ResolveInfo::ThreadLocal == pSym.type()) {
-    bss_sect_hdr = &pLinker.getOrCreateOutputSectHdr(
-                                   ".tbss",
-                                   LDFileFormat::BSS,
-                                   llvm::ELF::SHT_NOBITS,
-                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
-  }
-  else {
-    bss_sect_hdr = &pLinker.getOrCreateOutputSectHdr(".bss",
-                                   LDFileFormat::BSS,
-                                   llvm::ELF::SHT_NOBITS,
-                                   llvm::ELF::SHF_WRITE | llvm::ELF::SHF_ALLOC);
-  }
+  ELFFileFormat* file_format = getOutputFormat();
+  if (ResolveInfo::ThreadLocal == pSym.type())
+    bss_sect_hdr = &file_format->getTBSS();
+  else
+    bss_sect_hdr = &file_format->getBSS();
 
   // get or create corresponding BSS SectionData
-  assert(NULL != bss_sect_hdr);
-  SectionData& bss_section = pLinker.getOrCreateSectData(
-                                     *bss_sect_hdr);
+  SectionData* bss_data = NULL;
+  if (bss_sect_hdr->hasSectionData())
+    bss_data = bss_sect_hdr->getSectionData();
+  else
+    bss_data = IRBuilder::CreateSectionData(*bss_sect_hdr);
 
   // Determine the alignment by the symbol value
   // FIXME: here we use the largest alignment
@@ -291,9 +324,9 @@ LDSymbol& ARMGNULDBackend::defineSymbolforCopyReloc(MCLinker& pLinker,
 
   // allocate space in BSS for the copy symbol
   Fragment* frag = new FillFragment(0x0, 1, pSym.size());
-  uint64_t size = pLinker.getLayout().appendFragment(*frag,
-                                                     bss_section,
-                                                     addralign);
+  uint64_t size = ObjectBuilder::AppendFragment(*frag,
+                                                *bss_data,
+                                                addralign);
   bss_sect_hdr->setSize(bss_sect_hdr->size() + size);
 
   // change symbol binding to Global if it's a weak symbol
@@ -302,7 +335,7 @@ LDSymbol& ARMGNULDBackend::defineSymbolforCopyReloc(MCLinker& pLinker,
     binding = ResolveInfo::Global;
 
   // Define the copy symbol in the bss section and resolve it
-  LDSymbol* cpy_sym = pLinker.defineSymbol<MCLinker::Force, MCLinker::Resolve>(
+  LDSymbol* cpy_sym = pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Resolve>(
                       pSym.name(),
                       false,
                       (ResolveInfo::Type)pSym.type(),
@@ -310,7 +343,7 @@ LDSymbol& ARMGNULDBackend::defineSymbolforCopyReloc(MCLinker& pLinker,
                       binding,
                       pSym.size(),  // size
                       0x0,          // value
-                      pLinker.getLayout().getFragmentRef(*frag, 0x0),
+                      FragmentRef::Create(*frag, 0x0),
                       (ResolveInfo::Visibility)pSym.other());
 
   return *cpy_sym;
@@ -319,11 +352,10 @@ LDSymbol& ARMGNULDBackend::defineSymbolforCopyReloc(MCLinker& pLinker,
 /// checkValidReloc - When we attempt to generate a dynamic relocation for
 /// ouput file, check if the relocation is supported by dynamic linker.
 void ARMGNULDBackend::checkValidReloc(Relocation& pReloc,
-                                      const MCLDInfo& pLDInfo,
-                                      const Output& pOutput) const
+                                      const FragmentLinker& pLinker) const
 {
-  // If not building a PIC object, no relocation type is invalid
-  if (!isOutputPIC(pOutput, pLDInfo))
+  // If not PIC object, no relocation type is invalid
+  if (!pLinker.isOutputPIC())
     return;
 
   switch(pReloc.type()) {
@@ -346,27 +378,11 @@ void ARMGNULDBackend::checkValidReloc(Relocation& pReloc,
   }
 }
 
-void ARMGNULDBackend::updateAddend(Relocation& pReloc,
-                                   const LDSymbol& pInputSym,
-                                   const Layout& pLayout) const
-{
-  // Update value keep in addend if we meet a section symbol
-  if (pReloc.symInfo()->type() == ResolveInfo::Section) {
-    pReloc.setAddend(pLayout.getOutputOffset(
-                     *pInputSym.fragRef()) + pReloc.addend());
-  }
-}
-
 void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
-                                     const LDSymbol& pInputSym,
-                                     MCLinker& pLinker,
-                                     const MCLDInfo& pLDInfo,
-                                     const Output& pOutput)
+                                     FragmentLinker& pLinker)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
-
-  updateAddend(pReloc, pInputSym, pLinker.getLayout());
 
   switch(pReloc.type()){
 
@@ -381,10 +397,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
       // If buiding PIC object (shared library or PIC executable),
       // a dynamic relocations with RELATIVE type to this location is needed.
       // Reserve an entry in .rel.dyn
-      if (isOutputPIC(pOutput, pLDInfo)) {
-        //create .rel.dyn section if not exist
-        if (NULL == m_pRelDyn)
-          createARMRelDyn(pLinker, pOutput);
+      if (pLinker.isOutputPIC()) {
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
         // set Rel bit
         rsym->setReserved(rsym->reserved() | ReserveRel);
@@ -402,7 +415,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_THM_MOVW_ABS_NC:
     case llvm::ELF::R_ARM_THM_MOVT_ABS: {
       // PIC code should not contain these kinds of relocation
-      if (isOutputPIC(pOutput, pLDInfo)) {
+      if (pLinker.isOutputPIC()) {
         error(diag::non_pic_relocation) << (int)pReloc.type()
                                         << pReloc.symInfo()->name();
       }
@@ -410,9 +423,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
     }
     case llvm::ELF::R_ARM_GOTOFF32:
     case llvm::ELF::R_ARM_GOTOFF12: {
-      // A GOT section is needed
-      if (NULL == m_pGOT)
-        createARMGOT(pLinker, pOutput);
+      // FIXME: A GOT section is needed
       return;
     }
 
@@ -427,16 +438,12 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
       // return if we already create GOT for this symbol
       if (rsym->reserved() & (ReserveGOT | GOTRel))
         return;
-      if (NULL == m_pGOT)
-        createARMGOT(pLinker, pOutput);
-      m_pGOT->reserveEntry();
+      m_pGOT->reserveGOT();
       // If building PIC object, a dynamic relocation with
       // type RELATIVE is needed to relocate this GOT entry.
       // Reserve an entry in .rel.dyn
-      if (isOutputPIC(pOutput, pLDInfo)) {
+      if (pLinker.isOutputPIC()) {
         // create .rel.dyn section if not exist
-        if (NULL == m_pRelDyn)
-          createARMRelDyn(pLinker, pOutput);
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
         // set GOTRel bit
         rsym->setReserved(rsym->reserved() | 0x4u);
@@ -471,10 +478,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
 }
 
 void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
-                                      const LDSymbol& pInputSym,
-                                      MCLinker& pLinker,
-                                      const MCLDInfo& pLDInfo,
-                                      const Output& pOutput)
+                                      FragmentLinker& pLinker)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
@@ -500,15 +504,9 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_ABS32_NOI: {
       // Absolute relocation type, symbol may needs PLT entry or
       // dynamic relocation entry
-      if (symbolNeedsPLT(*rsym, pLDInfo, pOutput)) {
+      if (symbolNeedsPLT(pLinker, *rsym)) {
         // create plt for this symbol if it does not have one
         if (!(rsym->reserved() & ReservePLT)){
-          // Create .got section if it doesn't exist
-          if (NULL == m_pGOT)
-            createARMGOT(pLinker, pOutput);
-          // create .plt and .rel.plt if not exist
-          if (NULL == m_pPLT)
-            createARMPLTandRelPLT(pLinker, pOutput);
           // Symbol needs PLT entry, we need to reserve a PLT entry
           // and the corresponding GOT and dynamic relocation entry
           // in .got and .rel.plt. (GOT entry will be reserved simultaneously
@@ -520,20 +518,16 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
         }
       }
 
-      if (symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT),
-                            pLDInfo, pOutput, true)) {
+      if (symbolNeedsDynRel(
+                      pLinker, *rsym, (rsym->reserved() & ReservePLT), true)) {
         // symbol needs dynamic relocation entry, reserve an entry in .rel.dyn
-        // create .rel.dyn section if not exist
-        if (NULL == m_pRelDyn)
-          createARMRelDyn(pLinker, pOutput);
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
-        if (symbolNeedsCopyReloc(pLinker.getLayout(), pReloc, *rsym, pLDInfo,
-                          pOutput)) {
+        if (symbolNeedsCopyReloc(pLinker, pReloc, *rsym)) {
           LDSymbol& cpy_sym = defineSymbolforCopyReloc(pLinker, *rsym);
           addCopyReloc(*cpy_sym.resolveInfo());
         }
         else {
-          checkValidReloc(pReloc, pLDInfo, pOutput);
+          checkValidReloc(pReloc, pLinker);
           // set Rel bit
           rsym->setReserved(rsym->reserved() | ReserveRel);
         }
@@ -543,9 +537,7 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
 
     case llvm::ELF::R_ARM_GOTOFF32:
     case llvm::ELF::R_ARM_GOTOFF12: {
-      // A GOT section is needed
-      if (NULL == m_pGOT)
-        createARMGOT(pLinker, pOutput);
+      // FIXME: A GOT section is needed
       return;
     }
 
@@ -601,20 +593,16 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_MOVT_BREL:
     case llvm::ELF::R_ARM_MOVW_BREL: {
       // Relative addressing relocation, may needs dynamic relocation
-      if (symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT),
-                            pLDInfo, pOutput, false)) {
+      if (symbolNeedsDynRel(
+                     pLinker, *rsym, (rsym->reserved() & ReservePLT), false)) {
         // symbol needs dynamic relocation entry, reserve an entry in .rel.dyn
-        // create .rel.dyn section if not exist
-        if (NULL == m_pRelDyn)
-          createARMRelDyn(pLinker, pOutput);
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
-        if (symbolNeedsCopyReloc(pLinker.getLayout(), pReloc, *rsym, pLDInfo,
-                          pOutput)) {
+        if (symbolNeedsCopyReloc(pLinker, pReloc, *rsym)) {
           LDSymbol& cpy_sym = defineSymbolforCopyReloc(pLinker, *rsym);
           addCopyReloc(*cpy_sym.resolveInfo());
         }
         else {
-          checkValidReloc(pReloc, pLDInfo, pOutput);
+          checkValidReloc(pReloc, pLinker);
           // set Rel bit
           rsym->setReserved(rsym->reserved() | ReserveRel);
         }
@@ -640,20 +628,17 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
       if (rsym->reserved() & ReservePLT)
         return;
 
+      // if the symbol's value can be decided at link time, then no need plt
+      if (symbolFinalValueIsKnown(pLinker, *rsym))
+        return;
+
       // if symbol is defined in the ouput file and it's not
       // preemptible, no need plt
       if (rsym->isDefine() && !rsym->isDyn() &&
-         !isSymbolPreemptible(*rsym, pLDInfo, pOutput)) {
+          !isSymbolPreemptible(*rsym)) {
         return;
       }
 
-      // Create .got section if it doesn't exist
-      if (NULL == m_pGOT)
-        createARMGOT(pLinker, pOutput);
-
-      // create .plt and .rel.plt if not exist
-      if (NULL == m_pPLT)
-         createARMPLTandRelPLT(pLinker, pOutput);
       // Symbol needs PLT entry, we need to reserve a PLT entry
       // and the corresponding GOT and dynamic relocation entry
       // in .got and .rel.plt. (GOT entry will be reserved simultaneously
@@ -677,16 +662,10 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
       // return if we already create GOT for this symbol
       if (rsym->reserved() & (ReserveGOT | GOTRel))
         return;
-      if (NULL == m_pGOT)
-        createARMGOT(pLinker, pOutput);
-      m_pGOT->reserveEntry();
-      // If building shared object or the symbol is undefined, a dynamic
-      // relocation is needed to relocate this GOT entry. Reserve an
-      // entry in .rel.dyn
-      if (Output::DynObj == pOutput.type() || rsym->isUndef() || rsym->isDyn()) {
-        // create .rel.dyn section if not exist
-        if (NULL == m_pRelDyn)
-          createARMRelDyn(pLinker, pOutput);
+      m_pGOT->reserveGOT();
+      // if the symbol cannot be fully resolved at link time, then we need a
+      // dynamic relocation
+      if (!symbolFinalValueIsKnown(pLinker, *rsym)) {
         m_pRelDyn->reserveEntry(*m_pRelocFactory);
         // set GOTRel bit
         rsym->setReserved(rsym->reserved() | GOTRel);
@@ -713,56 +692,47 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
 }
 
 void ARMGNULDBackend::scanRelocation(Relocation& pReloc,
-                                     const LDSymbol& pInputSym,
-                                     MCLinker& pLinker,
-                                     const MCLDInfo& pLDInfo,
-                                     const Output& pOutput,
+                                     FragmentLinker& pLinker,
+                                     Module& pModule,
                                      const LDSection& pSection)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   assert(NULL != rsym && "ResolveInfo of relocation not set while scanRelocation");
 
-  assert(NULL != pSection.getLink());
-  if (0 == (pSection.getLink()->flag() & llvm::ELF::SHF_ALLOC)) {
-    if (rsym->isLocal()) {
-      updateAddend(pReloc, pInputSym, pLinker.getLayout());
-    }
+  pReloc.updateAddend();
+  if (0 == (pSection.flag() & llvm::ELF::SHF_ALLOC))
     return;
-  }
 
   // Scan relocation type to determine if an GOT/PLT/Dynamic Relocation
   // entries should be created.
-  // FIXME: Below judgements concern only .so is generated as output
   // FIXME: Below judgements concern nothing about TLS related relocation
-
-  // A refernece to symbol _GLOBAL_OFFSET_TABLE_ implies that a .got section
-  // is needed
-  if (NULL == m_pGOT && NULL != m_pGOTSymbol) {
-    if (rsym == m_pGOTSymbol->resolveInfo()) {
-      createARMGOT(pLinker, pOutput);
-    }
-  }
 
   // rsym is local
   if (rsym->isLocal())
-    scanLocalReloc(pReloc, pInputSym, pLinker, pLDInfo, pOutput);
+    scanLocalReloc(pReloc, pLinker);
 
   // rsym is external
   else
-    scanGlobalReloc(pReloc, pInputSym, pLinker, pLDInfo, pOutput);
+    scanGlobalReloc(pReloc, pLinker);
 
+  // check if we shoule issue undefined reference for the relocation target
+  // symbol
+  if (rsym->isUndef() && !rsym->isDyn() && !rsym->isWeak())
+    fatal(diag::undefined_reference) << rsym->name();
+
+  if ((rsym->reserved() & ReserveRel) != 0x0) {
+    // set hasTextRelSection if needed
+    checkAndSetHasTextRel(pSection);
+  }
 }
 
-uint64_t ARMGNULDBackend::emitSectionData(const Output& pOutput,
-                                          const LDSection& pSection,
-                                          const MCLDInfo& pInfo,
-                                          const Layout& pLayout,
+uint64_t ARMGNULDBackend::emitSectionData(const LDSection& pSection,
                                           MemoryRegion& pRegion) const
 {
   assert(pRegion.size() && "Size of MemoryRegion is zero!");
 
-  const ELFFileFormat* file_format = getOutputFormat(pOutput);
+  const ELFFileFormat* file_format = getOutputFormat();
 
   if (&pSection == m_pAttributes ||
       &pSection == m_pEXIDX ||
@@ -773,8 +743,19 @@ uint64_t ARMGNULDBackend::emitSectionData(const Output& pOutput,
     SectionData::const_iterator frag_iter, frag_end = sect_data->end();
     uint8_t* out_offset = pRegion.start();
     for (frag_iter = sect_data->begin(); frag_iter != frag_end; ++frag_iter) {
-      size_t size = computeFragmentSize(pLayout, *frag_iter);
+      size_t size = frag_iter->size();
       switch(frag_iter->getKind()) {
+        case Fragment::Fillment: {
+          const FillFragment& fill_frag =
+            llvm::cast<FillFragment>(*frag_iter);
+          if (0 == fill_frag.getValueSize()) {
+            // virtual fillment, ignore it.
+            break;
+          }
+
+          memset(out_offset, fill_frag.getValue(), fill_frag.size());
+          break;
+        }
         case Fragment::Region: {
           const RegionFragment& region_frag =
             llvm::cast<RegionFragment>(*frag_iter);
@@ -794,6 +775,10 @@ uint64_t ARMGNULDBackend::emitSectionData(const Output& pOutput,
                 "unsupported value size for align fragment emission yet.\n");
               break;
           } // end switch
+          break;
+        }
+        case Fragment::Null: {
+          assert(0x0 == size);
           break;
         }
         default:
@@ -823,48 +808,63 @@ uint64_t ARMGNULDBackend::emitSectionData(const Output& pOutput,
 }
 
 /// finalizeSymbol - finalize the symbol value
-bool ARMGNULDBackend::finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput)
+bool ARMGNULDBackend::finalizeTargetSymbols(FragmentLinker& pLinker)
 {
+  if (NULL != m_pEXIDXStart) {
+    if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size())
+      m_pEXIDXStart->setValue(m_pEXIDX->addr());
+  }
+
+  if (NULL != m_pEXIDXEnd) {
+    if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size())
+      m_pEXIDXEnd->setValue(m_pEXIDX->addr() + m_pEXIDX->size());
+  }
   return true;
 }
 
-bool ARMGNULDBackend::readSection(Input& pInput,
-                                  MCLinker& pLinker,
-                                  LDSection& pInputSectHdr)
+bool ARMGNULDBackend::mergeSection(Module& pModule, LDSection& pSection)
 {
-  LDSection& out_sect = pLinker.getOrCreateOutputSectHdr(pInputSectHdr.name(),
-                                                         pInputSectHdr.kind(),
-                                                         pInputSectHdr.type(),
-                                                         pInputSectHdr.flag());
-  // FIXME: (Luba)
-  // Handle ARM attributes in the right way.
-  // In current milestone, MCLinker goes through the shortcut.
-  // It reads input's ARM attributes and copies the first ARM attributes
-  // into the output file. The correct way is merge these sections, not
-  // just copy.
-  if ((0 == out_sect.name().compare(".ARM.attributes")) &&
-      (0 != out_sect.size()))
-    return true;
+  switch (pSection.type()) {
+    case llvm::ELF::SHT_ARM_ATTRIBUTES: {
+      // FIXME: (Luba)
+      // Handle ARM attributes in the right way.
+      // In current milestone, FragmentLinker goes through the shortcut.
+      // It reads input's ARM attributes and copies the first ARM attributes
+      // into the output file. The correct way is merge these sections, not
+      // just copy.
+      if (0 != m_pAttributes->size())
+        return true;
 
-  MemoryRegion* region = pInput.memArea()->request(
-          pInput.fileOffset() + pInputSectHdr.offset(), pInputSectHdr.size());
+      // First time we meet a ARM attributes section.
+      SectionData* sd = IRBuilder::CreateSectionData(*m_pAttributes);
+      ObjectBuilder::MoveSectionData(*pSection.getSectionData(), *sd);
+      return true;
+    }
+    default: {
+      ObjectBuilder builder(config(), pModule);
+      return builder.MergeSection(pSection);
+    }
+  } // end of switch
+  return true;
+}
 
-  SectionData& sect_data = pLinker.getOrCreateSectData(pInputSectHdr);
-
+bool ARMGNULDBackend::readSection(Input& pInput, SectionData& pSD)
+{
   Fragment* frag = NULL;
+  uint32_t offset = pInput.fileOffset() + pSD.getSection().offset();
+  uint32_t size = pSD.getSection().size();
+
+  MemoryRegion* region = pInput.memArea()->request(offset, size);
   if (NULL == region) {
     // If the input section's size is zero, we got a NULL region.
     // use a virtual fill fragment
     frag = new FillFragment(0x0, 0, 0);
   }
-  else
+  else {
     frag = new RegionFragment(*region);
+  }
 
-  uint64_t size = pLinker.getLayout().appendFragment(*frag,
-                                                     sect_data,
-                                                     pInputSectHdr.align());
-
-  out_sect.setSize(out_sect.size() + size);
+  ObjectBuilder::AppendFragment(*frag, pSD);
   return true;
 }
 
@@ -917,14 +917,12 @@ const OutputRelocSection& ARMGNULDBackend::getRelPLT() const
 }
 
 unsigned int
-ARMGNULDBackend::getTargetSectionOrder(const Output& pOutput,
-                                       const LDSection& pSectHdr,
-                                       const MCLDInfo& pInfo) const
+ARMGNULDBackend::getTargetSectionOrder(const LDSection& pSectHdr) const
 {
-  const ELFFileFormat* file_format = getOutputFormat(pOutput);
+  const ELFFileFormat* file_format = getOutputFormat();
 
   if (&pSectHdr == &file_format->getGOT()) {
-    if (pInfo.options().hasNow())
+    if (config().options().hasNow())
       return SHO_RELRO_LAST;
     return SHO_DATA;
   }
@@ -940,16 +938,148 @@ ARMGNULDBackend::getTargetSectionOrder(const Output& pOutput,
   return SHO_UNDEFINED;
 }
 
+/// doRelax
+bool ARMGNULDBackend::doRelax(Module& pModule, FragmentLinker& pLinker, bool& pFinished)
+{
+  assert(NULL != getStubFactory() && NULL != getBRIslandFactory());
+
+  bool isRelaxed = false;
+  ELFFileFormat* file_format = getOutputFormat();
+  // check branch relocs and create the related stubs if needed
+  Module::obj_iterator input, inEnd = pModule.obj_end();
+  for (input = pModule.obj_begin(); input != inEnd; ++input) {
+    LDContext::sect_iterator rs, rsEnd = (*input)->context()->relocSectEnd();
+    for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
+      if (LDFileFormat::Ignore == (*rs)->kind() || !(*rs)->hasRelocData())
+        continue;
+      RelocData::iterator reloc, rEnd = (*rs)->getRelocData()->end();
+      for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
+        Relocation* relocation = llvm::cast<Relocation>(reloc);
+
+        switch (relocation->type()) {
+          case llvm::ELF::R_ARM_CALL:
+          case llvm::ELF::R_ARM_JUMP24:
+          case llvm::ELF::R_ARM_PLT32:
+          case llvm::ELF::R_ARM_THM_CALL:
+          case llvm::ELF::R_ARM_THM_XPC22:
+          case llvm::ELF::R_ARM_THM_JUMP24:
+          case llvm::ELF::R_ARM_THM_JUMP19:
+          case llvm::ELF::R_ARM_V4BX: {
+            // calculate the possible symbol value
+            uint64_t sym_value = 0x0;
+            LDSymbol* symbol = relocation->symInfo()->outSymbol();
+            if (symbol->hasFragRef()) {
+              uint64_t value = symbol->fragRef()->getOutputOffset();
+              uint64_t addr =
+                symbol->fragRef()->frag()->getParent()->getSection().addr();
+              sym_value = addr + value;
+            }
+            if (relocation->symInfo()->isGlobal() &&
+                (relocation->symInfo()->reserved() & ReservePLT) != 0x0) {
+              // FIXME: we need to find out the address of the specific plt entry
+              assert(file_format->hasPLT());
+              sym_value = file_format->getPLT().addr();
+            }
+
+            Stub* stub = getStubFactory()->create(*relocation, // relocation
+                                                  sym_value, // symbol value
+                                                  pLinker,
+                                                  *getRelocFactory(),
+                                                  *getBRIslandFactory());
+            if (NULL != stub) {
+              assert(NULL != stub->symInfo());
+              // increase the size of .symtab and .strtab
+              LDSection& symtab = file_format->getSymTab();
+              LDSection& strtab = file_format->getStrTab();
+              if (32 == bitclass())
+                symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf32_Sym));
+              else
+                symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf64_Sym));
+              strtab.setSize(strtab.size() + stub->symInfo()->nameSize() + 1);
+
+              isRelaxed = true;
+            }
+            break;
+          }
+          default:
+            break;
+        } // end of switch
+
+      } // for all relocations
+    } // for all relocation section
+  } // for all inputs
+
+  // find the first fragment w/ invalid offset due to stub insertion
+  Fragment* invalid = NULL;
+  pFinished = true;
+  for (BranchIslandFactory::iterator island = getBRIslandFactory()->begin(),
+       island_end = getBRIslandFactory()->end(); island != island_end; ++island) {
+    if ((*island).end() == file_format->getText().getSectionData()->end())
+      break;
+
+    Fragment* exit = (*island).end();
+    if (((*island).offset() + (*island).size()) > exit->getOffset()) {
+      invalid = exit;
+      pFinished = false;
+      break;
+    }
+  }
+
+  // reset the offset of invalid fragments
+  while (NULL != invalid) {
+    invalid->setOffset(invalid->getPrevNode()->getOffset() +
+                       invalid->getPrevNode()->size());
+    invalid = invalid->getNextNode();
+  }
+
+  // reset the size of .text
+  if (isRelaxed) {
+    file_format->getText().setSize(
+      file_format->getText().getSectionData()->back().getOffset() +
+      file_format->getText().getSectionData()->back().size());
+  }
+  return isRelaxed;
+}
+
+/// initTargetStubs
+bool ARMGNULDBackend::initTargetStubs(FragmentLinker& pLinker)
+{
+  if (NULL != getStubFactory()) {
+    getStubFactory()->addPrototype(new ARMToARMStub(pLinker.isOutputPIC()));
+    getStubFactory()->addPrototype(new ARMToTHMStub(pLinker.isOutputPIC()));
+    getStubFactory()->addPrototype(new THMToTHMStub(pLinker.isOutputPIC()));
+    getStubFactory()->addPrototype(new THMToARMStub(pLinker.isOutputPIC()));
+    return true;
+  }
+  return false;
+}
+
+/// doCreateProgramHdrs - backend can implement this function to create the
+/// target-dependent segments
+void ARMGNULDBackend::doCreateProgramHdrs(Module& pModule,
+                                          const FragmentLinker& pLinker)
+{
+   if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size()) {
+     // make PT_ARM_EXIDX
+     // FIXME: once we have a patch for llvm/Support/ELF.h, we can refine this
+     enum {
+      PT_ARM_EXIDX = 0x70000001
+     };
+     ELFSegment* exidx_seg = elfSegmentTable().produce(PT_ARM_EXIDX,
+                                                       llvm::ELF::PF_R);
+     exidx_seg->addSection(m_pEXIDX);
+   }
+}
+
 namespace mcld {
 
 //===----------------------------------------------------------------------===//
 /// createARMLDBackend - the help funtion to create corresponding ARMLDBackend
 ///
 TargetLDBackend* createARMLDBackend(const llvm::Target& pTarget,
-                                    const std::string& pTriple)
+                                    const LinkerConfig& pConfig)
 {
-  Triple theTriple(pTriple);
-  if (theTriple.isOSDarwin()) {
+  if (pConfig.triple().isOSDarwin()) {
     assert(0 && "MachO linker is not supported yet");
     /**
     return new ARMMachOLDBackend(createARMMachOArchiveReader,
@@ -957,7 +1087,7 @@ TargetLDBackend* createARMLDBackend(const llvm::Target& pTarget,
                                createARMMachOObjectWriter);
     **/
   }
-  if (theTriple.isOSWindows()) {
+  if (pConfig.triple().isOSWindows()) {
     assert(0 && "COFF linker is not supported yet");
     /**
     return new ARMCOFFLDBackend(createARMCOFFArchiveReader,
@@ -965,14 +1095,15 @@ TargetLDBackend* createARMLDBackend(const llvm::Target& pTarget,
                                createARMCOFFObjectWriter);
     **/
   }
-  return new ARMGNULDBackend();
+  return new ARMGNULDBackend(pConfig);
 }
 
 } // namespace of mcld
 
-//=============================
+//===----------------------------------------------------------------------===//
 // Force static initialization.
-extern "C" void LLVMInitializeARMLDBackend() {
+//===----------------------------------------------------------------------===//
+extern "C" void MCLDInitializeARMLDBackend() {
   // Register the linker backend
   mcld::TargetRegistry::RegisterTargetLDBackend(TheARMTarget, createARMLDBackend);
   mcld::TargetRegistry::RegisterTargetLDBackend(TheThumbTarget, createARMLDBackend);

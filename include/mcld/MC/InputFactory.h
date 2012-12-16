@@ -11,13 +11,14 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
-#include "mcld/Support/GCFactory.h"
-#include "mcld/MC/MCLDInput.h"
+#include <mcld/Support/GCFactory.h>
+#include <mcld/MC/MCLDInput.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class AttributeFactory;
+class LinkerConfig;
+class AttributeProxy;
+class AttributeSet;
 
 /** \class InputFactory
  *  \brief InputFactory controls the production and destruction of
@@ -25,9 +26,6 @@ class AttributeFactory;
  *
  *  All MCLDFiles created by MCLDFileFactory are guaranteed to be destructed
  *  while MCLDFileFactory is destructed.
- *
- *  FIXME: the number of the Inputs should be passed in by Target or any
- *  target specific class.
  *
  *  \see llvm::sys::Path
  */
@@ -37,17 +35,24 @@ public:
   typedef GCFactory<Input, 0> Alloc;
 
 public:
-  InputFactory(size_t pNum, AttributeFactory& pAttrFactory);
+  InputFactory(size_t pNum, const LinkerConfig& pConfig);
+
   ~InputFactory();
 
-  // -----  production  ----- //
+  // -----  input  ----- //
   Input* produce(llvm::StringRef pName,
                  const sys::fs::Path& pPath,
                  unsigned int pType = Input::Unknown,
                  off_t pFileOffset = 0);
 
+  // -----  attributes  ----- //
+  /// attr - the last touched attribute.
+  const AttributeProxy& attr() const { return *m_pLast; }
+  AttributeProxy&       attr()       { return *m_pLast; }
+
 private:
-  AttributeFactory &m_AttrFactory;
+  AttributeProxy* m_pLast;
+  AttributeSet* m_pAttrSet;
 };
 
 } // namespace of mcld

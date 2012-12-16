@@ -3,13 +3,14 @@ LOCAL_PATH:= $(call my-dir)
 mcld_x86_target_SRC_FILES := \
   X86Diagnostic.cpp \
   X86ELFDynamic.cpp \
-  X86ELFSectLinker.cpp  \
+  X86ELFMCLinker.cpp \
+  X86Emulation.cpp  \
   X86GOT.cpp  \
   X86GOTPLT.cpp  \
   X86LDBackend.cpp  \
+  X86MCLinker.cpp  \
   X86PLT.cpp  \
   X86RelocationFactory.cpp  \
-  X86SectLinker.cpp \
   X86TargetMachine.cpp
 
 # For the host

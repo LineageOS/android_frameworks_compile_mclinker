@@ -16,11 +16,10 @@
 #include <mcld/ADT/HashTable.h>
 #include <mcld/ADT/StringHash.h>
 #include <mcld/LD/ResolveInfo.h>
-#include <mcld/LD/ResolveInfoFactory.h>
 
-namespace mcld
-{
+namespace mcld {
 
+class Module;
 class Input;
 
 /** \class ObjectReader
@@ -30,18 +29,16 @@ class Input;
 class ObjectReader : public LDReader
 {
 protected:
-  typedef HashTable<ResolveInfo,
-                    StringHash<ELF>,
-                    ResolveInfoFactory> GroupSignatureMap;
+  typedef HashTable<ResolveInfo, StringHash<ELF> > GroupSignatureMap;
 
 protected:
   ObjectReader()
   { }
 
 public:
-  virtual ~ObjectReader() { }
+  virtual ~ObjectReader() { f_GroupSignatureMap.clear(); }
 
-  virtual bool readObject(Input& pFile) = 0;
+  virtual bool readHeader(Input& pFile) = 0;
 
   virtual bool readSymbols(Input& pFile) = 0;
 

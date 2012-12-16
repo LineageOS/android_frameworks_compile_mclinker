@@ -8,31 +8,52 @@
 //===----------------------------------------------------------------------===//
 #include <mcld/Support/raw_ostream.h>
 
+#if defined(HAVE_UNISTD_H)
+# include <unistd.h>
+#endif
+
+#if defined(_MSC_VER)
+#include <io.h>
+#ifndef STDIN_FILENO
+# define STDIN_FILENO 0
+#endif
+#ifndef STDOUT_FILENO
+# define STDOUT_FILENO 1
+#endif
+#ifndef STDERR_FILENO
+# define STDERR_FILENO 2
+#endif
+#endif
+
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // raw_ostream
+//===----------------------------------------------------------------------===//
 mcld::raw_fd_ostream::raw_fd_ostream(const char *pFilename,
-                               std::string &pErrorInfo,
-                               unsigned int pFlags,
-                               const MCLDInfo* pLDInfo)
-  : llvm::raw_fd_ostream(pFilename, pErrorInfo, pFlags), m_pLDInfo(pLDInfo) {
+                                     std::string &pErrorInfo,
+                                     unsigned int pFlags)
+  : llvm::raw_fd_ostream(pFilename, pErrorInfo, pFlags),
+    m_bConfigColor(false),
+    m_bSetColor(false) {
 }
 
 mcld::raw_fd_ostream::raw_fd_ostream(int pFD,
                                bool pShouldClose,
-                               bool pUnbuffered,
-                               const MCLDInfo* pLDInfo)
-  : llvm::raw_fd_ostream(pFD, pShouldClose, pUnbuffered), m_pLDInfo(pLDInfo) {
+                               bool pUnbuffered)
+  : llvm::raw_fd_ostream(pFD, pShouldClose, pUnbuffered),
+    m_bConfigColor(false),
+    m_bSetColor(false) {
 }
 
 mcld::raw_fd_ostream::~raw_fd_ostream()
 {
 }
 
-void mcld::raw_fd_ostream::setLDInfo(const MCLDInfo& pLDInfo)
+void mcld::raw_fd_ostream::setColor(bool pEnable)
 {
-  m_pLDInfo = &pLDInfo;
+  m_bConfigColor = true;
+  m_bSetColor = pEnable;
 }
 
 llvm::raw_ostream &
@@ -52,22 +73,19 @@ llvm::raw_ostream& mcld::raw_fd_ostream::resetColor()
   return llvm::raw_fd_ostream::resetColor();
 }
 
-// FIXME: migrate to newer LLVM
-/**
 llvm::raw_ostream& mcld::raw_fd_ostream::reverseColor()
 {
   if (!is_displayed())
     return *this;
   return llvm::raw_ostream::reverseColor();
 }
-**/
 
 bool mcld::raw_fd_ostream::is_displayed() const
 {
-  if (NULL == m_pLDInfo)
-    return llvm::raw_fd_ostream::is_displayed();
+  if (m_bConfigColor)
+    return m_bSetColor;
 
-  return m_pLDInfo->options().color();
+  return llvm::raw_fd_ostream::is_displayed();
 }
 
 //===----------------------------------------------------------------------===//
@@ -77,19 +95,13 @@ mcld::raw_fd_ostream& mcld::outs() {
   // Set buffer settings to model stdout behavior.
   // Delete the file descriptor when the program exists, forcing error
   // detection. If you don't want this behavior, don't use outs().
-  static mcld::raw_fd_ostream S(STDOUT_FILENO, true, NULL);
+  static mcld::raw_fd_ostream S(STDOUT_FILENO, true);
   return S;
 }
 
 mcld::raw_fd_ostream& mcld::errs() {
   // Set standard error to be unbuffered by default.
-  static mcld::raw_fd_ostream S(STDERR_FILENO, false, true, NULL);
+  static mcld::raw_fd_ostream S(STDERR_FILENO, false, true);
   return S;
-}
-
-void mcld::InitializeOStreams(const MCLDInfo& pLDInfo)
-{
-  outs().setLDInfo(pLDInfo);
-  errs().setLDInfo(pLDInfo);
 }
 

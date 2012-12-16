@@ -12,18 +12,18 @@
 #include <gtest.h>
 #endif
 #include <mcld/Support/GCFactory.h>
-#include <mcld/LD/Relocation.h>
+#include <mcld/Fragment/Relocation.h>
 
-namespace mcld
-{
+namespace mcld {
 
 class LDSymbol;
 class ResolveInfo;
 class FragmentRef;
+class FragmentLinker;
 class Layout;
 class GOT;
 class TargetLDBackend;
-class MCLDInfo;
+class LinkerConfig;
 
 /** \class RelocationFactory
  *  \brief RelocationFactory provides the interface for generating target
@@ -36,6 +36,7 @@ public:
   typedef Relocation::Type Type;
   typedef Relocation::Address Address;
   typedef Relocation::DWord DWord;
+  typedef Relocation::SWord SWord;
 
   enum Result {
     OK,
@@ -51,8 +52,7 @@ public:
   virtual ~RelocationFactory();
 
   /// apply - general apply function
-  virtual Result applyRelocation(Relocation& pRelocation,
-                                 const MCLDInfo& pLDInfo) = 0;
+  virtual Result applyRelocation(Relocation& pRelocation) = 0;
 
   // ----- production ----- //
   /// produce - produce a relocation entry
@@ -69,10 +69,12 @@ public:
 
   void destroy(Relocation* pRelocation);
 
-  void setLayout(const Layout& pLayout);
+  void setFragmentLinker(const FragmentLinker& pLinker);
 
   // ------ observers -----//
-  const Layout& getLayout() const;
+  const FragmentLinker& getFragmentLinker() const;
+
+  bool hasFragmentLinker() const;
 
   virtual TargetLDBackend& getTarget() = 0;
 
@@ -81,7 +83,7 @@ public:
   virtual const char* getName(Type pType) const = 0;
 
 private:
-  const Layout* m_pLayout;
+  const FragmentLinker* m_pLinker;
 
 };
 

@@ -20,10 +20,13 @@ class AsmPrinter;
 } // namespace of llvm
 
 namespace mcld {
-class LLVMTargetMachine;
+
+class Module;
+class LinkerConfig;
+class MemoryArea;
+class MCLDTargetMachine;
 class TargetRegistry;
-class SectLinker;
-class SectLinkerOption;
+class MCLinker;
 class TargetLDBackend;
 class AttributeFactory;
 class InputFactory;
@@ -32,22 +35,25 @@ class DiagnosticLineInfo;
 
 //===----------------------------------------------------------------------===//
 /// Target - mcld::Target is an object adapter of llvm::Target
-///
+//===----------------------------------------------------------------------===//
 class Target
 {
-  friend class mcld::LLVMTargetMachine;
+  friend class mcld::MCLDTargetMachine;
   friend class mcld::TargetRegistry;
 public:
-  typedef mcld::LLVMTargetMachine *(*TargetMachineCtorTy)(const mcld::Target &,
+  typedef mcld::MCLDTargetMachine *(*TargetMachineCtorTy)(const mcld::Target &,
                                                           llvm::TargetMachine &,
                                                           const std::string&);
 
-  typedef SectLinker *(*SectLinkerCtorTy)(const std::string& pTriple,
-                                          SectLinkerOption &,
-                                          TargetLDBackend&);
+  typedef MCLinker *(*MCLinkerCtorTy)(const std::string& pTriple,
+                                      LinkerConfig&,
+                                      Module&,
+                                      MemoryArea& pOutput);
+
+  typedef bool (*EmulationFnTy)(const std::string& pTriple, LinkerConfig&);
 
   typedef TargetLDBackend  *(*TargetLDBackendCtorTy)(const llvm::Target&,
-                                                     const std::string&);
+                                                     const LinkerConfig&);
 
   typedef DiagnosticLineInfo *(*DiagnosticLineInfoCtorTy)(const mcld::Target&,
                                                           const std::string&);
@@ -58,7 +64,7 @@ public:
   void setTarget(const llvm::Target& pTarget)
   { m_pT = &pTarget; }
 
-  mcld::LLVMTargetMachine *createTargetMachine(const std::string &pTriple,
+  mcld::MCLDTargetMachine *createTargetMachine(const std::string &pTriple,
                           const std::string &pCPU, const std::string &pFeatures,
                           const llvm::TargetOptions &Options,
                           llvm::Reloc::Model RM = llvm::Reloc::Default,
@@ -73,27 +79,34 @@ public:
     return NULL;
   }
 
-  /// createSectLinker - create target-specific SectLinker
+  /// createMCLinker - create target-specific MCLinker
   ///
-  /// @return created SectLinker
-  SectLinker *createSectLinker(const std::string &pTriple,
-                               SectLinkerOption &pOption,
-                               TargetLDBackend &pLDBackend) const {
-    if (!SectLinkerCtorFn)
+  /// @return created MCLinker
+  MCLinker *createMCLinker(const std::string &pTriple,
+                           LinkerConfig& pConfig,
+                           Module& pModule,
+                           MemoryArea& pOutput) const {
+    if (!MCLinkerCtorFn)
       return NULL;
-    return SectLinkerCtorFn(pTriple,
-                            pOption,
-                            pLDBackend);
+    return MCLinkerCtorFn(pTriple, pConfig, pModule, pOutput);
+  }
+
+  /// emulate - given MCLinker default values for the other aspects of the
+  /// target system.
+  bool emulate(const std::string& pTriple, LinkerConfig& pConfig) const {
+    if (!EmulationFn)
+      return false;
+    return EmulationFn(pTriple, pConfig);
   }
 
   /// createLDBackend - create target-specific LDBackend
   ///
   /// @return created TargetLDBackend
-  TargetLDBackend* createLDBackend(const std::string& Triple) const
+  TargetLDBackend* createLDBackend(const LinkerConfig& pConfig) const
   {
     if (!TargetLDBackendCtorFn)
       return NULL;
-    return TargetLDBackendCtorFn(*get(), Triple);
+    return TargetLDBackendCtorFn(*get(), pConfig);
   }
 
   /// createDiagnosticLineInfo - create target-specific DiagnosticLineInfo
@@ -105,13 +118,13 @@ public:
     return DiagnosticLineInfoCtorFn(pTarget, pTriple);
   }
 
-  const llvm::Target* get() const
-  { return m_pT; }
+  const llvm::Target* get() const { return m_pT; }
 
 private:
   // -----  function pointers  ----- //
   TargetMachineCtorTy TargetMachineCtorFn;
-  SectLinkerCtorTy SectLinkerCtorFn;
+  MCLinkerCtorTy MCLinkerCtorFn;
+  EmulationFnTy EmulationFn;
   TargetLDBackendCtorTy TargetLDBackendCtorFn;
   DiagnosticLineInfoCtorTy DiagnosticLineInfoCtorFn;
 
@@ -161,15 +174,26 @@ public:
       T.TargetMachineCtorFn = Fn;
   }
 
-  /// RegisterSectLinker - Register a SectLinker implementation for the given
+  /// RegisterMCLinker - Register a MCLinker implementation for the given
   /// target.
   ///
   /// @param T - the target being registered
-  /// @param Fn - A function to create SectLinker for the target
-  static void RegisterSectLinker(mcld::Target &T, mcld::Target::SectLinkerCtorTy Fn)
+  /// @param Fn - A function to create MCLinker for the target
+  static void RegisterMCLinker(mcld::Target &T, mcld::Target::MCLinkerCtorTy Fn)
   {
-    if (!T.SectLinkerCtorFn)
-      T.SectLinkerCtorFn = Fn;
+    if (!T.MCLinkerCtorFn)
+      T.MCLinkerCtorFn = Fn;
+  }
+
+  /// RegisterEmulation - Register a emulation function for the target.
+  /// target.
+  ///
+  /// @param T - the target being registered
+  /// @param Fn - A emulation function
+  static void RegisterEmulation(mcld::Target &T, mcld::Target::EmulationFnTy Fn)
+  {
+    if (!T.EmulationFn)
+      T.EmulationFn = Fn;
   }
 
   /// RegisterTargetLDBackend - Register a TargetLDBackend implementation for
@@ -214,7 +238,7 @@ public:
 ///
 /// Target TheFooTarget; // The global target instance.
 ///
-/// extern "C" void LLVMInitializeFooTargetInfo() {
+/// extern "C" void MCLDInitializeFooTargetInfo() {
 ///   RegisterTarget X(TheFooTarget, "foo", "Foo description");
 /// }
 struct RegisterTarget
@@ -226,7 +250,9 @@ struct RegisterTarget
       if( 0==strcmp(TIter->getName(), Name) )
         break;
     }
-    T.setTarget(*TIter);
+
+    if (TIter != TEnd)
+      T.setTarget(*TIter);
 
     TargetRegistry::RegisterTarget(T);
   }
@@ -236,7 +262,7 @@ struct RegisterTarget
 /// implementation, for use in the target machine initialization
 /// function. Usage:
 ///
-/// extern "C" void LLVMInitializeFooTarget() {
+/// extern "C" void MCLDInitializeFooTarget() {
 ///   extern mcld::Target TheFooTarget;
 ///   RegisterTargetMachine<mcld::FooTargetMachine> X(TheFooTarget);
 /// }
@@ -248,7 +274,7 @@ struct RegisterTargetMachine
   }
 
 private:
-  static mcld::LLVMTargetMachine *Allocator(const mcld::Target &T,
+  static mcld::MCLDTargetMachine *Allocator(const mcld::Target &T,
                                             llvm::TargetMachine& TM,
                                             const std::string &Triple) {
     return new TargetMachineImpl(TM, T, Triple);

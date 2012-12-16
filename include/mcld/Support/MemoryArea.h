@@ -6,34 +6,27 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_MEMORY_AREA_H
-#define MCLD_MEMORY_AREA_H
+#ifndef MCLD_SUPPORT_MEMORY_AREA_H
+#define MCLD_SUPPORT_MEMORY_AREA_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
 
 #include <mcld/ADT/Uncopyable.h>
-#include <mcld/Support/Path.h>
-#include <mcld/Support/FileSystem.h>
-#include <mcld/Support/FileHandle.h>
-#include <mcld/Support/Space.h>
-#include <fcntl.h>
-#include <string>
-#include <list>
-
+#include <cstddef>
+#include <map>
 
 #if defined(ENABLE_UNITTEST)
-namespace mcldtest
-{
+namespace mcldtest {
   class MemoryAreaTest;
 } // namespace of mcldtest
 #endif
 
-namespace mcld
-{
+namespace mcld {
 
+class Space;
+class FileHandle;
 class MemoryRegion;
-class RegionFactory;
 
 /** \class MemoryArea
  *  \brief MemoryArea is used to manage distinct MemoryRegions of address space.
@@ -55,19 +48,16 @@ class MemoryArea : private Uncopyable
 {
   friend class MemoryAreaFactory;
 public:
-  typedef llvm::iplist<Space> SpaceList;
-
-public:
   // constructor by file handler.
   // If the given file handler is read-only, client can not request a region
   // that out of the file size.
   // @param pFileHandle - file handler
-  MemoryArea(RegionFactory& pRegionFactory, FileHandle& pFileHandle);
+  explicit MemoryArea(FileHandle& pFileHandle);
 
   // constructor by set universal space.
   // Client can not request a region that out of the universal space.
   // @param pUniverse - file handler
-  MemoryArea(RegionFactory& pRegionFactory, Space& pUniverse);
+  explicit MemoryArea(Space& pUniverse);
 
   // destructor
   ~MemoryArea();
@@ -85,11 +75,10 @@ public:
   // clear - release all memory regions.
   void clear();
 
-  FileHandle* handler()
-  { return m_pFileHandle; }
+  const FileHandle* handler() const { return m_pFileHandle; }
+  FileHandle*       handler()       { return m_pFileHandle; }
 
-  const FileHandle* handler() const
-  { return m_pFileHandle; }
+  bool hasHandler() const { return (NULL != m_pFileHandle); }
 
   // -----  space list methods  ----- //
   Space* find(size_t pOffset, size_t pLength);
@@ -97,8 +86,34 @@ public:
   const Space* find(size_t pOffset, size_t pLength) const;
 
 private:
-  RegionFactory& m_RegionFactory;
-  SpaceList m_SpaceList;
+  class Key {
+  public:
+    Key(size_t pOffset, size_t pLength)
+    : m_Offset(pOffset), m_Length(pLength)
+    { }
+
+    size_t offset() const { return m_Offset; }
+
+    size_t length() const { return m_Length; }
+
+    struct Compare {
+      bool operator()(const Key& KEY1, const Key& KEY2) const
+      {
+        return KEY1.offset() + KEY1.length() <= KEY2.offset() ||
+               (KEY1.offset() < KEY2.offset() &&
+                (KEY1.offset() + KEY1.length() < KEY2.offset() + KEY2.length()));
+      }
+    };
+
+  private:
+    size_t m_Offset;
+    size_t m_Length;
+  };
+
+  typedef std::map<Key, Space*, Key::Compare> SpaceMapType;
+
+private:
+  SpaceMapType m_SpaceMap;
   FileHandle* m_pFileHandle;
 };
 

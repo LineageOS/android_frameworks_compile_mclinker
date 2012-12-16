@@ -12,172 +12,134 @@
 
 #include <llvm/Support/Casting.h>
 
+#include <mcld/LD/LDSection.h>
 #include <mcld/LD/LDFileFormat.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
 
 namespace {
   const size_t ARMGOTEntrySize = 4;
+  const unsigned int ARMGOT0Num = 3;
 } // end of anonymous namespace
 
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // ARMGOT
-ARMGOT::ARMGOT(LDSection& pSection, SectionData& pSectionData)
-             : GOT(pSection, pSectionData, ARMGOTEntrySize),
-               m_NormalGOTIterator(), m_GOTPLTIterator(),
-               m_GOTPLTBegin(), m_GOTPLTEnd()
+ARMGOT::ARMGOT(LDSection& pSection)
+  : GOT(pSection, ARMGOTEntrySize)
 {
-  GOTEntry* Entry = 0;
-
   // Create GOT0 entries.
-  for (int i = 0; i < 3; i++) {
-    Entry = new (std::nothrow) GOTEntry(0, ARMGOTEntrySize,
-                                        &m_SectionData);
-
-    if (!Entry)
-      fatal(diag::fail_allocate_memory_got);
-
-    m_Section.setSize(m_Section.size() + ARMGOTEntrySize);
-  }
+  reserve(ARMGOT0Num);
 
   // Skip GOT0 entries.
-  iterator it = m_SectionData.begin();
-
-  for (int i = 1; i < ARMGOT0Num; ++i) {
-    assert((it != m_SectionData.end()) && "Generation of GOT0 entries is incomplete!");
-    ++it;
+  for (unsigned int i = 0; i < ARMGOT0Num; ++i) {
+    consume();
   }
-
-  m_NormalGOTIterator = it;
-  m_GOTPLTIterator = it;
-
-  m_GOTPLTBegin = it;
-  m_GOTPLTEnd = it;
 }
 
 ARMGOT::~ARMGOT()
 {
 }
 
-void ARMGOT::reserveEntry(size_t pNum)
+bool ARMGOT::hasGOT1() const
 {
-  GOTEntry* Entry = 0;
+  return (m_SectionData->size() > ARMGOT0Num);
+}
 
-  for (size_t i = 0; i < pNum; i++) {
-    Entry = new (std::nothrow) GOTEntry(0, ARMGOTEntrySize,
-                                        &m_SectionData);
-
-    if (!Entry)
-      fatal(diag::fail_allocate_memory_got);
-
-    m_Section.setSize(m_Section.size() + ARMGOTEntrySize);
+void ARMGOT::reserveGOTPLT()
+{
+  Entry* entry = new Entry(0, getEntrySize(), m_SectionData);
+  if (NULL == m_GOTPLT.front) {
+    // GOTPLT is empty
+    if (NULL == m_GOT.front) {
+      // GOT part is also empty. Since entry is the last entry, we can assign
+      // it to GOTPLT directly.
+      m_GOTPLT.front = entry;
+    }
+    else {
+      // GOTn is not empty. Shift GOTn backward by one entry.
+      m_GOTPLT.front = m_GOT.front;
+      m_GOT.front = llvm::cast<GOT::Entry>(m_GOT.front->getNextNode());
+    }
+  }
+  else {
+    // GOTPLT is not empty
+    if (NULL != m_GOT.front)
+      m_GOT.front = llvm::cast<GOT::Entry>(m_GOT.front->getNextNode());
   }
 }
 
-void ARMGOT::reserveGOTPLTEntry()
+void ARMGOT::reserveGOT()
 {
-    GOTEntry* got_entry = 0;
-
-    got_entry= new GOTEntry(0, getEntrySize(),&(getSectionData()));
-
-    if (!got_entry)
-      fatal(diag::fail_allocate_memory_got);
-
-    m_Section.setSize(m_Section.size() + getEntrySize());
-
-    ++m_GOTPLTEnd;
-    ++m_NormalGOTIterator;
+  Entry* entry = new Entry(0, getEntrySize(), m_SectionData);
+  if (NULL == m_GOT.front) {
+    // Entry must be the last entry. We can directly assign it to GOT part.
+    m_GOT.front = entry;
+  }
 }
 
-GOTEntry* ARMGOT::getEntry(const ResolveInfo& pInfo, bool& pExist)
+GOT::Entry* ARMGOT::consumeGOTPLT()
 {
-  GOTEntry *&Entry = m_NormalGOTMap[&pInfo];
-  pExist = 1;
+  assert(NULL != m_GOTPLT.front && "Consuming empty GOTPLT section!");
 
-  if (!Entry) {
-    pExist = 0;
-
-    ++m_NormalGOTIterator;
-    assert(m_NormalGOTIterator != m_SectionData.getFragmentList().end()
-           && "The number of GOT Entries and ResolveInfo doesn't match!");
-
-    Entry = llvm::cast<GOTEntry>(&(*m_NormalGOTIterator));
+  if (NULL == m_GOTPLT.last_used) {
+    m_GOTPLT.last_used = m_GOTPLT.front;
   }
+  else {
+    m_GOTPLT.last_used = llvm::cast<GOT::Entry>(m_GOTPLT.last_used->getNextNode());
+    assert(m_GOTPLT.last_used != m_GOT.front && "No GOT/PLT entry to consume!");
+  }
+  return m_GOTPLT.last_used;
+}
 
-  return Entry;
+GOT::Entry* ARMGOT::consumeGOT()
+{
+  assert(NULL != m_GOT.front && "Consuming empty GOT section!");
+
+  if (NULL == m_GOT.last_used) {
+    m_GOT.last_used = m_GOT.front;
+  }
+  else {
+    m_GOT.last_used = llvm::cast<GOT::Entry>(m_GOT.last_used->getNextNode());
+    assert(m_GOT.last_used != NULL && "No GOTn entry to consume!");
+  }
+  return m_GOT.last_used;
 }
 
 void ARMGOT::applyGOT0(uint64_t pAddress)
 {
-  llvm::cast<GOTEntry>
-    (*(m_SectionData.getFragmentList().begin())).setContent(pAddress);
+  llvm::cast<Entry>
+    (*(m_SectionData->getFragmentList().begin())).setContent(pAddress);
 }
 
-void ARMGOT::applyAllGOTPLT(uint64_t pPLTBase)
+void ARMGOT::applyGOTPLT(uint64_t pPLTBase)
 {
-  iterator begin = getGOTPLTBegin();
-  iterator end = getGOTPLTEnd();
+  if (NULL == m_GOTPLT.front)
+    return;
 
-  for (;begin != end ;++begin)
-    llvm::cast<GOTEntry>(*begin).setContent(pPLTBase);
-}
+  SectionData::iterator entry(m_GOTPLT.front);
+  SectionData::iterator e_end;
+  if (NULL == m_GOT.front)
+    e_end = m_SectionData->end();
+  else
+    e_end = SectionData::iterator(m_GOT.front);
 
-GOTEntry*& ARMGOT::lookupGOTPLTMap(const ResolveInfo& pSymbol)
-{
-  return m_GOTPLTMap[&pSymbol];
-}
-
-ARMGOT::iterator ARMGOT::begin()
-{
-  return m_SectionData.getFragmentList().begin();
-}
-
-ARMGOT::const_iterator ARMGOT::begin() const
-{
-  return m_SectionData.getFragmentList().begin();
-}
-
-ARMGOT::iterator ARMGOT::end()
-{
-  return m_SectionData.getFragmentList().end();
-}
-
-ARMGOT::const_iterator ARMGOT::end() const
-{
-  return m_SectionData.getFragmentList().end();
-}
-
-ARMGOT::iterator ARMGOT::getNextGOTPLTEntry()
-{
-  return ++m_GOTPLTIterator;
-}
-
-ARMGOT::iterator ARMGOT::getGOTPLTBegin()
-{
-  // Move to the first GOTPLT entry from last GOT0 entry.
-  iterator begin = m_GOTPLTBegin;
-  return ++begin;
-}
-
-const ARMGOT::iterator ARMGOT::getGOTPLTEnd()
-{
-  // Move to end or the first normal GOT entry from the last GOTPLT entry.
-  iterator end = m_GOTPLTEnd;
-  return ++end;
+  while (entry != e_end) {
+    llvm::cast<GOT::Entry>(entry)->setContent(pPLTBase);
+    ++entry;
+  }
 }
 
 uint64_t ARMGOT::emit(MemoryRegion& pRegion)
 {
   uint32_t* buffer = reinterpret_cast<uint32_t*>(pRegion.getBuffer());
 
-  GOTEntry* got = 0;
+  Entry* got = 0;
   unsigned int entry_size = getEntrySize();
   uint64_t result = 0x0;
-  for (iterator it = begin(), ie = end();
-       it != ie; ++it, ++buffer) {
-      got = &(llvm::cast<GOTEntry>((*it)));
+  for (iterator it = begin(), ie = end(); it != ie; ++it, ++buffer) {
+      got = &(llvm::cast<Entry>((*it)));
       *buffer = static_cast<uint32_t>(got->getContent());
       result += entry_size;
   }

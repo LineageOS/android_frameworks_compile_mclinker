@@ -10,8 +10,11 @@ include $(CLEAR_VARS)
 subdirs := \
   lib/ADT \
   lib/CodeGen \
+  lib/Core \
+  lib/Fragment \
   lib/LD \
   lib/MC \
+  lib/Object \
   lib/Support \
   lib/Target
 

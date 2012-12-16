@@ -12,15 +12,15 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/DenseMap.h>
-#include <mcld/LD/SectionData.h>
-#include <mcld/LD/RelocationFactory.h>
+#include <mcld/LD/RelocData.h>
 
 namespace mcld
 {
 
-class ResolveInfo;
+class LDSymbol;
+class Module;
 class Relocation;
+class RelocationFactory;
 
 /** \class OutputRelocSection
  *  \brief Dynamic relocation section for ARM .rel.dyn and .rel.plt
@@ -28,31 +28,38 @@ class Relocation;
 class OutputRelocSection
 {
 public:
-  OutputRelocSection(LDSection& pSection,
-                     SectionData& pSectionData,
+  OutputRelocSection(Module& pModule,
+                     LDSection& pSection,
                      unsigned int pEntrySize);
 
   ~OutputRelocSection();
 
   void reserveEntry(RelocationFactory& pRelFactory, size_t pNum=1);
 
-  Relocation* getEntry(const ResolveInfo& pSymbol,
-                       bool isForGOT,
-                       bool& pExist);
+  Relocation* consumeEntry();
+
+  void finalizeSectionSize();
+
+  /// addSymbolToDynSym - add local symbol to TLS category so that it'll be
+  /// emitted into .dynsym
+  bool addSymbolToDynSym(LDSymbol& pSymbol);
+
+  // ----- observers ----- //
+  bool empty()
+  { return m_pRelocData->empty(); }
 
 private:
-  typedef llvm::DenseMap<const ResolveInfo*, Relocation*> SymRelMapType;
-
-  typedef SymRelMapType::iterator SymRelMapIterator;
-
-  typedef SectionData::iterator FragmentIterator;
+  typedef RelocData::iterator FragmentIterator;
 
 private:
+  Module& m_Module;
+
   /// m_pSection - LDSection of this Section
   LDSection* m_pSection;
 
-  /// m_SectionData - SectionData which contains the dynamic relocations
-  SectionData* m_pSectionData;
+  /// m_RelocData - the output RelocData which contains the dynamic
+  /// relocations
+  RelocData* m_pRelocData;
 
   /// m_EntryBytes - size of a relocation entry
   unsigned int m_EntryBytes;
@@ -62,9 +69,6 @@ private:
 
   /// m_ValidEntryIterator - point to the first valid entry
   FragmentIterator m_ValidEntryIterator;
-
-  /// m_SymRelMap - map the resolved symbol to the Relocation entry
-  SymRelMapType m_SymRelMap;
 };
 
 } // namespace of mcld

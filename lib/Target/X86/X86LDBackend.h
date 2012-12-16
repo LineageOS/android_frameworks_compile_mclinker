@@ -19,6 +19,8 @@
 
 namespace mcld {
 
+class LinkerConfig;
+
 //===----------------------------------------------------------------------===//
 /// X86GNULDBackend - linker backend of X86 target of GNU ELF format
 ///
@@ -68,7 +70,8 @@ public:
     PLTandRel    = 9
   };
 
-  X86GNULDBackend();
+public:
+  X86GNULDBackend(const LinkerConfig& pConfig);
 
   ~X86GNULDBackend();
 
@@ -91,17 +94,15 @@ public:
 
   const X86PLT& getPLT() const;
 
+  GOT::Entry& getTLSModuleID();
+
   unsigned int bitclass() const;
 
   /// preLayout - Backend can do any needed modification before layout
-  void doPreLayout(const Output& pOutput,
-                   const MCLDInfo& pInfo,
-                   MCLinker& pLinker);
+  void doPreLayout(FragmentLinker& pLinker);
 
   /// postLayout -Backend can do any needed modification after layout
-  void doPostLayout(const Output& pOutput,
-                    const MCLDInfo& pInfo,
-                    MCLinker& pLinker);
+  void doPostLayout(Module& pModule, FragmentLinker& pLinker);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -122,16 +123,11 @@ public:
   ///  - backend can maintain its own map<LDSection, table> to get the table
   /// from given LDSection.
   ///
-  /// @param pOutput - the output file
   /// @param pSection - the given LDSection
-  /// @param pInfo - all options in the command line.
   /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
-  uint64_t emitSectionData(const Output& pOutput,
-                           const LDSection& pSection,
-                           const MCLDInfo& pInfo,
-                           const Layout& pLayout,
+  uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
   /// OSABI - the value of e_ident[EI_OSABI]
@@ -152,15 +148,12 @@ public:
   uint64_t defaultTextSegmentAddr() const
   { return 0x08048000; }
 
-  /// initTargetSectionMap - initialize target dependent section mapping
-  bool initTargetSectionMap(SectionMap& pSectionMap);
-
   // initRelocFactory - create and initialize RelocationFactory
-  bool initRelocFactory(const MCLinker& pLinker);
+  bool initRelocFactory(const FragmentLinker& pLinker);
 
-  void initTargetSections(MCLinker& pLinker);
+  void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
-  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  void initTargetSymbols(FragmentLinker& pLinker);
 
   /// scanRelocation - determine the empty entries are needed or not and create
   /// the empty entries if needed.
@@ -169,10 +162,8 @@ public:
   /// - PLT entry (for .plt section)
   /// - dynamin relocation entries (for .rel.plt and .rel.dyn sections)
   void scanRelocation(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput,
+                      FragmentLinker& pLinker,
+                      Module& pModule,
                       const LDSection& pSection);
 
   OutputRelocSection& getRelDyn();
@@ -184,25 +175,21 @@ public:
   const OutputRelocSection& getRelPLT() const;
 
   /// getTargetSectionOrder - compute the layout order of X86 target sections
-  unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr,
-                                     const MCLDInfo& pInfo) const;
+  unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeTargetSymbols - finalize the symbol value
-  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  bool finalizeTargetSymbols(FragmentLinker& pLinker);
 
 private:
   void scanLocalReloc(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                      FragmentLinker& pLinker,
+                      Module& pModule,
+                      const LDSection& pSection);
 
   void scanGlobalReloc(Relocation& pReloc,
-                       const LDSymbol& pInputSym,
-                       MCLinker& pLinker,
-                       const MCLDInfo& pLDInfo,
-                       const Output& pOutput);
+                       FragmentLinker& pLinker,
+                       Module& pModule,
+                       const LDSection& pSection);
 
   /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
   /// @param pSym - A resolved copy symbol that defined in BSS section
@@ -211,17 +198,23 @@ private:
   /// defineSymbolforCopyReloc - allocate a space in BSS section and
   /// and force define the copy of pSym to BSS section
   /// @return the output LDSymbol of the copy symbol
-  LDSymbol& defineSymbolforCopyReloc(MCLinker& pLinker,
+  LDSymbol& defineSymbolforCopyReloc(FragmentLinker& pLinker,
                                      const ResolveInfo& pSym);
 
-  void updateAddend(Relocation& pReloc,
-                    const LDSymbol& pInputSym,
-                    const Layout& pLayout) const;
+  void defineGOTSymbol(FragmentLinker& pLinker);
 
-  void createX86GOT(MCLinker& pLinker, const Output& pOutput);
-  void createX86GOTPLT(MCLinker& pLinker, const Output& pOutput);
-  void createX86PLTandRelPLT(MCLinker& pLinker, const Output& pOutput);
-  void createX86RelDyn(MCLinker& pLinker, const Output& pOutput);
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  size_t getRelEntrySize()
+  { return 8; }
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  size_t getRelaEntrySize()
+  { return 12; }
+
+  /// doCreateProgramHdrs - backend can implement this function to create the
+  /// target-dependent segments
+  virtual void doCreateProgramHdrs(Module& pModule,
+                                   const FragmentLinker& pLinker);
 
 private:
   RelocationFactory* m_pRelocFactory;

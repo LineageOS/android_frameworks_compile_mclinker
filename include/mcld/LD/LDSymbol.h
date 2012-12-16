@@ -14,12 +14,14 @@
 
 #include <cassert>
 
+#include <mcld/Config/Config.h>
 #include <mcld/ADT/Uncopyable.h>
 #include <mcld/LD/ResolveInfo.h>
-#include <mcld/LD/FragmentRef.h>
+#include <mcld/Support/Allocators.h>
 
-namespace mcld
-{
+namespace mcld {
+
+class FragmentRef;
 
 /** \class LDSymbol
  *  \brief LDSymbol provides a consistent abstraction for different formats
@@ -31,15 +33,25 @@ public:
   // FIXME: use SizeTrait<32> or SizeTrait<64> instead of big type
   typedef ResolveInfo::SizeType SizeType;
   typedef uint64_t ValueType;
-  typedef FragmentRef::Offset Offset;
 
 public:
-  LDSymbol();
-  LDSymbol(const LDSymbol& pCopy);
-  LDSymbol& operator=(const LDSymbol& pCopy);
   ~LDSymbol();
 
+  // -----  factory method ----- //
+  static LDSymbol* Create(ResolveInfo& pResolveInfo);
+
+  static void Destroy(LDSymbol*& pSymbol);
+
+  /// Clear - This function tells MCLinker to clear all created LDSymbols.
+  static void Clear();
+
+  /// NullSymbol() - This returns a reference to a LDSymbol that represents Null
+  /// symbol.
+  static LDSymbol* Null();
+
   // -----  observers  ----- //
+  bool isNull() const;
+
   const char* name() const {
     assert(NULL != m_pResolveInfo);
     return m_pResolveInfo->name();
@@ -98,8 +110,7 @@ public:
   const ResolveInfo* resolveInfo() const 
   { return m_pResolveInfo; }
 
-  bool hasFragRef() const
-  { return (NULL != m_pFragRef); }
+  bool hasFragRef() const;
 
   // -----  modifiers  ----- //
   void setSize(SizeType pSize) {
@@ -113,6 +124,13 @@ public:
   void setFragmentRef(FragmentRef* pFragmentRef);
 
   void setResolveInfo(const ResolveInfo& pInfo);
+
+private:
+  friend class Chunk<LDSymbol, MCLD_SYMBOLS_PER_INPUT>;
+
+  LDSymbol();
+  LDSymbol(const LDSymbol& pCopy);
+  LDSymbol& operator=(const LDSymbol& pCopy);
 
 private:
   // -----  Symbol's fields  ----- //

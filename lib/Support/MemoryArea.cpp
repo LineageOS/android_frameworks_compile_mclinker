@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include <mcld/Support/RegionFactory.h>
 #include <mcld/Support/MemoryArea.h>
+#include <mcld/Support/Space.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/MsgHandling.h>
@@ -17,21 +17,26 @@ using namespace mcld;
 //===--------------------------------------------------------------------===//
 // MemoryArea
 //===--------------------------------------------------------------------===//
-
 // MemoryArea - special constructor
 // This constructor is used for *SPECIAL* situation. I'm sorry I can not
 // reveal what is the special situation.
-MemoryArea::MemoryArea(RegionFactory& pRegionFactory, Space& pUniverse)
-  : m_RegionFactory(pRegionFactory), m_pFileHandle(NULL) {
-  m_SpaceList.push_back(&pUniverse);
+MemoryArea::MemoryArea(Space& pUniverse)
+  : m_pFileHandle(NULL) {
+  m_SpaceMap.insert(std::make_pair(Key(pUniverse.start(), pUniverse.size()),
+                                   &pUniverse));
 }
 
-MemoryArea::MemoryArea(RegionFactory& pRegionFactory, FileHandle& pFileHandle)
-  : m_RegionFactory(pRegionFactory), m_pFileHandle(&pFileHandle) {
+MemoryArea::MemoryArea(FileHandle& pFileHandle)
+  : m_pFileHandle(&pFileHandle) {
 }
 
 MemoryArea::~MemoryArea()
 {
+  SpaceMapType::iterator space, sEnd = m_SpaceMap.end();
+  for (space = m_SpaceMap.begin(); space != sEnd; ++space) {
+    if (space->second != NULL)
+      Space::Destroy(space->second);
+  }
 }
 
 // The layout of MemorySpace in the virtual memory space
@@ -62,8 +67,8 @@ MemoryRegion* MemoryArea::request(size_t pOffset, size_t pLength)
       unreachable(diag::err_out_of_range_region) << pOffset << pLength;
     }
 
-    space = Space::createSpace(*m_pFileHandle, pOffset, pLength);
-    m_SpaceList.push_back(space);
+    space = Space::Create(*m_pFileHandle, pOffset, pLength);
+    m_SpaceMap.insert(std::make_pair(Key(pOffset, pLength), space));
   }
 
   // adjust r_start
@@ -71,7 +76,7 @@ MemoryRegion* MemoryArea::request(size_t pOffset, size_t pLength)
   void* r_start = space->memory() + distance;
 
   // now, we have a legal space to hold the new MemoryRegion
-  return m_RegionFactory.produce(*space, r_start, pLength);
+  return MemoryRegion::Create(r_start, pLength, *space);
 }
 
 // release - release a MemoryRegion
@@ -81,7 +86,7 @@ void MemoryArea::release(MemoryRegion* pRegion)
     return;
 
   Space *space = pRegion->parent();
-  m_RegionFactory.destruct(pRegion);
+  MemoryRegion::Destroy(pRegion);
 
   if (0 == space->numOfRegions()) {
 
@@ -91,10 +96,10 @@ void MemoryArea::release(MemoryRegion* pRegion)
       // Space.
       if (m_pFileHandle->isWritable()) {
         // synchronize writable space before we release it.
-        Space::syncSpace(space, *m_pFileHandle);
+        Space::Sync(space, *m_pFileHandle);
       }
-      Space::releaseSpace(space, *m_pFileHandle);
-      m_SpaceList.erase(space);
+      m_SpaceMap.erase(Key(space->start(), space->size()));
+      Space::Release(space, *m_pFileHandle);
     }
   }
 }
@@ -106,46 +111,44 @@ void MemoryArea::clear()
     return;
 
   if (m_pFileHandle->isWritable()) {
-    SpaceList::iterator space, sEnd = m_SpaceList.end();
-    for (space = m_SpaceList.begin(); space != sEnd; ++space) {
-      Space::syncSpace(space, *m_pFileHandle);
-      Space::releaseSpace(space, *m_pFileHandle);
+    SpaceMapType::iterator space, sEnd = m_SpaceMap.end();
+    for (space = m_SpaceMap.begin(); space != sEnd; ++space) {
+      Space::Sync(space->second, *m_pFileHandle);
+      Space::Release(space->second, *m_pFileHandle);
     }
   }
   else {
-    SpaceList::iterator space, sEnd = m_SpaceList.end();
-    for (space = m_SpaceList.begin(); space != sEnd; ++space)
-      Space::releaseSpace(space, *m_pFileHandle);
+    SpaceMapType::iterator space, sEnd = m_SpaceMap.end();
+    for (space = m_SpaceMap.begin(); space != sEnd; ++space)
+      Space::Release(space->second, *m_pFileHandle);
   }
 
-  m_SpaceList.clear();
+  for (SpaceMapType::iterator space = m_SpaceMap.begin(),
+         sEnd = m_SpaceMap.end(); space != sEnd; ++space) {
+    if (space->second != NULL)
+      Space::Destroy(space->second);
+  }
+  m_SpaceMap.clear();
 }
 
 //===--------------------------------------------------------------------===//
 // SpaceList methods
+//===--------------------------------------------------------------------===//
 Space* MemoryArea::find(size_t pOffset, size_t pLength)
 {
-  SpaceList::iterator sIter, sEnd = m_SpaceList.end();
-  for (sIter = m_SpaceList.begin(); sIter!=sEnd; ++sIter) {
-    if (sIter->start() <= pOffset &&
-       (pOffset+pLength) <= (sIter->start()+sIter->size()) ) {
-      // within
-      return sIter;
-    }
-  }
+  SpaceMapType::iterator it = m_SpaceMap.find(Key(pOffset, pLength));
+  if (it != m_SpaceMap.end())
+    return it->second;
+
   return NULL;
 }
 
 const Space* MemoryArea::find(size_t pOffset, size_t pLength) const
 {
-  SpaceList::const_iterator sIter, sEnd = m_SpaceList.end();
-  for (sIter = m_SpaceList.begin(); sIter!=sEnd; ++sIter) {
-    if (sIter->start() <= pOffset &&
-       (pOffset+pLength) <= (sIter->start()+sIter->size()) ) {
-      // within
-      return sIter;
-    }
-  }
+  SpaceMapType::const_iterator it = m_SpaceMap.find(Key(pOffset, pLength));
+  if (it != m_SpaceMap.end())
+    return it->second;
+
   return NULL;
 }
 

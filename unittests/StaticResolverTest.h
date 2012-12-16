@@ -10,12 +10,13 @@
 #define STATICRESOLVER_TEST_H
 
 #include <gtest.h>
-#include <mcld/MC/MCLDInfo.h>
+#include <mcld/LinkerConfig.h>
 
-namespace mcld
-{
+namespace mcld {
+
 class StaticResolver;
 class ResolveInfoFactory;
+class DiagnosticPrinter;
 
 } // namespace for mcld
 
@@ -44,9 +45,7 @@ public:
 
 protected:
   mcld::StaticResolver* m_pResolver;
-  mcld::ResolveInfoFactory* m_pFactory;
-  mcld::MCLDInfo* m_pLDInfo;
-  mcld::DiagnosticLineInfo* m_pLineInfo;
+  mcld::LinkerConfig* m_pConfig;
   mcld::DiagnosticPrinter* m_pPrinter;
 };
 
