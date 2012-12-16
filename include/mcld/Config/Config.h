@@ -14,7 +14,7 @@
 #ifndef MCLD_CONFIG_H
 #define MCLD_CONFIG_H
 
-#include <llvm/Config/llvm-config.h>
+#include <llvm/Config/config.h>
 
 #ifdef LLVM_ON_UNIX
 # define MCLD_ON_UNIX 1
