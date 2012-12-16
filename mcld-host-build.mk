@@ -1,5 +1,9 @@
 include $(LLVM_HOST_BUILD_MK)
 
+LOCAL_CFLAGS := \
+  -include $(MCLD_ROOT_PATH)/include/mcld/Config/Config.h \
+  $(LOCAL_CFLAGS)
+
 LOCAL_CPPFLAGS := \
   $(LOCAL_CPPFLAGS) \
   -Wformat \

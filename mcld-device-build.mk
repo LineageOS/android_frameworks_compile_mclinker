@@ -8,6 +8,7 @@ LOCAL_CFLAGS := \
   -finline-limit=64 \
   -finline-functions \
   -fno-inline-functions-called-once \
+  -include $(MCLD_ROOT_PATH)/include/mcld/Config/Config.h \
   $(LOCAL_CFLAGS)
 
 LOCAL_CPPFLAGS := \
