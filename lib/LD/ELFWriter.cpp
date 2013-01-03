@@ -49,11 +49,11 @@ void ELFWriter::writeELF32Header(const LinkerConfig& pConfig,
   memcpy(header->e_ident, ElfMagic, EI_MAG3+1);
 
   header->e_ident[EI_CLASS]      = ELFCLASS32;
-  header->e_ident[EI_DATA]       = target().isLittleEndian()?
+  header->e_ident[EI_DATA]       = pConfig.targets().isLittleEndian()?
                                        ELFDATA2LSB : ELFDATA2MSB;
-  header->e_ident[EI_VERSION]    = target().ELFVersion();
-  header->e_ident[EI_OSABI]      = target().OSABI();
-  header->e_ident[EI_ABIVERSION] = target().ABIVersion();
+  header->e_ident[EI_VERSION]    = target().getInfo().ELFVersion();
+  header->e_ident[EI_OSABI]      = target().getInfo().OSABI();
+  header->e_ident[EI_ABIVERSION] = target().getInfo().ABIVersion();
 
   // FIXME: add processor-specific and core file types.
   switch(pConfig.codeGenType()) {
@@ -70,7 +70,7 @@ void ELFWriter::writeELF32Header(const LinkerConfig& pConfig,
       llvm::errs() << "unspported output file type: " << pConfig.codeGenType() << ".\n";
       header->e_type = ET_NONE;
   }
-  header->e_machine   = target().machine();
+  header->e_machine   = target().getInfo().machine();
   header->e_version   = header->e_ident[EI_VERSION];
   header->e_entry     = getEntryPoint(pConfig, pModule);
 
@@ -101,11 +101,11 @@ void ELFWriter::writeELF64Header(const LinkerConfig& pConfig,
   memcpy(header->e_ident, ElfMagic, EI_MAG3+1);
 
   header->e_ident[EI_CLASS]      = ELFCLASS64;
-  header->e_ident[EI_DATA]       = target().isLittleEndian()?
+  header->e_ident[EI_DATA]       = pConfig.targets().isLittleEndian()?
                                        ELFDATA2LSB : ELFDATA2MSB;
-  header->e_ident[EI_VERSION]    = target().ELFVersion();
-  header->e_ident[EI_OSABI]      = target().OSABI();
-  header->e_ident[EI_ABIVERSION] = target().ABIVersion();
+  header->e_ident[EI_VERSION]    = target().getInfo().ELFVersion();
+  header->e_ident[EI_OSABI]      = target().getInfo().OSABI();
+  header->e_ident[EI_ABIVERSION] = target().getInfo().ABIVersion();
 
   // FIXME: add processor-specific and core file types.
   switch(pConfig.codeGenType()) {
@@ -122,7 +122,7 @@ void ELFWriter::writeELF64Header(const LinkerConfig& pConfig,
       llvm::errs() << "unspported output file type: " << pConfig.codeGenType() << ".\n";
       header->e_type = ET_NONE;
   }
-  header->e_machine   = target().machine();
+  header->e_machine   = target().getInfo().machine();
   header->e_version   = header->e_ident[EI_VERSION];
   header->e_entry     = getEntryPoint(pConfig, pModule);
 
@@ -500,10 +500,18 @@ uint64_t ELFWriter::getSectLink(const LDSection& pSection,
 /// getSectInfo - compute ElfXX_Shdr::sh_info
 uint64_t ELFWriter::getSectInfo(const LDSection& pSection) const
 {
-  const LDSection* info_link = pSection.getLink();
-  if (NULL == info_link)
-    return 0x0;
-  return info_link->index();
+  if (llvm::ELF::SHT_SYMTAB == pSection.type() ||
+      llvm::ELF::SHT_DYNSYM == pSection.type())
+    return pSection.getInfo();
+
+  if (llvm::ELF::SHT_REL == pSection.type() ||
+      llvm::ELF::SHT_RELA == pSection.type()) {
+    const LDSection* info_link = pSection.getLink();
+    if (NULL != info_link)
+      return info_link->index();
+  }
+
+  return 0x0;
 }
 
 /// getELF32LastStartOffset
@@ -579,9 +587,6 @@ ELFWriter::emitSectionData(const SectionData& pSD, MemoryRegion& pRegion) const
         assert(0x0 == size);
         break;
       }
-      case Fragment::Relocation:
-        llvm::report_fatal_error("relocation fragment should not be in a regular section.\n");
-        break;
       case Fragment::Target:
         llvm::report_fatal_error("Target fragment should not be in a regular section.\n");
         break;

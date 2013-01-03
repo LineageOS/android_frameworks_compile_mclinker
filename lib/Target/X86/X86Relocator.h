@@ -1,4 +1,4 @@
-//===-  X86RelocationFactory.h --------------------------------------------===//
+//===-  X86Relocator.h --------------------------------------------===//
 //
 //                     The MCLinker Project
 //
@@ -12,7 +12,7 @@
 #include <gtest.h>
 #endif
 
-#include <mcld/LD/RelocationFactory.h>
+#include <mcld/LD/Relocator.h>
 #include <mcld/Target/GOT.h>
 #include <mcld/Target/PLT.h>
 #include <mcld/Target/SymbolEntryMap.h>
@@ -22,19 +22,20 @@ namespace mcld {
 
 class ResolveInfo;
 
-/** \class X86RelocationFactory
- *  \brief X86RelocationFactory creates and destroys the X86 relocations.
+/** \class X86Relocator
+ *  \brief X86Relocator creates and destroys the X86 relocations.
  *
  */
-class X86RelocationFactory : public RelocationFactory
+class X86Relocator : public Relocator
 {
 public:
-  typedef SymbolEntryMap<PLT::Entry> SymPLTMap;
-  typedef SymbolEntryMap<GOT::Entry> SymGOTMap;
+  typedef SymbolEntryMap<PLTEntryBase> SymPLTMap;
+  typedef SymbolEntryMap<X86GOTEntry> SymGOTMap;
+  typedef SymbolEntryMap<X86GOTPLTEntry> SymGOTPLTMap;
 
 public:
-  X86RelocationFactory(size_t pNum, X86GNULDBackend& pParent);
-  ~X86RelocationFactory();
+  X86Relocator(X86GNULDBackend& pParent);
+  ~X86Relocator();
 
   Result applyRelocation(Relocation& pRelocation);
 
@@ -52,14 +53,14 @@ public:
   const SymGOTMap& getSymGOTMap() const { return m_SymGOTMap; }
   SymGOTMap&       getSymGOTMap()       { return m_SymGOTMap; }
 
-  const SymGOTMap& getSymGOTPLTMap() const { return m_SymGOTPLTMap; }
-  SymGOTMap&       getSymGOTPLTMap()       { return m_SymGOTPLTMap; }
+  const SymGOTPLTMap& getSymGOTPLTMap() const { return m_SymGOTPLTMap; }
+  SymGOTPLTMap&       getSymGOTPLTMap()       { return m_SymGOTPLTMap; }
 
 private:
   X86GNULDBackend& m_Target;
   SymPLTMap m_SymPLTMap;
   SymGOTMap m_SymGOTMap;
-  SymGOTMap m_SymGOTPLTMap;
+  SymGOTPLTMap m_SymGOTPLTMap;
 };
 
 } // namespace of mcld

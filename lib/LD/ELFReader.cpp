@@ -9,7 +9,6 @@
 #include <mcld/LD/ELFReader.h>
 
 #include <mcld/IRBuilder.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Fragment/FillFragment.h>
 #include <mcld/LD/EhFrame.h>
 #include <mcld/LD/SectionData.h>
@@ -105,7 +104,10 @@ ELFReaderIF::getSymFragmentRef(Input& pInput,
   if (Input::DynObj == pInput.type())
     return FragmentRef::Null();
 
-  if (pShndx == llvm::ELF::SHN_UNDEF || pShndx >= llvm::ELF::SHN_LORESERVE)
+  if (pShndx == llvm::ELF::SHN_UNDEF)
+    return FragmentRef::Null();
+
+  if (pShndx >= llvm::ELF::SHN_LORESERVE) // including ABS and COMMON
     return FragmentRef::Null();
 
   LDSection* sect_hdr = pInput.context()->getSection(pShndx);
@@ -193,7 +195,7 @@ ELFReader<32, true>::readRegularSection(Input& pInput, SectionData& pSD) const
 
 /// readSymbols - read ELF symbols and create LDSymbol
 bool ELFReader<32, true>::readSymbols(Input& pInput,
-                                      FragmentLinker& pLinker,
+                                      IRBuilder& pBuilder,
                                       const MemoryRegion& pRegion,
                                       const char* pStrTab) const
 {
@@ -223,10 +225,10 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
       st_shndx = symtab[idx].st_shndx;
     }
     else {
-      st_name  = bswap32(symtab[idx].st_name);
-      st_value = bswap32(symtab[idx].st_value);
-      st_size  = bswap32(symtab[idx].st_size);
-      st_shndx = bswap16(symtab[idx].st_shndx);
+      st_name  = mcld::bswap32(symtab[idx].st_name);
+      st_value = mcld::bswap32(symtab[idx].st_value);
+      st_size  = mcld::bswap32(symtab[idx].st_size);
+      st_shndx = mcld::bswap16(symtab[idx].st_shndx);
     }
 
     // If the section should not be included, set the st_shndx SHN_UNDEF
@@ -250,55 +252,33 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
     // get ld_value - ld_value must be section relative.
     uint64_t ld_value = getSymValue(st_value, st_shndx, pInput);
 
-    // get the input fragment
-    FragmentRef* ld_frag_ref = getSymFragmentRef(pInput,
-                                                 st_shndx,
-                                                 ld_value);
-
     // get ld_vis
     ResolveInfo::Visibility ld_vis = getSymVisibility(st_other);
 
+    // get section
+    LDSection* section = NULL;
+    if (st_shndx < llvm::ELF::SHN_LORESERVE) // including ABS and COMMON
+      section = pInput.context()->getSection(st_shndx);
+
     // get ld_name
-    llvm::StringRef ld_name;
+    std::string ld_name;
     if (ResolveInfo::Section == ld_type) {
       // Section symbol's st_name is the section index.
-      LDSection* section = pInput.context()->getSection(st_shndx);
       assert(NULL != section && "get a invalid section");
-      ld_name = llvm::StringRef(section->name());
+      ld_name = section->name();
     }
     else {
-      ld_name = llvm::StringRef(pStrTab + st_name);
+      ld_name = std::string(pStrTab + st_name);
     }
 
-
-    // push into FragmentLinker
-    LDSymbol* input_sym = NULL;
-
-    if (pInput.type() == Input::Object) {
-      input_sym = pLinker.addSymbol<Input::Object>(ld_name,
-                                                   ld_type,
-                                                   ld_desc,
-                                                   ld_binding,
-                                                   st_size,
-                                                   ld_value,
-                                                   ld_frag_ref,
-                                                   ld_vis);
-      // push into the input file
-      pInput.context()->addSymbol(input_sym);
-      continue;
-    }
-    else if (pInput.type() == Input::DynObj) {
-      input_sym = pLinker.addSymbol<Input::DynObj>(ld_name,
-                                                   ld_type,
-                                                   ld_desc,
-                                                   ld_binding,
-                                                   st_size,
-                                                   ld_value,
-                                                   ld_frag_ref,
-                                                   ld_vis);
-      continue;
-    }
-
+    pBuilder.AddSymbol(pInput,
+                       ld_name,
+                       ld_type,
+                       ld_desc,
+                       ld_binding,
+                       st_size,
+                       ld_value,
+                       section, ld_vis);
   } // end of for loop
   return true;
 }
@@ -308,7 +288,6 @@ bool ELFReader<32, true>::readSymbols(Input& pInput,
 //===----------------------------------------------------------------------===//
 /// ELFReader::readRela - read ELF rela and create Relocation
 bool ELFReader<32, true>::readRela(Input& pInput,
-                                   FragmentLinker& pLinker,
                                    LDSection& pSection,
                                    const MemoryRegion& pRegion) const
 {
@@ -327,9 +306,9 @@ bool ELFReader<32, true>::readRela(Input& pInput,
       r_addend = relaTab[idx].r_addend;
     }
     else {
-      r_offset = bswap32(relaTab[idx].r_offset);
-      r_info   = bswap32(relaTab[idx].r_info);
-      r_addend = bswap32(relaTab[idx].r_addend);
+      r_offset = mcld::bswap32(relaTab[idx].r_offset);
+      r_info   = mcld::bswap32(relaTab[idx].r_info);
+      r_addend = mcld::bswap32(relaTab[idx].r_addend);
     }
 
     uint8_t  r_type = static_cast<unsigned char>(r_info);
@@ -339,14 +318,13 @@ bool ELFReader<32, true>::readRela(Input& pInput,
       fatal(diag::err_cannot_read_symbol) << r_sym << pInput.path();
     }
 
-    pLinker.addRelocation(r_type, *symbol, pSection, r_offset, r_addend);
+    IRBuilder::AddRelocation(pSection, r_type, *symbol, r_offset, r_addend);
   } // end of for
   return true;
 }
 
 /// readRel - read ELF rel and create Relocation
 bool ELFReader<32, true>::readRel(Input& pInput,
-                                  FragmentLinker& pLinker,
                                   LDSection& pSection,
                                   const MemoryRegion& pRegion) const
 {
@@ -363,8 +341,8 @@ bool ELFReader<32, true>::readRel(Input& pInput,
       r_info   = relTab[idx].r_info;
     }
     else {
-      r_offset = bswap32(relTab[idx].r_offset);
-      r_info   = bswap32(relTab[idx].r_info);
+      r_offset = mcld::bswap32(relTab[idx].r_offset);
+      r_info   = mcld::bswap32(relTab[idx].r_info);
     }
 
     uint8_t  r_type = static_cast<unsigned char>(r_info);
@@ -375,7 +353,7 @@ bool ELFReader<32, true>::readRel(Input& pInput,
       fatal(diag::err_cannot_read_symbol) << r_sym << pInput.path();
     }
 
-    pLinker.addRelocation(r_type, *symbol, pSection, r_offset);
+    IRBuilder::AddRelocation(pSection, r_type, *symbol, r_offset);
   } // end of for
   return true;
 }
@@ -396,8 +374,8 @@ bool ELFReader<32, true>::isMyMachine(void* pELFHeader) const
                           reinterpret_cast<llvm::ELF::Elf32_Ehdr*>(pELFHeader);
 
   if (llvm::sys::isLittleEndianHost())
-    return (hdr->e_machine == target().machine());
-  return (bswap16(hdr->e_machine) == target().machine());
+    return (hdr->e_machine == target().getInfo().machine());
+  return (mcld::bswap16(hdr->e_machine) == target().getInfo().machine());
 }
 
 /// fileType - return the file type
@@ -409,7 +387,7 @@ Input::Type ELFReader<32, true>::fileType(void* pELFHeader) const
   if (llvm::sys::isLittleEndianHost())
     type = hdr->e_type;
   else
-    type = bswap16(hdr->e_type);
+    type = mcld::bswap16(hdr->e_type);
 
   switch(type) {
   case llvm::ELF::ET_REL:
@@ -445,10 +423,10 @@ ELFReader<32, true>::readSectionHeaders(Input& pInput, void* pELFHeader) const
     shstrtab  = ehdr->e_shstrndx;
   }
   else {
-    shoff     = bswap32(ehdr->e_shoff);
-    shentsize = bswap16(ehdr->e_shentsize);
-    shnum     = bswap16(ehdr->e_shnum);
-    shstrtab  = bswap16(ehdr->e_shstrndx);
+    shoff     = mcld::bswap32(ehdr->e_shoff);
+    shentsize = mcld::bswap16(ehdr->e_shentsize);
+    shnum     = mcld::bswap16(ehdr->e_shnum);
+    shstrtab  = mcld::bswap16(ehdr->e_shstrndx);
   }
 
   // If the file has no section header table, e_shoff holds zero.
@@ -476,8 +454,8 @@ ELFReader<32, true>::readSectionHeaders(Input& pInput, void* pELFHeader) const
     sh_size   = shdr->sh_size;
   }
   else {
-    sh_offset = bswap32(shdr->sh_offset);
-    sh_size   = bswap32(shdr->sh_size);
+    sh_offset = mcld::bswap32(shdr->sh_offset);
+    sh_size   = mcld::bswap32(shdr->sh_size);
   }
 
   MemoryRegion* sect_name_region = pInput.memArea()->request(
@@ -500,14 +478,14 @@ ELFReader<32, true>::readSectionHeaders(Input& pInput, void* pELFHeader) const
       sh_addralign = shdrTab[idx].sh_addralign;
     }
     else {
-      sh_name      = bswap32(shdrTab[idx].sh_name);
-      sh_type      = bswap32(shdrTab[idx].sh_type);
-      sh_flags     = bswap32(shdrTab[idx].sh_flags);
-      sh_offset    = bswap32(shdrTab[idx].sh_offset);
-      sh_size      = bswap32(shdrTab[idx].sh_size);
-      sh_link      = bswap32(shdrTab[idx].sh_link);
-      sh_info      = bswap32(shdrTab[idx].sh_info);
-      sh_addralign = bswap32(shdrTab[idx].sh_addralign);
+      sh_name      = mcld::bswap32(shdrTab[idx].sh_name);
+      sh_type      = mcld::bswap32(shdrTab[idx].sh_type);
+      sh_flags     = mcld::bswap32(shdrTab[idx].sh_flags);
+      sh_offset    = mcld::bswap32(shdrTab[idx].sh_offset);
+      sh_size      = mcld::bswap32(shdrTab[idx].sh_size);
+      sh_link      = mcld::bswap32(shdrTab[idx].sh_link);
+      sh_info      = mcld::bswap32(shdrTab[idx].sh_info);
+      sh_addralign = mcld::bswap32(shdrTab[idx].sh_addralign);
     }
 
     LDSection* section = IRBuilder::CreateELFHeader(pInput,
@@ -574,8 +552,8 @@ ResolveInfo* ELFReader<32, true>::readSignature(Input& pInput,
     st_shndx = entry->st_shndx;
   }
   else {
-    st_name  = bswap32(entry->st_name);
-    st_shndx = bswap16(entry->st_shndx);
+    st_name  = mcld::bswap32(entry->st_name);
+    st_shndx = mcld::bswap16(entry->st_shndx);
   }
 
   MemoryRegion* strtab_region = pInput.memArea()->request(
@@ -635,8 +613,8 @@ bool ELFReader<32, true>::readDynamic(Input& pInput) const
       d_tag = dynamic[idx].d_tag;
       d_val = dynamic[idx].d_un.d_val;
     } else {
-      d_tag = bswap32(dynamic[idx].d_tag);
-      d_val = bswap32(dynamic[idx].d_un.d_val);
+      d_tag = mcld::bswap32(dynamic[idx].d_tag);
+      d_val = mcld::bswap32(dynamic[idx].d_un.d_val);
     }
 
     switch (d_tag) {

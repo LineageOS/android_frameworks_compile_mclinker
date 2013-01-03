@@ -17,9 +17,9 @@
 namespace mcld {
 
 class Module;
+class LinkerConfig;
 class MemoryArea;
 class GNULDBackend;
-class FragmentLinker;
 
 /** \class ELFDynObjWriter
  *  \brief ELFDynObjWriter writes the dynamic sections.
@@ -30,13 +30,15 @@ public:
   typedef ELFWriter::FileOffset FileOffset;
 
 public:
-  ELFDynObjWriter(GNULDBackend& pBackend, FragmentLinker& pLinker);
+  ELFDynObjWriter(GNULDBackend& pBackend,
+                  const LinkerConfig& pConfig);
+
   ~ELFDynObjWriter();
 
   llvm::error_code writeDynObj(Module& pModule, MemoryArea& pOutput);
 
 private:
-  FragmentLinker& m_Linker;
+  const LinkerConfig& m_Config;
 };
 
 } // namespace of mcld

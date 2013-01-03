@@ -19,10 +19,11 @@ namespace mcld {
 
 class Module;
 class Input;
-class FragmentLinker;
+class IRBuilder;
 class GNULDBackend;
 class ELFReaderIF;
 class EhFrameReader;
+class LinkerConfig;
 
 /** \lclass ELFObjectReader
  *  \brief ELFObjectReader reads target-independent parts of ELF object file
@@ -38,7 +39,9 @@ public:
   typedef Flags<ReadFlagType> ReadFlag;
 
 public:
-  ELFObjectReader(GNULDBackend& pBackend, FragmentLinker& pLinker);
+  ELFObjectReader(GNULDBackend& pBackend,
+                  IRBuilder& pBuilder,
+                  const LinkerConfig& pConfig);
 
   ~ELFObjectReader();
 
@@ -60,9 +63,10 @@ public:
 private:
   ELFReaderIF* m_pELFReader;
   EhFrameReader* m_pEhFrameReader;
-  FragmentLinker& m_Linker;
+  IRBuilder& m_Builder;
   ReadFlag m_ReadFlag;
   GNULDBackend& m_Backend;
+  const LinkerConfig& m_Config;
 };
 
 } // namespace of mcld

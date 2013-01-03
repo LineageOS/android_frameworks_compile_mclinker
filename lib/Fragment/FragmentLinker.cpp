@@ -20,7 +20,6 @@
 #include <mcld/Module.h>
 #include <mcld/MC/MCLDInput.h>
 #include <mcld/LD/BranchIslandFactory.h>
-#include <mcld/LD/Layout.h>
 #include <mcld/LD/Resolver.h>
 #include <mcld/LD/LDContext.h>
 #include <mcld/LD/RelocationFactory.h>
@@ -31,9 +30,13 @@
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Target/TargetLDBackend.h>
+#include <mcld/Fragment/Relocation.h>
 
 using namespace mcld;
 
+//===----------------------------------------------------------------------===//
+// FragmentLinker
+//===----------------------------------------------------------------------===//
 /// Constructor
 FragmentLinker::FragmentLinker(const LinkerConfig& pConfig,
                                Module& pModule,
@@ -52,178 +55,6 @@ FragmentLinker::~FragmentLinker()
 //===----------------------------------------------------------------------===//
 // Symbol Operations
 //===----------------------------------------------------------------------===//
-/// addSymbolFromObject - add a symbol from object file and resolve it
-/// immediately
-LDSymbol* FragmentLinker::addSymbolFromObject(const llvm::StringRef& pName,
-                                        ResolveInfo::Type pType,
-                                        ResolveInfo::Desc pDesc,
-                                        ResolveInfo::Binding pBinding,
-                                        ResolveInfo::SizeType pSize,
-                                        LDSymbol::ValueType pValue,
-                                        FragmentRef* pFragmentRef,
-                                        ResolveInfo::Visibility pVisibility)
-{
-
-  // Step 1. calculate a Resolver::Result
-  // resolved_result is a triple <resolved_info, existent, override>
-  Resolver::Result resolved_result;
-  ResolveInfo old_info; // used for arrange output symbols
-
-  if (pBinding == ResolveInfo::Local) {
-    // if the symbol is a local symbol, create a LDSymbol for input, but do not
-    // resolve them.
-    resolved_result.info     = m_Module.getNamePool().createSymbol(pName,
-                                                                   false,
-                                                                   pType,
-                                                                   pDesc,
-                                                                   pBinding,
-                                                                   pSize,
-                                                                   pVisibility);
-
-    // No matter if there is a symbol with the same name, insert the symbol
-    // into output symbol table. So, we let the existent false.
-    resolved_result.existent  = false;
-    resolved_result.overriden = true;
-  }
-  else {
-    // if the symbol is not local, insert and resolve it immediately
-    m_Module.getNamePool().insertSymbol(pName, false, pType, pDesc, pBinding,
-                                        pSize, pVisibility,
-                                        &old_info, resolved_result);
-  }
-
-  // the return ResolveInfo should not NULL
-  assert(NULL != resolved_result.info);
-
-  /// Step 2. create an input LDSymbol.
-  // create a LDSymbol for the input file.
-  LDSymbol* input_sym = LDSymbol::Create(*resolved_result.info);
-  input_sym->setFragmentRef(pFragmentRef);
-  input_sym->setValue(pValue);
-
-  // Step 3. Set up corresponding output LDSymbol
-  LDSymbol* output_sym = resolved_result.info->outSymbol();
-  bool has_output_sym = (NULL != output_sym);
-  if (!resolved_result.existent || !has_output_sym) {
-    // it is a new symbol, the output_sym should be NULL.
-    assert(NULL == output_sym);
-
-    if (pType == ResolveInfo::Section) {
-      // if it is a section symbol, its output LDSymbol is the input LDSymbol.
-      output_sym = input_sym;
-    }
-    else {
-      // if it is a new symbol, create a LDSymbol for the output
-      output_sym = LDSymbol::Create(*resolved_result.info);
-    }
-    resolved_result.info->setSymPtr(output_sym);
-  }
-
-  if (resolved_result.overriden || !has_output_sym) {
-    // symbol can be overriden only if it exists.
-    assert(output_sym != NULL);
-
-    // should override output LDSymbol
-    output_sym->setFragmentRef(pFragmentRef);
-    output_sym->setValue(pValue);
-  }
-
-  // Step 4. Adjust the position of output LDSymbol.
-  // After symbol resolution, visibility is changed to the most restrict one.
-  // we need to arrange its position in the output symbol. We arrange the
-  // positions by sorting symbols in SymbolCategory.
-  if (pType != ResolveInfo::Section) {
-    if (!has_output_sym) {
-      // We merge sections when reading them. So we do not need to output symbols
-      // with section type
-
-      // No matter the symbol is already in the output or not, add it if it
-      // should be forcefully set local.
-      if (shouldForceLocal(*resolved_result.info))
-        m_Module.getSymbolTable().forceLocal(*output_sym);
-      else {
-        // the symbol should not be forcefully local.
-        m_Module.getSymbolTable().add(*output_sym);
-      }
-    }
-    else if (resolved_result.overriden) {
-      if (!shouldForceLocal(old_info) ||
-          !shouldForceLocal(*resolved_result.info)) {
-        // If the old info and the new info are both forcefully local, then
-        // we should keep the output_sym in forcefully local category. Else,
-        // we should re-sort the output_sym
-        m_Module.getSymbolTable().arrange(*output_sym, old_info);
-      }
-    }
-  }
-
-  return input_sym;
-}
-
-/// addSymbolFromDynObj - add a symbol from object file and resolve it
-/// immediately
-LDSymbol* FragmentLinker::addSymbolFromDynObj(const llvm::StringRef& pName,
-                                        ResolveInfo::Type pType,
-                                        ResolveInfo::Desc pDesc,
-                                        ResolveInfo::Binding pBinding,
-                                        ResolveInfo::SizeType pSize,
-                                        LDSymbol::ValueType pValue,
-                                        FragmentRef* pFragmentRef,
-                                        ResolveInfo::Visibility pVisibility)
-{
-  // We don't need sections of dynamic objects. So we ignore section symbols.
-  if (pType == ResolveInfo::Section)
-    return NULL;
-
-  // ignore symbols with local binding or that have internal or hidden
-  // visibility
-  if (pBinding == ResolveInfo::Local ||
-      pVisibility == ResolveInfo::Internal ||
-      pVisibility == ResolveInfo::Hidden)
-    return NULL;
-
-  // A protected symbol in a shared library must be treated as a
-  // normal symbol when viewed from outside the shared library.
-  if (pVisibility == ResolveInfo::Protected)
-    pVisibility = ResolveInfo::Default;
-
-  // insert symbol and resolve it immediately
-  // resolved_result is a triple <resolved_info, existent, override>
-  Resolver::Result resolved_result;
-  m_Module.getNamePool().insertSymbol(pName, true, pType, pDesc,
-                                      pBinding, pSize, pVisibility,
-                                      NULL, resolved_result);
-
-  // the return ResolveInfo should not NULL
-  assert(NULL != resolved_result.info);
-
-  // create a LDSymbol for the input file.
-  LDSymbol* input_sym = LDSymbol::Create(*resolved_result.info);
-  input_sym->setFragmentRef(pFragmentRef);
-  input_sym->setValue(pValue);
-
-  LDSymbol* output_sym = NULL;
-  if (!resolved_result.existent) {
-    // we get a new symbol, leave it as NULL
-    resolved_result.info->setSymPtr(NULL);
-  }
-  else {
-    // we saw the symbol before, but the output_sym still may be NULL.
-    output_sym = resolved_result.info->outSymbol();
-  }
-
-  if (output_sym != NULL) {
-    // After symbol resolution, visibility is changed to the most restrict one.
-    // If we are not doing incremental linking, then any symbol with hidden
-    // or internal visibility is forcefully set as a local symbol.
-    if (shouldForceLocal(*resolved_result.info)) {
-      m_Module.getSymbolTable().forceLocal(*output_sym);
-    }
-  }
-
-  return input_sym;
-}
-
 /// defineSymbolForcefully - define an output symbol and override it immediately
 LDSymbol* FragmentLinker::defineSymbolForcefully(const llvm::StringRef& pName,
                                            bool pIsDyn,
@@ -462,36 +293,6 @@ bool FragmentLinker::shouldForceLocal(const ResolveInfo& pInfo) const
 //===----------------------------------------------------------------------===//
 // Relocation Operations
 //===----------------------------------------------------------------------===//
-/// addRelocation - add a relocation entry in FragmentLinker (only for object file)
-///
-/// All symbols should be read and resolved before calling this function.
-Relocation* FragmentLinker::addRelocation(Relocation::Type pType,
-                                          LDSymbol& pSym,
-                                          LDSection& pSection,
-                                          uint32_t pOffset,
-                                          Relocation::Address pAddend)
-{
-  // FIXME: we should dicard sections and symbols first instead
-  // if the symbol is in the discarded input section, then we also need to
-  // discard this relocation.
-  ResolveInfo* resolve_info = pSym.resolveInfo();
-  if (!pSym.hasFragRef() &&
-      resolve_info->type() == ResolveInfo::Section &&
-      resolve_info->desc() == ResolveInfo::Undefined)
-    return NULL;
-
-  FragmentRef* frag_ref = FragmentRef::Create(*pSection.getLink(), pOffset);
-
-  Relocation* relocation = m_Backend.getRelocFactory()->produce(pType,
-                                                                *frag_ref,
-                                                                pAddend);
-
-  relocation->setSymInfo(resolve_info);
-  pSection.getRelocData()->getFragmentList().push_back(relocation);
-
-  return relocation;
-}
-
 bool FragmentLinker::applyRelocations()
 {
   // when producing relocatables, no need to apply relocation
@@ -513,7 +314,7 @@ bool FragmentLinker::applyRelocations()
       RelocData::iterator reloc, rEnd = (*rs)->getRelocData()->end();
       for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
         Relocation* relocation = llvm::cast<Relocation>(reloc);
-        relocation->apply(*m_Backend.getRelocFactory());
+        relocation->apply(*m_Backend.getRelocator());
       } // for all relocations
     } // for all relocation section
   } // for all inputs
@@ -525,7 +326,7 @@ bool FragmentLinker::applyRelocations()
     BranchIsland& island = *facIter;
     BranchIsland::reloc_iterator iter, iterEnd = island.reloc_end();
     for (iter = island.reloc_begin(); iter != iterEnd; ++iter)
-      (*iter)->apply(*m_Backend.getRelocFactory());
+      (*iter)->apply(*m_Backend.getRelocator());
   }
   return true;
 }
@@ -630,17 +431,17 @@ void FragmentLinker::writeRelocationResult(Relocation& pReloc, uint8_t* pOutput)
 
   uint8_t* target_addr = pOutput + out_offset;
   // byte swapping if target and host has different endian, and then write back
-  if(llvm::sys::isLittleEndianHost() != m_Backend.isLittleEndian()) {
+  if(llvm::sys::isLittleEndianHost() != m_Config.targets().isLittleEndian()) {
      uint64_t tmp_data = 0;
 
-     switch(m_Backend.bitclass()) {
+     switch(m_Config.targets().bitclass()) {
        case 32u:
-         tmp_data = bswap32(pReloc.target());
+         tmp_data = mcld::bswap32(pReloc.target());
          std::memcpy(target_addr, &tmp_data, 4);
          break;
 
        case 64u:
-         tmp_data = bswap64(pReloc.target());
+         tmp_data = mcld::bswap64(pReloc.target());
          std::memcpy(target_addr, &tmp_data, 8);
          break;
 
@@ -649,7 +450,7 @@ void FragmentLinker::writeRelocationResult(Relocation& pReloc, uint8_t* pOutput)
     }
   }
   else
-    std::memcpy(target_addr, &pReloc.target(), m_Backend.bitclass()/8);
+    std::memcpy(target_addr, &pReloc.target(), m_Config.targets().bitclass()/8);
 }
 
 /// isOutputPIC - return whether the output is position-independent

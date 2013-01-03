@@ -15,16 +15,20 @@ namespace mcld {
 
 class Module;
 class LinkerConfig;
+class IRBuilder;
 class FragmentLinker;
 class Relocation;
 class RelocationFactory;
+class Relocator;
 class Layout;
 class ArchiveReader;
 class ObjectReader;
 class DynObjReader;
+class BinaryReader;
 class ObjectWriter;
 class DynObjWriter;
 class ExecWriter;
+class BinaryWriter;
 class LDFileFormat;
 class LDSymbol;
 class LDSection;
@@ -57,9 +61,10 @@ public:
   virtual void initTargetSymbols(FragmentLinker& pLinker) { }
   virtual void initTargetRelocation(FragmentLinker& pLinker) { }
   virtual bool initStandardSymbols(FragmentLinker& pLinker, Module& pModule) = 0;
-  virtual bool initRelocFactory(const FragmentLinker& pLinker) = 0;
 
-  virtual RelocationFactory* getRelocFactory() = 0;
+  virtual bool initRelocator(const FragmentLinker& pLinker) = 0;
+
+  virtual Relocator* getRelocator() = 0;
 
   /// scanRelocation - When read in relocations, backend can do any modification
   /// to relocation and generate empty entries, such as GOT, dynamic relocation
@@ -86,13 +91,18 @@ public:
 
   // -----  format dependent  ----- //
   virtual ArchiveReader* createArchiveReader(Module&) = 0;
-  virtual ObjectReader*  createObjectReader(FragmentLinker&) = 0;
-  virtual DynObjReader*  createDynObjReader(FragmentLinker&) = 0;
-  virtual ObjectWriter*  createObjectWriter(FragmentLinker&) = 0;
-  virtual DynObjWriter*  createDynObjWriter(FragmentLinker&) = 0;
-  virtual ExecWriter*    createExecWriter(FragmentLinker&) = 0;
+  virtual ObjectReader*  createObjectReader(IRBuilder&) = 0;
+  virtual DynObjReader*  createDynObjReader(IRBuilder&) = 0;
+  virtual BinaryReader*  createBinaryReader(IRBuilder&) = 0;
+  virtual ObjectWriter*  createObjectWriter() = 0;
+  virtual DynObjWriter*  createDynObjWriter() = 0;
+  virtual ExecWriter*    createExecWriter() = 0;
+  virtual BinaryWriter*  createBinaryWriter() = 0;
 
   virtual bool initStdSections(ObjectBuilder& pBuilder) = 0;
+
+  /// layout - layout method
+  virtual void layout(Module& pModule, FragmentLinker& pLinker) = 0;
 
   /// preLayout - Backend can do any needed modification before layout
   virtual void preLayout(Module& pModule, FragmentLinker& pLinker) = 0;
@@ -103,12 +113,6 @@ public:
   /// postProcessing - Backend can do any needed modification in the final stage
   virtual void postProcessing(FragmentLinker& pLinker,
                               MemoryArea& pOutput) = 0;
-
-  /// Is the target machine little endian? **/
-  virtual bool isLittleEndian() const = 0;
-
-  /// bit class. the bit length of the target machine, 32 or 64 **/
-  virtual unsigned int bitclass() const = 0;
 
   /// the common page size of the target machine
   virtual uint64_t commonPageSize() const = 0;

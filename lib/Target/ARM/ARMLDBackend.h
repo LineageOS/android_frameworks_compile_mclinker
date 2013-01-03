@@ -19,6 +19,7 @@
 namespace mcld {
 
 class LinkerConfig;
+class GNUInfo;
 class FragmentLinker;
 class SectionMap;
 
@@ -38,7 +39,7 @@ public:
   static const int32_t THM2_MAX_BWD_BRANCH_OFFSET = (-(1 << 24) + 4);
 
 public:
-  ARMGNULDBackend(const LinkerConfig& pConfig);
+  ARMGNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo);
   ~ARMGNULDBackend();
 
 public:
@@ -94,11 +95,11 @@ public:
   /// initTargetSymbols - initialize target dependent symbols in output.
   void initTargetSymbols(FragmentLinker& pLinker);
 
-  /// initRelocFactory - create and initialize RelocationFactory
-  bool initRelocFactory(const FragmentLinker& pLinker);
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator(const FragmentLinker& pLinker);
 
-  /// getRelocFactory
-  RelocationFactory* getRelocFactory();
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
   /// scanRelocation - determine the empty entries are needed or not and create
   /// the empty entries if needed.
@@ -111,26 +112,9 @@ public:
                       Module& pModule,
                       const LDSection& pSection);
 
-  uint32_t machine() const
-  { return llvm::ELF::EM_ARM; }
-
-  /// OSABI - the value of e_ident[EI_OSABI]
-  virtual uint8_t OSABI() const
-  { return llvm::ELF::ELFOSABI_NONE; }
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  virtual uint8_t ABIVersion() const
-  { return 0x0; }
-
   /// flags - the value of ElfXX_Ehdr::e_flags
   virtual uint64_t flags() const
   { return (llvm::ELF::EF_ARM_EABIMASK & 0x05000000); }
-
-  bool isLittleEndian() const
-  { return true; }
-
-  unsigned int bitclass() const
-  { return 32; }
 
   uint64_t defaultTextSegmentAddr() const
   { return 0x8000; }
@@ -246,7 +230,8 @@ private:
                                    const FragmentLinker& pLinker);
 
 private:
-  RelocationFactory* m_pRelocFactory;
+  Relocator* m_pRelocator;
+
   ARMGOT* m_pGOT;
   ARMPLT* m_pPLT;
   /// m_RelDyn - dynamic relocation table of .rel.dyn

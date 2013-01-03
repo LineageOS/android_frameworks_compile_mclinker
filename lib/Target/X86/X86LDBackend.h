@@ -20,6 +20,7 @@
 namespace mcld {
 
 class LinkerConfig;
+class X86GNUInfo;
 
 //===----------------------------------------------------------------------===//
 /// X86GNULDBackend - linker backend of X86 target of GNU ELF format
@@ -71,16 +72,11 @@ public:
   };
 
 public:
-  X86GNULDBackend(const LinkerConfig& pConfig);
+  X86GNULDBackend(const LinkerConfig& pConfig, X86GNUInfo* pInfo);
 
   ~X86GNULDBackend();
 
-  RelocationFactory* getRelocFactory();
-
   uint32_t machine() const;
-
-  bool isLittleEndian() const
-  { return true; }
 
   X86GOT& getGOT();
 
@@ -94,9 +90,7 @@ public:
 
   const X86PLT& getPLT() const;
 
-  GOT::Entry& getTLSModuleID();
-
-  unsigned int bitclass() const;
+  X86GOTEntry& getTLSModuleID();
 
   /// preLayout - Backend can do any needed modification before layout
   void doPreLayout(FragmentLinker& pLinker);
@@ -130,16 +124,6 @@ public:
   uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
-  /// OSABI - the value of e_ident[EI_OSABI]
-  /// FIXME
-  uint8_t OSABI() const
-  { return llvm::ELF::ELFOSABI_NONE; }
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  /// FIXME
-  uint8_t ABIVersion() const
-  { return 0x0; }
-
   /// flags - the value of ElfXX_Ehdr::e_flags
   /// FIXME
   uint64_t flags() const
@@ -148,8 +132,11 @@ public:
   uint64_t defaultTextSegmentAddr() const
   { return 0x08048000; }
 
-  // initRelocFactory - create and initialize RelocationFactory
-  bool initRelocFactory(const FragmentLinker& pLinker);
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator(const FragmentLinker& pLinker);
+
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
   void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
@@ -217,7 +204,7 @@ private:
                                    const FragmentLinker& pLinker);
 
 private:
-  RelocationFactory* m_pRelocFactory;
+  Relocator* m_pRelocator;
   X86GOT* m_pGOT;
   X86PLT* m_pPLT;
   X86GOTPLT* m_pGOTPLT;

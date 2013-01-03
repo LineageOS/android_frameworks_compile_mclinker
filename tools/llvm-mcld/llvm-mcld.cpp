@@ -283,7 +283,7 @@ ArgSysRoot("sysroot",
            cl::value_desc("directory"),
            cl::ValueRequired);
 
-static cl::list<std::string>
+static cl::list<std::string, bool, llvm::cl::SearchDirParser>
 ArgSearchDirList("L",
                  cl::ZeroOrMore,
                  cl::desc("Add path searchdir to the list of paths that ld will search for archive libraries and ld control scripts."),
@@ -597,6 +597,26 @@ ArgForceUndefinedAlias("undefined",
                        cl::desc("alias for -u"),
                        cl::aliasopt(ArgForceUndefined));
 
+static cl::opt<std::string>
+ArgVersionScript("version-script",
+                 cl::desc("Version script."),
+                 cl::value_desc("Version script"));
+
+static cl::opt<bool>
+ArgNoStdLib("nostdlib",
+            cl::desc("Only search lib dirs explicitly specified on cmdline"),
+            cl::init(false));
+
+static cl::opt<bool>
+ArgWarnCommon("warn-common",
+              cl::desc("warn common symbol"),
+              cl::init(false));
+
+static cl::opt<bool>
+ArgFatalWarnings("fatal-warnings",
+              cl::desc("turn all warnings into errors"),
+              cl::init(false));
+
 /// @{
 /// @name FIXME: end of unsupported options
 /// @}
@@ -605,6 +625,54 @@ static cl::opt<bool>
 ArgWarnSharedTextrel("warn-shared-textrel",
                      cl::desc("Warn if adding DT_TEXTREL in a shared object."),
                      cl::init(false));
+
+namespace format {
+enum Format {
+  Binary,
+  Unknown // decided by triple
+};
+} // namespace of format
+
+static cl::opt<format::Format>
+ArgFormat("b",
+  cl::value_desc("Format"),
+  cl::desc("set input format"),
+  cl::init(format::Unknown),
+  cl::values(
+    clEnumValN(format::Binary, "binary",
+      "read in binary machine code."),
+    clEnumValEnd));
+
+static cl::alias
+ArgFormatAlias("format",
+               cl::desc("alias for -b"),
+               cl::aliasopt(ArgFormat));
+
+static cl::opt<format::Format>
+ArgOFormat("oformat",
+  cl::value_desc("Format"),
+  cl::desc("set output format"),
+  cl::init(format::Unknown),
+  cl::values(
+    clEnumValN(format::Binary, "binary",
+      "generate binary machine code."),
+    clEnumValEnd));
+
+static cl::opt<bool>
+ArgDefineCommon("d",
+                cl::ZeroOrMore,
+                cl::desc("Define common symbol"),
+                cl::init(false));
+
+static cl::alias
+ArgDefineCommonAlias1("dc",
+                      cl::desc("alias for -d"),
+                      cl::aliasopt(ArgDefineCommon));
+
+static cl::alias
+ArgDefineCommonAlias2("dp",
+                      cl::desc("alias for -d"),
+                      cl::aliasopt(ArgDefineCommon));
 
 //===----------------------------------------------------------------------===//
 // Scripting Options
@@ -743,6 +811,7 @@ static mcld::ToolOutputFile *GetOutputStream(const char* pTargetName,
     break;
   case mcld::CGFT_DSOFile:
   case mcld::CGFT_EXEFile:
+  case mcld::CGFT_BINARY:
   case mcld::CGFT_NULLFile:
     permission = 0755;
     break;
@@ -757,6 +826,44 @@ static mcld::ToolOutputFile *GetOutputStream(const char* pTargetName,
                                                permission);
 
   return result_output;
+}
+
+/// ParseProgName - Parse program name
+/// This function simplifies cross-compiling by reading triple from the program
+/// name. For example, if the program name is `arm-linux-eabi-ld.mcld', we can
+/// get the triple is arm-linux-eabi by the program name.
+static void ParseProgName(const char *progname)
+{
+  static const char *suffixes[] = {
+    "ld",
+    "ld.mcld",
+  };
+
+  std::string ProgName(mcld::sys::fs::Path(progname).stem().native());
+
+  for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+    if (ProgName == suffixes[i])
+      return;
+  }
+
+  StringRef ProgNameRef(ProgName);
+  StringRef Prefix;
+
+  for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+    if (!ProgNameRef.endswith(suffixes[i]))
+      continue;
+
+    StringRef::size_type LastComponent = ProgNameRef.rfind('-',
+      ProgNameRef.size() - strlen(suffixes[i]));
+    if (LastComponent == StringRef::npos)
+      continue;
+    StringRef Prefix = ProgNameRef.slice(0, LastComponent);
+    std::string IgnoredError;
+    if (!llvm::TargetRegistry::lookupTarget(Prefix, IgnoredError))
+      continue;
+    TargetTriple = Prefix.str();
+    return;
+  }
 }
 
 static bool ShouldColorize()
@@ -788,6 +895,9 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   // set up soname
   pConfig.options().setSOName(ArgSOName);
 
+  // --fatal-warnings
+  pConfig.options().setFatalWarnings(ArgFatalWarnings);
+
   // -shared or -pie
   if (true == ArgShared || true == ArgPIE) {
     ArgFileType = mcld::CGFT_DSOFile;
@@ -795,6 +905,13 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   else if (true == ArgRelocatable) {
     ArgFileType = mcld::CGFT_PARTIAL;
   }
+  else if (format::Binary == ArgOFormat) {
+    ArgFileType = mcld::CGFT_BINARY;
+  }
+
+  // -b [input-format], --format=[input-format]
+  if (format::Binary == ArgFormat)
+    pConfig.options().setBinaryInput();
 
   // -V
   if (ArgVersion) {
@@ -838,6 +955,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   pConfig.options().setStripDebug(ArgStripDebug);
   pConfig.options().setExportDynamic(ArgExportDynamic);
   pConfig.options().setWarnSharedTextrel(ArgWarnSharedTextrel);
+  pConfig.options().setDefineCommon(ArgDefineCommon);
 
   // set up rename map, for --wrap
   cl::list<std::string>::iterator wname;
@@ -968,13 +1086,6 @@ int main(int argc, char* argv[])
 {
   LLVMContext &Context = getGlobalContext();
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
-  cl::ParseCommandLineOptions(argc, argv, "MCLinker\n");
-
-#ifdef ENABLE_UNITTEST
-  if (UnitTest) {
-    return unit_test( argc, argv );
-  }
-#endif
 
   // Initialize targets first, so that --version shows registered targets.
   InitializeAllTargets();
@@ -985,6 +1096,15 @@ int main(int argc, char* argv[])
   mcld::InitializeAllLinkers();
   mcld::InitializeAllEmulations();
   mcld::InitializeAllDiagnostics();
+
+  ParseProgName(argv[0]);
+  cl::ParseCommandLineOptions(argc, argv, "MCLinker\n");
+
+#ifdef ENABLE_UNITTEST
+  if (UnitTest) {
+    return unit_test( argc, argv );
+  }
+#endif
 
   // Load the module to be compiled...
   std::auto_ptr<llvm::Module> M;
@@ -1003,7 +1123,8 @@ int main(int argc, char* argv[])
   if (ArgBitcodeFilename.empty() &&
       (mcld::CGFT_DSOFile != ArgFileType &&
        mcld::CGFT_EXEFile != ArgFileType &&
-       mcld::CGFT_PARTIAL != ArgFileType)) {
+       mcld::CGFT_PARTIAL != ArgFileType &&
+       mcld::CGFT_BINARY  != ArgFileType)) {
     // If the file is not given, forcefully read from stdin
     if (ArgVerbose >= 0) {
       errs() << "** The bitcode/llvm asm file is not given. Read from stdin.\n"
@@ -1087,7 +1208,7 @@ int main(int argc, char* argv[])
     }
   }
   // Set up mcld::LinkerConfig
-  LDConfig.setTriple(TheTriple);
+  LDConfig.targets().setTriple(TheTriple);
 
   // Package up features to be passed to target/subtarget
   std::string FeaturesStr;
@@ -1198,6 +1319,9 @@ int main(int argc, char* argv[])
 
     PM.run(mod);
   }
+
+  if (mcld::getDiagnosticEngine().getPrinter()->getNumErrors())
+    return 1;
 
   // Declare success.
   Out->keep();

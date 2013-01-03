@@ -33,7 +33,6 @@ public:
     Alignment,
     Fillment,
     Region,
-    Relocation,
     Target,
     Stub,
     Null
@@ -48,7 +47,8 @@ public:
 
   Type getKind() const { return m_Kind; }
 
-  SectionData *getParent() const { return m_pParent; }
+  const SectionData* getParent() const { return m_pParent; }
+  SectionData*       getParent()       { return m_pParent; }
 
   void setParent(SectionData *pValue) { m_pParent = pValue; }
 

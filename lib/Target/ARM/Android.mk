@@ -9,7 +9,7 @@ mcld_arm_target_SRC_FILES := \
   ARMLDBackend.cpp  \
   ARMMCLinker.cpp  \
   ARMPLT.cpp  \
-  ARMRelocationFactory.cpp  \
+  ARMRelocator.cpp  \
   ARMTargetMachine.cpp \
   ARMToARMStub.cpp \
   ARMToTHMStub.cpp \

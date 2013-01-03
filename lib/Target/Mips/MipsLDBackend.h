@@ -19,6 +19,7 @@ class FragmentLinker;
 class OutputRelocSection;
 class SectionMap;
 class MemoryArea;
+class MipsGNUInfo;
 
 //===----------------------------------------------------------------------===//
 /// MipsGNULDBackend - linker backend of Mips target of GNU ELF format
@@ -34,7 +35,7 @@ public:
   };
 
 public:
-  MipsGNULDBackend(const LinkerConfig& pConfig);
+  MipsGNULDBackend(const LinkerConfig& pConfig, MipsGNUInfo* pInfo);
   ~MipsGNULDBackend();
 
 public:
@@ -44,11 +45,11 @@ public:
   /// initTargetSymbols - initialize target dependent symbols in output.
   void initTargetSymbols(FragmentLinker& pLinker);
 
-  /// initRelocFactory - create and initialize RelocationFactory.
-  bool initRelocFactory(const FragmentLinker& pLinker);
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator(const FragmentLinker& pLinker);
 
-  /// getRelocFactory - return relocation factory.
-  RelocationFactory* getRelocFactory();
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
   /// scanRelocation - determine the empty entries are needed or not and
   /// create the empty entries if needed.
@@ -58,20 +59,8 @@ public:
                       Module& pModule,
                       const LDSection& pSection);
 
-  uint32_t machine() const;
-
-  /// OSABI - the value of e_ident[EI_OSABI]
-  uint8_t OSABI() const;
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  uint8_t ABIVersion() const;
-
   /// flags - the value of ElfXX_Ehdr::e_flags
   uint64_t flags() const;
-
-  bool isLittleEndian() const;
-
-  unsigned int bitclass() const;
 
   uint64_t defaultTextSegmentAddr() const;
 
@@ -159,7 +148,7 @@ private:
                                    const FragmentLinker& pLinker);
 
 private:
-  RelocationFactory* m_pRelocFactory;
+  Relocator* m_pRelocator;
 
   MipsGOT* m_pGOT;                      // .got
   OutputRelocSection* m_pRelDyn;        // .rel.dyn

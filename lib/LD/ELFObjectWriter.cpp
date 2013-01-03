@@ -9,11 +9,12 @@
 #include <mcld/LD/ELFObjectWriter.h>
 
 #include <mcld/Module.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/Target/GNULDBackend.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Support/MemoryArea.h>
 
 #include <llvm/Support/system_error.h>
+
 using namespace llvm;
 using namespace mcld;
 
@@ -21,8 +22,9 @@ using namespace mcld;
 // ELFObjectWriter
 //===----------------------------------------------------------------------===//
 ELFObjectWriter::ELFObjectWriter(GNULDBackend& pBackend,
-                                 FragmentLinker& pLinker)
-  : ObjectWriter(pBackend), ELFWriter(pBackend), m_Linker(pLinker) {
+                                 const LinkerConfig& pConfig)
+  : ObjectWriter(pBackend), ELFWriter(pBackend),
+    m_Config(pConfig) {
 }
 
 ELFObjectWriter::~ELFObjectWriter()
@@ -41,6 +43,10 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
     MemoryRegion* region = NULL;
     // request output region
     switch((*sect)->kind()) {
+      case LDFileFormat::Note:
+        if ((*sect)->getSectionData() == NULL)
+          continue;
+        // Fall through
       case LDFileFormat::Regular:
       case LDFileFormat::Relocation:
       case LDFileFormat::Target:
@@ -58,7 +64,6 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
       case LDFileFormat::Null:
       case LDFileFormat::NamePool:
       case LDFileFormat::BSS:
-      case LDFileFormat::Note:
       case LDFileFormat::MetaData:
       case LDFileFormat::Version:
       case LDFileFormat::EhFrameHdr:
@@ -80,6 +85,7 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
       case LDFileFormat::Regular:
       case LDFileFormat::Debug:
       case LDFileFormat::GCCExceptTable:
+      case LDFileFormat::Note:
       case LDFileFormat::EhFrame: {
         // FIXME: if optimization of exception handling sections is enabled,
         // then we should emit these sections by the other way.
@@ -87,7 +93,7 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
         break;
       }
       case LDFileFormat::Relocation:
-        emitRelocation(m_Linker.getLDInfo(), **sect, *region);
+        emitRelocation(m_Config, **sect, *region);
         break;
       case LDFileFormat::Target:
         target().emitSectionData(**sect, *region);
@@ -101,23 +107,23 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
                   pModule,
                   pOutput);
 
-  if (32 == target().bitclass()) {
+  if (m_Config.targets().is32Bits()) {
     // Write out ELF header
     // Write out section header table
-    writeELF32Header(m_Linker.getLDInfo(),
+    writeELF32Header(m_Config,
                      pModule,
                      pOutput);
 
-    emitELF32SectionHeader(pModule, m_Linker.getLDInfo(), pOutput);
+    emitELF32SectionHeader(pModule, m_Config, pOutput);
   }
-  else if (64 == target().bitclass()) {
+  else if (m_Config.targets().is64Bits()) {
     // Write out ELF header
     // Write out section header table
-    writeELF64Header(m_Linker.getLDInfo(),
+    writeELF64Header(m_Config,
                      pModule,
                      pOutput);
 
-    emitELF64SectionHeader(pModule, m_Linker.getLDInfo(), pOutput);
+    emitELF64SectionHeader(pModule, m_Config, pOutput);
   }
   else
     return make_error_code(errc::not_supported);

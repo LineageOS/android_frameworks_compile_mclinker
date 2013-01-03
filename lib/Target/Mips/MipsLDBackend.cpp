@@ -7,9 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Mips.h"
+#include "MipsGNUInfo.h"
 #include "MipsELFDynamic.h"
 #include "MipsLDBackend.h"
-#include "MipsRelocationFactory.h"
+#include "MipsRelocator.h"
 
 #include <llvm/ADT/Triple.h>
 #include <llvm/Support/ELF.h>
@@ -43,9 +44,10 @@ using namespace mcld;
 //===----------------------------------------------------------------------===//
 // MipsGNULDBackend
 //===----------------------------------------------------------------------===//
-MipsGNULDBackend::MipsGNULDBackend(const LinkerConfig& pConfig)
-  : GNULDBackend(pConfig),
-    m_pRelocFactory(NULL),
+MipsGNULDBackend::MipsGNULDBackend(const LinkerConfig& pConfig,
+                                   MipsGNUInfo* pInfo)
+  : GNULDBackend(pConfig, pInfo),
+    m_pRelocator(NULL),
     m_pGOT(NULL),
     m_pRelDyn(NULL),
     m_pDynamic(NULL),
@@ -56,7 +58,7 @@ MipsGNULDBackend::MipsGNULDBackend(const LinkerConfig& pConfig)
 
 MipsGNULDBackend::~MipsGNULDBackend()
 {
-  delete m_pRelocFactory;
+  delete m_pRelocator;
   delete m_pGOT;
   delete m_pRelDyn;
   delete m_pDynamic;
@@ -73,9 +75,7 @@ void MipsGNULDBackend::initTargetSections(Module& pModule, ObjectBuilder& pBuild
 
     // initialize .rel.dyn
     LDSection& reldyn = file_format->getRelDyn();
-    m_pRelDyn = new OutputRelocSection(pModule,
-                                       reldyn,
-                                       getRelEntrySize());
+    m_pRelDyn = new OutputRelocSection(pModule, reldyn);
   }
 }
 
@@ -110,19 +110,19 @@ void MipsGNULDBackend::initTargetSymbols(FragmentLinker& pLinker)
   }
 }
 
-bool MipsGNULDBackend::initRelocFactory(const FragmentLinker& pLinker)
+bool MipsGNULDBackend::initRelocator(const FragmentLinker& pLinker)
 {
-  if (NULL == m_pRelocFactory) {
-    m_pRelocFactory = new MipsRelocationFactory(1024, *this);
-    m_pRelocFactory->setFragmentLinker(pLinker);
+  if (NULL == m_pRelocator) {
+    m_pRelocator = new MipsRelocator(*this);
+    m_pRelocator->setFragmentLinker(pLinker);
   }
   return true;
 }
 
-RelocationFactory* MipsGNULDBackend::getRelocFactory()
+Relocator* MipsGNULDBackend::getRelocator()
 {
-  assert(NULL != m_pRelocFactory);
-  return m_pRelocFactory;
+  assert(NULL != m_pRelocator);
+  return m_pRelocator;
 }
 
 void MipsGNULDBackend::scanRelocation(Relocation& pReloc,
@@ -156,28 +156,13 @@ void MipsGNULDBackend::scanRelocation(Relocation& pReloc,
 
   // check if we shoule issue undefined reference for the relocation target
   // symbol
-  if (rsym->isUndef() && !rsym->isDyn() && !rsym->isWeak())
+  if (rsym->isUndef() && !rsym->isDyn() && !rsym->isWeak() && !rsym->isNull())
     fatal(diag::undefined_reference) << rsym->name();
 
   if ((rsym->reserved() & ReserveRel) != 0x0) {
     // set hasTextRelSection if needed
     checkAndSetHasTextRel(pSection);
   }
-}
-
-uint32_t MipsGNULDBackend::machine() const
-{
-  return llvm::ELF::EM_MIPS;
-}
-
-uint8_t MipsGNULDBackend::OSABI() const
-{
-  return llvm::ELF::ELFOSABI_NONE;
-}
-
-uint8_t MipsGNULDBackend::ABIVersion() const
-{
-  return 0;
 }
 
 uint64_t MipsGNULDBackend::flags() const
@@ -189,17 +174,6 @@ uint64_t MipsGNULDBackend::flags() const
          llvm::ELF::EF_MIPS_PIC |
          llvm::ELF::EF_MIPS_CPIC |
          E_MIPS_ABI_O32;
-}
-
-bool MipsGNULDBackend::isLittleEndian() const
-{
-  // Now we support little endian (mipsel) target only.
-  return true;
-}
-
-unsigned int MipsGNULDBackend::bitclass() const
-{
-  return 32;
 }
 
 uint64_t MipsGNULDBackend::defaultTextSegmentAddr() const
@@ -227,9 +201,11 @@ void MipsGNULDBackend::doPreLayout(FragmentLinker& pLinker)
       defineGOTSymbol(pLinker);
     }
 
+    ELFFileFormat* file_format = getOutputFormat();
     // set .rel.dyn size
     if (!m_pRelDyn->empty())
-      m_pRelDyn->finalizeSectionSize();
+      file_format->getRelDyn().setSize(
+                                  m_pRelDyn->numOfRelocs() * getRelEntrySize());
   }
 }
 void MipsGNULDBackend::doPostLayout(Module& pModule,
@@ -242,7 +218,7 @@ void MipsGNULDBackend::doPostLayout(Module& pModule,
 MipsELFDynamic& MipsGNULDBackend::dynamic()
 {
   if (NULL == m_pDynamic)
-    m_pDynamic = new MipsELFDynamic(*this);
+    m_pDynamic = new MipsELFDynamic(*this, config());
 
   return *m_pDynamic;
 }
@@ -298,6 +274,9 @@ MipsGNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
   size_t shstrtab = 1;
   size_t hash   = 0;
 
+  // number of local symbol in the .dynsym
+  size_t dynsym_local_cnt = 0;
+
   /// compute the size of .symtab, .dynsym and .strtab
   /// @{
   Module::const_sym_iterator symbol;
@@ -329,6 +308,7 @@ MipsGNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
     if (ResolveInfo::Section != (*symbol)->type() || *symbol == m_pGpDispSymbol)
       strtab += str_size;
   }
+  dynsym_local_cnt = dynsym;
   // compute the size of the reset of symbols
   symEnd = pModule.sym_end();
   for (symbol = symbols.tlsEnd(); symbol != symEnd; ++symbol) {
@@ -384,21 +364,28 @@ MipsGNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
       }
 
       // set size
-      if (32 == bitclass())
+      if (config().targets().is32Bits())
         file_format->getDynSymTab().setSize(dynsym*sizeof(llvm::ELF::Elf32_Sym));
       else
         file_format->getDynSymTab().setSize(dynsym*sizeof(llvm::ELF::Elf64_Sym));
       file_format->getDynStrTab().setSize(dynstr);
       file_format->getHashTab().setSize(hash);
 
+      // set .dynsym sh_info to one greater than the symbol table
+      // index of the last local symbol
+      file_format->getDynSymTab().setInfo(dynsym_local_cnt);
     }
     /* fall through */
     case LinkerConfig::Object: {
-      if (32 == bitclass())
+      if (config().targets().is32Bits())
         file_format->getSymTab().setSize(symtab*sizeof(llvm::ELF::Elf32_Sym));
       else
         file_format->getSymTab().setSize(symtab*sizeof(llvm::ELF::Elf64_Sym));
       file_format->getStrTab().setSize(strtab);
+
+      // set .symtab sh_info to one greater than the symbol table
+      // index of the last local symbol
+      file_format->getSymTab().setInfo(symbols.numOfLocals() + 1);
       break;
     }
     default: {
@@ -415,7 +402,7 @@ MipsGNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
     // Because some entries in .dynamic section need information of .dynsym,
     // .dynstr, .symtab, .strtab and .hash, we can not reserve non-DT_NEEDED
     // entries until we get the size of the sections mentioned above
-    dynamic().reserveEntries(config(), *file_format);
+    dynamic().reserveEntries(*file_format);
     file_format->getDynamic().setSize(dynamic().numOfBytes());
   }
   /// @}
@@ -630,7 +617,7 @@ void MipsGNULDBackend::emitDynNamePools(const Module& pModule,
   // initialize value of ELF .dynamic section
   if (LinkerConfig::DynObj == config().codeGenType())
     dynamic().applySoname(strtabsize);
-  dynamic().applyEntries(config(), *file_format);
+  dynamic().applyEntries(*file_format);
   dynamic().emit(dyn_sect, *dyn_region);
 
   strcpy((strtab + strtabsize), pModule.name().c_str());
@@ -823,7 +810,7 @@ void MipsGNULDBackend::scanLocalReloc(Relocation& pReloc,
         // section if the symbol section flags contains SHF_EXECINSTR.
         // 1. Find the reason of this condition.
         // 2. Check this condition here.
-        m_pRelDyn->reserveEntry(*m_pRelocFactory);
+        m_pRelDyn->reserveEntry();
         rsym->setReserved(rsym->reserved() | ReserveRel);
 
         // Remeber this rsym is a local GOT entry (as if it needs an entry).
@@ -927,7 +914,7 @@ void MipsGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_MIPS_HI16:
     case llvm::ELF::R_MIPS_LO16:
       if (symbolNeedsDynRel(pLinker, *rsym, false, true)) {
-        m_pRelDyn->reserveEntry(*m_pRelocFactory);
+        m_pRelDyn->reserveEntry();
         rsym->setReserved(rsym->reserved() | ReserveRel);
 
         // Remeber this rsym is a global GOT entry (as if it needs an entry).
@@ -1038,13 +1025,13 @@ void MipsGNULDBackend::doCreateProgramHdrs(Module& pModule,
 static TargetLDBackend* createMipsLDBackend(const llvm::Target& pTarget,
                                             const LinkerConfig& pConfig)
 {
-  if (pConfig.triple().isOSDarwin()) {
+  if (pConfig.targets().triple().isOSDarwin()) {
     assert(0 && "MachO linker is not supported yet");
   }
-  if (pConfig.triple().isOSWindows()) {
+  if (pConfig.targets().triple().isOSWindows()) {
     assert(0 && "COFF linker is not supported yet");
   }
-  return new MipsGNULDBackend(pConfig);
+  return new MipsGNULDBackend(pConfig, new MipsGNUInfo(pConfig.targets().triple()));
 }
 
 //===----------------------------------------------------------------------===//

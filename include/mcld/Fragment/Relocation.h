@@ -11,20 +11,24 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
-#include <llvm/Support/DataTypes.h>
-
-#include <mcld/Fragment/Fragment.h>
+#include <mcld/Config/Config.h>
 #include <mcld/Fragment/FragmentRef.h>
+#include <mcld/Support/GCFactoryListTraits.h>
+
+#include <llvm/ADT/ilist_node.h>
+#include <llvm/Support/DataTypes.h>
 
 namespace mcld {
 
 class ResolveInfo;
-class RelocationFactory;
+class Relocator;
 class LinkerConfig;
 
-class Relocation : public Fragment
+class Relocation : public llvm::ilist_node<Relocation>
 {
 friend class RelocationFactory;
+friend class GCFactoryListTraits<Relocation>;
+friend class Chunk<Relocation, MCLD_RELOCATIONS_PER_INPUT>;
 
 public:
   typedef uint64_t Address; // FIXME: use SizeTrait<T>::Address instead
@@ -33,13 +37,34 @@ public:
   typedef uint8_t Type;
 
 private:
+  Relocation();
+
   Relocation(Type pType,
              FragmentRef* pTargetRef,
              Address pAddend,
              DWord pTargetData);
 
-public:
   ~Relocation();
+
+public:
+  /// Initialize - set up the relocation factory
+  static void SetUp(const LinkerConfig& pConfig);
+
+  /// Clear - Clean up the relocation factory
+  static void Clear();
+
+  /// Create - produce an empty relocation entry
+  static Relocation* Create();
+
+  /// Create - produce a relocation entry
+  /// @param pType    [in] the type of the relocation entry
+  /// @param pFragRef [in] the place to apply the relocation
+  /// @param pAddend  [in] the addend of the relocation entry
+  static Relocation* Create(Type pType, FragmentRef& pFragRef,
+                            Address pAddend = 0);
+
+  /// Destroy - destroy a relocation entry
+  static void Destroy(Relocation*& pRelocation);
 
   /// type - relocation type
   Type type() const
@@ -67,8 +92,7 @@ public:
   const FragmentRef& targetRef() const { return m_TargetAddress; }
   FragmentRef&       targetRef()       { return m_TargetAddress; }
 
-
-  void apply(RelocationFactory& pRelocFactory);
+  void apply(Relocator& pRelocator);
 
   /// updateAddend - A relocation with a section symbol must update addend
   /// before reading its value.
@@ -80,13 +104,6 @@ public:
   void setAddend(Address pAddend);
 
   void setSymInfo(ResolveInfo* pSym);
-
-  // Relocation is a kind of Fragment with type of FT_Reloc
-  static bool classof(const Fragment *F)
-  { return F->getKind() == Fragment::Relocation; }
-
-  static bool classof(const Relocation *)
-  { return true; }
 
   size_t size() const;
 

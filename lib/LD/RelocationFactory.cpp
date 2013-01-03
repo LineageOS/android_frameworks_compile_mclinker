@@ -6,62 +6,69 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-
 #include <mcld/LD/RelocationFactory.h>
-
-#include <cstring>
-#include <cassert>
+#include <mcld/LinkerConfig.h>
+#include <mcld/Target/TargetLDBackend.h>
+#include <mcld/Support/MsgHandling.h>
 
 #include <llvm/Support/Host.h>
 
-#include <mcld/Target/GOT.h>
-#include <mcld/Target/TargetLDBackend.h>
+#include <cstring>
+#include <cassert>
 
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // RelocationFactory
 //===----------------------------------------------------------------------===//
-RelocationFactory::RelocationFactory(size_t pNum)
-  : GCFactory<Relocation, 0>(pNum),
-    m_pLinker(NULL) {
+RelocationFactory::RelocationFactory()
+  : GCFactory<Relocation, MCLD_RELOCATIONS_PER_INPUT>(), m_pConfig(NULL) {
 }
 
-RelocationFactory::~RelocationFactory()
+void RelocationFactory::setConfig(const LinkerConfig& pConfig)
 {
+  m_pConfig = &pConfig;
 }
 
 Relocation* RelocationFactory::produce(RelocationFactory::Type pType,
                                        FragmentRef& pFragRef,
                                        Address pAddend)
 {
+  if (NULL == m_pConfig) {
+    fatal(diag::reloc_factory_has_not_config);
+    return NULL;
+  }
+
   // target_data is the place where the relocation applys to.
   // Use TargetDataFactory to generate temporary data, and copy the
   // content of the fragment into this data.
   DWord target_data = 0;
 
   // byte swapping if the host and target have different endian
-  if(llvm::sys::isLittleEndianHost() != getTarget().isLittleEndian()) {
+  if(llvm::sys::isLittleEndianHost() != m_pConfig->targets().isLittleEndian()) {
      uint32_t tmp_data;
 
-     switch(getTarget().bitclass()) {
-      case 32u:
-        pFragRef.memcpy(&tmp_data, 4);
-        tmp_data = bswap32(tmp_data);
-        target_data = tmp_data;
-        break;
-
-      case 64u:
-        pFragRef.memcpy(&target_data, 8);
-        target_data = bswap64(target_data);
-        break;
-
-      default:
-        break;
-    }
+     switch (m_pConfig->targets().bitclass()) {
+       case 32: {
+         pFragRef.memcpy(&tmp_data, 4);
+         tmp_data = mcld::bswap32(tmp_data);
+         target_data = tmp_data;
+         break;
+       }
+       case 64: {
+         pFragRef.memcpy(&target_data, 8);
+         target_data = mcld::bswap64(target_data);
+         break;
+       }
+       default: {
+         fatal(diag::unsupported_bitclass) << m_pConfig->targets().triple().str()
+                                         << m_pConfig->targets().bitclass();
+         return NULL;
+       }
+     } // end of switch
   }
   else {
-    pFragRef.memcpy(&target_data, (getTarget().bitclass()/8));
+    pFragRef.memcpy(&target_data, (m_pConfig->targets().bitclass()/8));
   }
 
   Relocation *result = allocate();
@@ -81,21 +88,5 @@ Relocation* RelocationFactory::produceEmptyEntry()
 void RelocationFactory::destroy(Relocation* pRelocation)
 {
    /** GCFactory will recycle the relocation **/
-}
-
-void RelocationFactory::setFragmentLinker(const FragmentLinker& pLinker)
-{
-  m_pLinker = &pLinker;
-}
-
-const FragmentLinker& RelocationFactory::getFragmentLinker() const
-{
-  assert(NULL != m_pLinker);
-  return *m_pLinker;
-}
-
-bool RelocationFactory::hasFragmentLinker() const
-{
-  return (NULL != m_pLinker);
 }
 

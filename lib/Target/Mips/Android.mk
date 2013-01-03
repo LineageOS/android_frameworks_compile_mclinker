@@ -8,7 +8,7 @@ mcld_mips_target_SRC_FILES := \
   MipsGOT.cpp \
   MipsLDBackend.cpp \
   MipsMCLinker.cpp \
-  MipsRelocationFactory.cpp \
+  MipsRelocator.cpp \
   MipsTargetMachine.cpp
 
 # For the host

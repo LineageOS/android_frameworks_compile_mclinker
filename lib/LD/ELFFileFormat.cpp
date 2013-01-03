@@ -155,6 +155,7 @@ void ELFFileFormat::initStdSections(ObjectBuilder& pBuilder, unsigned int pBitCl
                                               llvm::ELF::SHT_SYMTAB,
                                               0x0,
                                               pBitClass / 8);
+
   f_pStrTab          = pBuilder.CreateSection(".strtab",
                                               LDFileFormat::NamePool,
                                               llvm::ELF::SHT_STRTAB,

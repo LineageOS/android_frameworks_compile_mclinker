@@ -11,18 +11,13 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
+#include <mcld/Config/Config.h>
 #include <mcld/Support/GCFactory.h>
 #include <mcld/Fragment/Relocation.h>
 
 namespace mcld {
 
-class LDSymbol;
-class ResolveInfo;
 class FragmentRef;
-class FragmentLinker;
-class Layout;
-class GOT;
-class TargetLDBackend;
 class LinkerConfig;
 
 /** \class RelocationFactory
@@ -30,7 +25,7 @@ class LinkerConfig;
  *  relocation
  *
  */
-class RelocationFactory : public GCFactory<Relocation, 0>
+class RelocationFactory : public GCFactory<Relocation, MCLD_RELOCATIONS_PER_INPUT>
 {
 public:
   typedef Relocation::Type Type;
@@ -38,21 +33,10 @@ public:
   typedef Relocation::DWord DWord;
   typedef Relocation::SWord SWord;
 
-  enum Result {
-    OK,
-    BadReloc,
-    Overflow,
-    Unsupport,
-    Unknown
-  };
-
 public:
-  explicit RelocationFactory(size_t pNum);
+  explicit RelocationFactory();
 
-  virtual ~RelocationFactory();
-
-  /// apply - general apply function
-  virtual Result applyRelocation(Relocation& pRelocation) = 0;
+  void setConfig(const LinkerConfig& pConfig);
 
   // ----- production ----- //
   /// produce - produce a relocation entry
@@ -69,22 +53,8 @@ public:
 
   void destroy(Relocation* pRelocation);
 
-  void setFragmentLinker(const FragmentLinker& pLinker);
-
-  // ------ observers -----//
-  const FragmentLinker& getFragmentLinker() const;
-
-  bool hasFragmentLinker() const;
-
-  virtual TargetLDBackend& getTarget() = 0;
-
-  virtual const TargetLDBackend& getTarget() const = 0;
-
-  virtual const char* getName(Type pType) const = 0;
-
 private:
-  const FragmentLinker* m_pLinker;
-
+  const LinkerConfig* m_pConfig;
 };
 
 } // namespace of mcld

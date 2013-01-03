@@ -11,7 +11,7 @@
 #include <mcld/LinkerConfig.h>
 #include <mcld/Module.h>
 #include <mcld/InputTree.h>
-#include <mcld/MC/InputBuilder.h>
+#include <mcld/IRBuilder.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/LD/LDContext.h>
 #include <mcld/LD/Archive.h>
@@ -19,11 +19,12 @@
 #include <mcld/LD/ObjectReader.h>
 #include <mcld/LD/DynObjReader.h>
 #include <mcld/LD/GroupReader.h>
+#include <mcld/LD/BinaryReader.h>
 #include <mcld/LD/ObjectWriter.h>
 #include <mcld/LD/DynObjWriter.h>
 #include <mcld/LD/ExecWriter.h>
+#include <mcld/LD/BinaryWriter.h>
 #include <mcld/LD/ResolveInfo.h>
-#include <mcld/LD/Layout.h>
 #include <mcld/LD/RelocData.h>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/MemoryArea.h>
@@ -39,20 +40,22 @@ using namespace mcld;
 
 ObjectLinker::ObjectLinker(const LinkerConfig& pConfig,
                            Module& pModule,
-                           InputBuilder& pInputBuilder,
+                           IRBuilder& pBuilder,
                            TargetLDBackend& pLDBackend)
   : m_Config(pConfig),
     m_Module(pModule),
-    m_InputBuilder(pInputBuilder),
+    m_Builder(pBuilder),
     m_pLinker(NULL),
     m_LDBackend(pLDBackend),
     m_pObjectReader(NULL),
     m_pDynObjReader(NULL),
     m_pArchiveReader(NULL),
+    m_pGroupReader(NULL),
+    m_pBinaryReader(NULL),
     m_pObjectWriter(NULL),
     m_pDynObjWriter(NULL),
     m_pExecWriter(NULL),
-    m_pGroupReader(NULL)
+    m_pBinaryWriter(NULL)
 {
   // set up soname
   if (!m_Config.options().soname().empty()) {
@@ -66,10 +69,12 @@ ObjectLinker::~ObjectLinker()
   delete m_pObjectReader;
   delete m_pDynObjReader;
   delete m_pArchiveReader;
+  delete m_pGroupReader;
+  delete m_pBinaryReader;
   delete m_pObjectWriter;
   delete m_pDynObjWriter;
   delete m_pExecWriter;
-  delete m_pGroupReader;
+  delete m_pBinaryWriter;
 }
 
 /// initFragmentLinker - initialize FragmentLinker
@@ -85,17 +90,19 @@ bool ObjectLinker::initFragmentLinker()
   // initialize the readers and writers
   // Because constructor can not be failed, we initalize all readers and
   // writers outside the FragmentLinker constructors.
-  m_pObjectReader  = m_LDBackend.createObjectReader(*m_pLinker);
+  m_pObjectReader  = m_LDBackend.createObjectReader(m_Builder);
   m_pArchiveReader = m_LDBackend.createArchiveReader(m_Module);
-  m_pDynObjReader  = m_LDBackend.createDynObjReader(*m_pLinker);
-  m_pObjectWriter  = m_LDBackend.createObjectWriter(*m_pLinker);
-  m_pDynObjWriter  = m_LDBackend.createDynObjWriter(*m_pLinker);
-  m_pExecWriter    = m_LDBackend.createExecWriter(*m_pLinker);
+  m_pDynObjReader  = m_LDBackend.createDynObjReader(m_Builder);
   m_pGroupReader   = new GroupReader(m_Module, *m_pObjectReader,
                                      *m_pDynObjReader, *m_pArchiveReader);
+  m_pBinaryReader  = m_LDBackend.createBinaryReader(m_Builder);
+  m_pObjectWriter  = m_LDBackend.createObjectWriter();
+  m_pDynObjWriter  = m_LDBackend.createDynObjWriter();
+  m_pExecWriter    = m_LDBackend.createExecWriter();
+  m_pBinaryWriter  = m_LDBackend.createBinaryWriter();
 
-  // initialize RelocationFactory
-  m_LDBackend.initRelocFactory(*m_pLinker);
+  // initialize Relocator
+  m_LDBackend.initRelocator(*m_pLinker);
 
   // initialize BranchIslandFactory
   m_LDBackend.initBRIslandFactory();
@@ -130,7 +137,7 @@ void ObjectLinker::normalize()
   for (input = m_Module.input_begin(); input!=inEnd; ++input) {
     // is a group node
     if (isGroup(input)) {
-      getGroupReader()->readGroup(input, m_InputBuilder, m_Config);
+      getGroupReader()->readGroup(input, m_Builder.getInputBuilder(), m_Config);
       continue;
     }
 
@@ -151,8 +158,14 @@ void ObjectLinker::normalize()
       continue;
     }
 
+    // read input as a binary file
+    if (m_Config.options().isBinaryInput()) {
+      (*input)->setType(Input::Object);
+      getBinaryReader()->readBinary(**input);
+      m_Module.getObjectList().push_back(*input);
+    }
     // is a relocatable object file
-    if (getObjectReader()->isMyFormat(**input)) {
+    else if (getObjectReader()->isMyFormat(**input)) {
       (*input)->setType(Input::Object);
       getObjectReader()->readHeader(**input);
       getObjectReader()->readSections(**input);
@@ -169,7 +182,7 @@ void ObjectLinker::normalize()
     // is an archive
     else if (getArchiveReader()->isMyFormat(**input)) {
       (*input)->setType(Input::Archive);
-      Archive archive(**input, m_InputBuilder);
+      Archive archive(**input, m_Builder.getInputBuilder());
       getArchiveReader()->readArchive(archive);
       if(archive.numOfObjectMember() > 0) {
         m_Module.getInputTree().merge<InputTree::Inclusive>(input,
@@ -178,7 +191,7 @@ void ObjectLinker::normalize()
     }
     else {
       fatal(diag::err_unrecognized_input_file) << (*input)->path()
-                                               << m_Config.triple().str();
+                                          << m_Config.targets().triple().str();
     }
   } // end of for
 }
@@ -342,18 +355,16 @@ bool ObjectLinker::prelayout()
 {
   // finalize the section symbols, set their fragment reference and push them
   // into output symbol table
-  Module::iterator iter, iterEnd = m_Module.end();
-  for (iter = m_Module.begin(); iter != iterEnd; ++iter) {
-    LDSection* section = *iter;
-    if (0x0 == section->size() || LDFileFormat::Relocation == section->kind())
-      continue;
-    m_Module.getSectionSymbolSet().finalize(
-                                           *section, m_Module.getSymbolTable());
+  Module::iterator sect, sEnd = m_Module.end();
+  for (sect = m_Module.begin(); sect != sEnd; ++sect) {
+    m_Module.getSectionSymbolSet().finalize(**sect, m_Module.getSymbolTable());
   }
 
   m_LDBackend.preLayout(m_Module, *m_pLinker);
 
-  m_LDBackend.allocateCommonSymbols(m_Module);
+  if (LinkerConfig::Object != m_Config.codeGenType() ||
+      m_Config.options().isDefineCommon())
+    m_LDBackend.allocateCommonSymbols(m_Module);
 
   /// check program interpreter - computer the name size of the runtime dyld
   if (!m_pLinker->isStaticLink() &&
@@ -380,8 +391,8 @@ bool ObjectLinker::prelayout()
 ///   directly
 bool ObjectLinker::layout()
 {
-  Layout layout;
-  return layout.layout(m_Module, m_LDBackend, m_Config);
+  m_LDBackend.layout(m_Module, *m_pLinker);
+  return true;
 }
 
 /// prelayout - help backend to do some modification after layout
@@ -421,6 +432,9 @@ bool ObjectLinker::emitOutput(MemoryArea& pOutput)
       return true;
     case LinkerConfig::Exec:
       getExecWriter()->writeExecutable(m_Module, pOutput);
+      return true;
+    case LinkerConfig::Binary:
+      getBinaryWriter()->writeBinary(m_Module, pOutput);
       return true;
     default:
       fatal(diag::unrecognized_output_file) << m_Config.codeGenType();

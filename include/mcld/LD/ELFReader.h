@@ -29,8 +29,8 @@
 namespace mcld {
 
 class Module;
+class IRBuilder;
 class FragmentRef;
-class FragmentLinker;
 class SectionData;
 class LDSection;
 
@@ -74,7 +74,7 @@ public:
 
   /// readSymbols - read ELF symbols and create LDSymbol
   virtual bool readSymbols(Input& pInput,
-                           FragmentLinker& pLinker,
+                           IRBuilder& pBuilder,
                            const MemoryRegion& pRegion,
                            const char* StrTab) const = 0;
 
@@ -86,13 +86,11 @@ public:
 
   /// readRela - read ELF rela and create Relocation
   virtual bool readRela(Input& pInput,
-                        FragmentLinker& pLinker,
                         LDSection& pSection,
                         const MemoryRegion& pRegion) const = 0;
 
   /// readRel - read ELF rel and create Relocation
   virtual bool readRel(Input& pInput,
-                       FragmentLinker& pLinker,
                        LDSection& pSection,
                        const MemoryRegion& pRegion) const = 0;
 
@@ -181,9 +179,9 @@ public:
 
   /// readSymbols - read ELF symbols and create LDSymbol
   bool readSymbols(Input& pInput,
-                          FragmentLinker& pLinker,
-                          const MemoryRegion& pRegion,
-                          const char* StrTab) const;
+                   IRBuilder& pBuilder,
+                   const MemoryRegion& pRegion,
+                   const char* StrTab) const;
 
   /// readSignature - read a symbol from the given Input and index in symtab
   /// This is used to get the signature of a group section.
@@ -193,13 +191,11 @@ public:
 
   /// readRela - read ELF rela and create Relocation
   bool readRela(Input& pInput,
-                FragmentLinker& pLinker,
                 LDSection& pSection,
                 const MemoryRegion& pRegion) const;
 
   /// readRel - read ELF rel and create Relocation
   bool readRel(Input& pInput,
-               FragmentLinker& pLinker,
                LDSection& pSection,
                const MemoryRegion& pRegion) const;
 

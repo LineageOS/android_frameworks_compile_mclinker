@@ -22,12 +22,15 @@
 #include <mcld/LD/GNUArchiveReader.h>
 #include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFDynObjReader.h>
+#include <mcld/LD/ELFBinaryReader.h>
 #include <mcld/LD/ELFDynObjWriter.h>
 #include <mcld/LD/ELFExecWriter.h>
 #include <mcld/LD/ELFObjectWriter.h>
+#include <mcld/LD/ELFBinaryWriter.h>
 #include <mcld/LD/ELFSegment.h>
 #include <mcld/LD/ELFSegmentFactory.h>
 #include <mcld/Target/ELFDynamic.h>
+#include <mcld/Target/GNUInfo.h>
 
 #include <mcld/Support/GCFactory.h>
 #include <mcld/Module.h>
@@ -36,11 +39,13 @@ namespace mcld {
 
 class Module;
 class LinkerConfig;
+class IRBuilder;
 class Layout;
 class EhFrame;
 class EhFrameHdr;
 class BranchIslandFactory;
 class StubFactory;
+class GNUInfo;
 
 /** \class GNULDBackend
  *  \brief GNULDBackend provides a common interface for all GNU Unix-OS
@@ -49,18 +54,20 @@ class StubFactory;
 class GNULDBackend : public TargetLDBackend
 {
 protected:
-  GNULDBackend(const LinkerConfig& pConfig);
+  GNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo);
 
 public:
   virtual ~GNULDBackend();
 
   // -----  readers/writers  ----- //
   GNUArchiveReader* createArchiveReader(Module& pModule);
-  ELFObjectReader* createObjectReader(FragmentLinker& pLinker);
-  ELFDynObjReader* createDynObjReader(FragmentLinker& pLinker);
-  ELFObjectWriter* createObjectWriter(FragmentLinker& pLinker);
-  ELFDynObjWriter* createDynObjWriter(FragmentLinker& pLinker);
-  ELFExecWriter*   createExecWriter(FragmentLinker& pLinker);
+  ELFObjectReader* createObjectReader(IRBuilder& pBuilder);
+  ELFDynObjReader* createDynObjReader(IRBuilder& pBuilder);
+  ELFBinaryReader* createBinaryReader(IRBuilder& pBuilder);
+  ELFObjectWriter* createObjectWriter();
+  ELFDynObjWriter* createDynObjWriter();
+  ELFExecWriter*   createExecWriter();
+  ELFBinaryWriter* createBinaryWriter();
 
   // -----  output sections  ----- //
   /// initStdSections - initialize standard sections of the output file.
@@ -100,18 +107,8 @@ public:
 
   size_t sectionStartOffset() const;
 
-  /// The return value of machine() it the same as e_machine in the ELF header*/
-  virtual uint32_t machine() const = 0;
-
-  /// ELFVersion - the value of e_ident[EI_VERSION]
-  virtual uint8_t ELFVersion() const
-  { return llvm::ELF::EV_CURRENT; }
-
-  /// OSABI - the value of e_ident[EI_OSABI]
-  virtual uint8_t OSABI() const = 0;
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  virtual uint8_t ABIVersion() const = 0;
+  const GNUInfo& getInfo() const { return *m_pInfo; }
+  GNUInfo&       getInfo()       { return *m_pInfo; }
 
   /// flags - the value of ElfXX_Ehdr::e_flags
   virtual uint64_t flags() const = 0;
@@ -364,6 +361,9 @@ private:
                                Module::iterator pSectBegin,
                                Module::iterator pSectEnd);
 
+  /// layout - layout method
+  void layout(Module& pModule, FragmentLinker& pLinker);
+
   /// preLayout - Backend can do any needed modification before layout
   void preLayout(Module& pModule, FragmentLinker& pLinker);
 
@@ -436,6 +436,14 @@ protected:
     SHO_STRTAB               // .strtab
   };
 
+  typedef std::pair<LDSection*, unsigned int> SHOEntry;
+
+  struct SHOCompare
+  {
+    bool operator()(const SHOEntry& X, const SHOEntry& Y) const
+    { return X.second < Y.second; }
+  };
+
   struct SymCompare
   {
     bool operator()(const LDSymbol* X, const LDSymbol* Y) const
@@ -464,6 +472,9 @@ protected:
   ELFDynObjFileFormat* m_pDynObjFileFormat;
   ELFExecFileFormat*   m_pExecFileFormat;
   ELFObjectFileFormat* m_pObjectFileFormat;
+
+  // GNUInfo
+  GNUInfo* m_pInfo;
 
   // ELF segment factory
   ELFSegmentFactory m_ELFSegmentTable;

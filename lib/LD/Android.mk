@@ -7,6 +7,7 @@ LOCAL_PATH:= $(call my-dir)
 mcld_ld_SRC_FILES := \
   Archive.cpp \
   ArchiveReader.cpp \
+  BinaryWriter.cpp \
   BranchIsland.cpp  \
   BranchIslandFactory.cpp  \
   DWARFLineInfo.cpp \
@@ -17,6 +18,8 @@ mcld_ld_SRC_FILES := \
   DiagnosticPrinter.cpp \
   DynObjReader.cpp  \
   DynObjWriter.cpp  \
+  ELFBinaryReader.cpp  \
+  ELFBinaryWriter.cpp  \
   ELFSegment.cpp  \
   ELFSegmentFactory.cpp \
   EhFrame.cpp \
@@ -24,7 +27,6 @@ mcld_ld_SRC_FILES := \
   EhFrameReader.cpp  \
   ExecWriter.cpp  \
   GroupReader.cpp \
-  Layout.cpp  \
   LDContext.cpp \
   LDFileFormat.cpp  \
   LDReader.cpp  \

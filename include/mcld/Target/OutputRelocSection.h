@@ -28,17 +28,13 @@ class RelocationFactory;
 class OutputRelocSection
 {
 public:
-  OutputRelocSection(Module& pModule,
-                     LDSection& pSection,
-                     unsigned int pEntrySize);
+  OutputRelocSection(Module& pModule, LDSection& pSection);
 
   ~OutputRelocSection();
 
-  void reserveEntry(RelocationFactory& pRelFactory, size_t pNum=1);
+  void reserveEntry(size_t pNum=1);
 
   Relocation* consumeEntry();
-
-  void finalizeSectionSize();
 
   /// addSymbolToDynSym - add local symbol to TLS category so that it'll be
   /// emitted into .dynsym
@@ -48,27 +44,23 @@ public:
   bool empty()
   { return m_pRelocData->empty(); }
 
+  size_t numOfRelocs();
+
 private:
-  typedef RelocData::iterator FragmentIterator;
+  typedef RelocData::iterator RelocIterator;
 
 private:
   Module& m_Module;
-
-  /// m_pSection - LDSection of this Section
-  LDSection* m_pSection;
 
   /// m_RelocData - the output RelocData which contains the dynamic
   /// relocations
   RelocData* m_pRelocData;
 
-  /// m_EntryBytes - size of a relocation entry
-  unsigned int m_EntryBytes;
-
   /// m_isVisit - First time visit the function getEntry() or not
   bool m_isVisit;
 
   /// m_ValidEntryIterator - point to the first valid entry
-  FragmentIterator m_ValidEntryIterator;
+  RelocIterator m_ValidEntryIterator;
 };
 
 } // namespace of mcld

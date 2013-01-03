@@ -7,21 +7,69 @@
 //
 //===----------------------------------------------------------------------===//
 #include <mcld/Fragment/Relocation.h>
-#include <mcld/LD/RelocationFactory.h>
+#include <mcld/LD/Relocator.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/LD/SectionData.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/LD/RelocationFactory.h>
+
+#include <llvm/Support/ManagedStatic.h>
 
 using namespace mcld;
+
+static llvm::ManagedStatic<RelocationFactory> g_RelocationFactory;
+
+//===----------------------------------------------------------------------===//
+// Relocation Factory Methods
+//===----------------------------------------------------------------------===//
+/// Initialize - set up the relocation factory
+void Relocation::SetUp(const LinkerConfig& pConfig)
+{
+  g_RelocationFactory->setConfig(pConfig);
+}
+
+/// Clear - Clean up the relocation factory
+void Relocation::Clear()
+{
+  g_RelocationFactory->clear();
+}
+
+/// Create - produce an empty relocation entry
+Relocation* Relocation::Create()
+{
+  return g_RelocationFactory->produceEmptyEntry();
+}
+
+/// Create - produce a relocation entry
+/// @param pType    [in] the type of the relocation entry
+/// @param pFragRef [in] the place to apply the relocation
+/// @param pAddend  [in] the addend of the relocation entry
+Relocation* Relocation::Create(Type pType, FragmentRef& pFragRef, Address pAddend)
+{
+  return g_RelocationFactory->produce(pType, pFragRef, pAddend);
+}
+
+/// Destroy - destroy a relocation entry
+void Relocation::Destroy(Relocation*& pRelocation)
+{
+  g_RelocationFactory->destroy(pRelocation);
+  pRelocation = NULL;
+}
+
+//===----------------------------------------------------------------------===//
+// Relocation
+//===----------------------------------------------------------------------===//
+Relocation::Relocation()
+  : m_Type(0x0), m_TargetData(0x0), m_pSymInfo(NULL), m_Addend(0x0) {
+}
 
 Relocation::Relocation(Relocation::Type pType,
                        FragmentRef* pTargetRef,
                        Relocation::Address pAddend,
                        Relocation::DWord pTargetData)
-  : Fragment(Fragment::Relocation),
-    m_Type(pType),
+  : m_Type(pType),
     m_TargetData(pTargetData),
     m_pSymInfo(NULL),
     m_Addend(pAddend)
@@ -49,31 +97,31 @@ Relocation::Address Relocation::symValue() const
   return m_pSymInfo->outSymbol()->value();
 }
 
-void Relocation::apply(RelocationFactory& pRelocFactory)
+void Relocation::apply(Relocator& pRelocator)
 {
-  RelocationFactory::Result result = pRelocFactory.applyRelocation(*this);
+  Relocator::Result result = pRelocator.applyRelocation(*this);
 
   switch (result) {
-    case RelocationFactory::OK: {
+    case Relocator::OK: {
       // do nothing
       return;
     }
-    case RelocationFactory::Overflow: {
-      error(diag::result_overflow) << pRelocFactory.getName(type())
+    case Relocator::Overflow: {
+      error(diag::result_overflow) << pRelocator.getName(type())
                                    << symInfo()->name();
       return;
     }
-    case RelocationFactory::BadReloc: {
-      error(diag::result_badreloc) << pRelocFactory.getName(type())
+    case Relocator::BadReloc: {
+      error(diag::result_badreloc) << pRelocator.getName(type())
                                    << symInfo()->name();
       return;
     }
-    case RelocationFactory::Unsupport: {
+    case Relocator::Unsupport: {
       fatal(diag::unsupported_relocation) << type()
                                           << "mclinker@googlegroups.com";
       return;
     }
-    case RelocationFactory::Unknown: {
+    case Relocator::Unknown: {
       fatal(diag::unknown_relocation) << type() << symInfo()->name();
       return;
     }

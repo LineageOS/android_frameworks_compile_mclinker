@@ -8,8 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #define DECL_MIPS_APPLY_RELOC_FUNC(Name) \
-static MipsRelocationFactory::Result Name(Relocation& pEntry, \
-                                          MipsRelocationFactory& pParent);
+static MipsRelocator::Result Name(Relocation& pEntry, \
+                                  MipsRelocator& pParent);
 
 #define DECL_MIPS_APPLY_RELOC_FUNCS \
 DECL_MIPS_APPLY_RELOC_FUNC(none) \
@@ -18,7 +18,9 @@ DECL_MIPS_APPLY_RELOC_FUNC(hi16) \
 DECL_MIPS_APPLY_RELOC_FUNC(lo16) \
 DECL_MIPS_APPLY_RELOC_FUNC(got16) \
 DECL_MIPS_APPLY_RELOC_FUNC(call16) \
-DECL_MIPS_APPLY_RELOC_FUNC(gprel32)
+DECL_MIPS_APPLY_RELOC_FUNC(gprel32) \
+DECL_MIPS_APPLY_RELOC_FUNC(gothi16) \
+DECL_MIPS_APPLY_RELOC_FUNC(gotlo16)
 
 #define DECL_MIPS_APPLY_RELOC_FUNC_PTRS \
   { &none,     0, "R_MIPS_NONE"            }, \
@@ -43,16 +45,16 @@ DECL_MIPS_APPLY_RELOC_FUNC(gprel32)
   { &none,    19, "R_MIPS_GOT_DISP"        }, \
   { &none,    20, "R_MIPS_GOT_PAGE"        }, \
   { &none,    21, "R_MIPS_GOT_OFST"        }, \
-  { &none,    22, "R_MIPS_GOT_HI16"        }, \
-  { &none,    23, "R_MIPS_GOT_LO16"        }, \
+  { &gothi16, 22, "R_MIPS_GOT_HI16"        }, \
+  { &gotlo16, 23, "R_MIPS_GOT_LO16"        }, \
   { &none,    24, "R_MIPS_SUB"             }, \
   { &none,    25, "R_MIPS_INSERT_A"        }, \
   { &none,    26, "R_MIPS_INSERT_B"        }, \
   { &none,    27, "R_MIPS_DELETE"          }, \
   { &none,    28, "R_MIPS_HIGHER"          }, \
   { &none,    29, "R_MIPS_HIGHEST"         }, \
-  { &none,    30, "R_MIPS_CALL_HI16"       }, \
-  { &none,    31, "R_MIPS_CALL_LO16"       }, \
+  { &gothi16, 30, "R_MIPS_CALL_HI16"       }, \
+  { &gotlo16, 31, "R_MIPS_CALL_LO16"       }, \
   { &none,    32, "R_MIPS_SCN_DISP"        }, \
   { &none,    33, "R_MIPS_REL16"           }, \
   { &none,    34, "R_MIPS_ADD_IMMEDIATE"   }, \

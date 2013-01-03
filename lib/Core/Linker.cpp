@@ -22,6 +22,9 @@
 #include <mcld/Target/TargetLDBackend.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/LD/LDSymbol.h>
+#include <mcld/LD/SectionData.h>
+#include <mcld/LD/RelocData.h>
+#include <mcld/Fragment/Relocation.h>
 #include <mcld/Fragment/FragmentRef.h>
 
 #include <cassert>
@@ -64,7 +67,7 @@ bool Linker::link(Module& pModule, IRBuilder& pBuilder)
   m_pIRBuilder = &pBuilder;
   m_pObjLinker = new ObjectLinker(*m_pConfig,
                                   pModule,
-                                  m_pIRBuilder->getInputBuilder(),
+                                  *m_pIRBuilder,
                                   *m_pBackend);
 
   // 2. - initialize FragmentLinker
@@ -203,6 +206,11 @@ bool Linker::reset()
   m_pIRBuilder = NULL;
   m_pTarget = NULL;
 
+  // Because llvm::iplist will touch the removed node, we must clear
+  // RelocData before deleting target backend.
+  RelocData::Clear();
+  SectionData::Clear();
+
   delete m_pBackend;
   m_pBackend = NULL;
 
@@ -212,6 +220,7 @@ bool Linker::reset()
   LDSection::Clear();
   LDSymbol::Clear();
   FragmentRef::Clear();
+  Relocation::Clear();
   return true;
 }
 
@@ -220,9 +229,9 @@ bool Linker::initTarget()
   assert(NULL != m_pConfig);
 
   std::string error;
-  m_pTarget = TargetRegistry::lookupTarget(m_pConfig->triple().str(), error);
+  m_pTarget = mcld::TargetRegistry::lookupTarget(m_pConfig->targets().triple().str(), error);
   if (NULL == m_pTarget) {
-    fatal(diag::fatal_cannot_init_target) << m_pConfig->triple().str() << error;
+    fatal(diag::fatal_cannot_init_target) << m_pConfig->targets().triple().str() << error;
     return false;
   }
   return true;
@@ -233,7 +242,7 @@ bool Linker::initBackend()
   assert(NULL != m_pTarget);
   m_pBackend = m_pTarget->createLDBackend(*m_pConfig);
   if (NULL == m_pBackend) {
-    fatal(diag::fatal_cannot_init_backend) << m_pConfig->triple().str();
+    fatal(diag::fatal_cannot_init_backend) << m_pConfig->targets().triple().str();
     return false;
   }
   return true;
@@ -242,7 +251,12 @@ bool Linker::initBackend()
 bool Linker::initEmulator()
 {
   assert(NULL != m_pTarget && NULL != m_pConfig);
-  return m_pTarget->emulate(m_pConfig->triple().str(), *m_pConfig);
+  bool result = m_pTarget->emulate(m_pConfig->targets().triple().str(),
+                                   *m_pConfig);
+
+  // Relocation should be set up after emulation.
+  Relocation::SetUp(*m_pConfig);
+  return result;
 }
 
 bool Linker::initOStream()

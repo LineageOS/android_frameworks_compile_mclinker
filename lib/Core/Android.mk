@@ -10,7 +10,8 @@ mcld_core_SRC_FILES := \
   LinkerConfig.cpp  \
   Linker.cpp \
   Module.cpp \
-  ScriptOptions.cpp
+  ScriptOptions.cpp \
+  TargetOptions.cpp
 
 # For the host
 # =====================================================

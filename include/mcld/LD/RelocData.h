@@ -12,81 +12,85 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/ilist.h>
-#include <llvm/ADT/ilist_node.h>
-#include <llvm/Support/DataTypes.h>
-
 #include <mcld/Config/Config.h>
-#include <mcld/Fragment/Fragment.h>
+#include <mcld/Fragment/Relocation.h>
 #include <mcld/Support/Allocators.h>
 #include <mcld/Support/GCFactoryListTraits.h>
 
+#include <llvm/ADT/ilist.h>
+#include <llvm/ADT/ilist_node.h>
+#include <llvm/Support/DataTypes.h>
 
 namespace mcld {
 
 class LDSection;
 
 /** \class RelocData
- *  \brief RelocData is the special SectionData to store Relocation fragments.
+ *  \brief RelocData stores Relocation.
+ *
  *  Since Relocations are created by GCFactory, we use GCFactoryListTraits for the
- *  FragmentList here to avoid iplist to delete Relocations.
+ *  RelocationList here to avoid iplist to delete Relocations.
  */
 class RelocData
 {
 private:
+  friend class Chunk<RelocData, MCLD_SECTIONS_PER_INPUT>;
+
   RelocData();
-  explicit RelocData(const LDSection &pSection);
+  explicit RelocData(LDSection &pSection);
 
   RelocData(const RelocData &);            // DO NOT IMPLEMENT
   RelocData& operator=(const RelocData &); // DO NOT IMPLEMENT
 
 public:
-  typedef llvm::iplist<Fragment,
-                       GCFactoryListTraits<Fragment> > FragmentListType;
+  typedef llvm::iplist<Relocation,
+                       GCFactoryListTraits<Relocation> > RelocationListType;
 
-  typedef FragmentListType::reference reference;
-  typedef FragmentListType::const_reference const_reference;
+  typedef RelocationListType::reference reference;
+  typedef RelocationListType::const_reference const_reference;
 
-  typedef FragmentListType::iterator iterator;
-  typedef FragmentListType::const_iterator const_iterator;
+  typedef RelocationListType::iterator iterator;
+  typedef RelocationListType::const_iterator const_iterator;
 
-  typedef FragmentListType::reverse_iterator reverse_iterator;
-  typedef FragmentListType::const_reverse_iterator const_reverse_iterator;
+  typedef RelocationListType::reverse_iterator reverse_iterator;
+  typedef RelocationListType::const_reverse_iterator const_reverse_iterator;
 
 public:
-  static RelocData* Create(const LDSection& pSection);
-
-  static RelocData* Create();
+  static RelocData* Create(LDSection& pSection);
 
   static void Destroy(RelocData*& pSection);
 
-  const LDSection &getSection() const
-  { assert(NULL != m_pSection ); return *m_pSection; }
+  static void Clear();
 
-  FragmentListType &getFragmentList() { return m_Fragments; }
-  const FragmentListType &getFragmentList() const { return m_Fragments; }
+  const LDSection& getSection() const { return *m_pSection; }
+  LDSection&       getSection()       { return *m_pSection; }
 
-  size_t size() const { return m_Fragments.size(); }
+  const RelocationListType& getRelocationList() const { return m_Relocations; }
+  RelocationListType&       getRelocationList()       { return m_Relocations; }
 
-  bool empty() const { return m_Fragments.empty(); }
+  size_t size() const { return m_Relocations.size(); }
 
-  reference              front ()       { return m_Fragments.front();  }
-  const_reference        front () const { return m_Fragments.front();  }
-  reference              back  ()       { return m_Fragments.back();   }
-  const_reference        back  () const { return m_Fragments.back();   }
+  bool empty() const { return m_Relocations.empty(); }
 
-  const_iterator         begin () const { return m_Fragments.begin();  }
-  iterator               begin ()       { return m_Fragments.begin();  }
-  const_iterator         end   () const { return m_Fragments.end();    }
-  iterator               end   ()       { return m_Fragments.end();    }
-  const_reverse_iterator rbegin() const { return m_Fragments.rbegin(); }
-  reverse_iterator       rbegin()       { return m_Fragments.rbegin(); }
-  const_reverse_iterator rend  () const { return m_Fragments.rend();   }
-  reverse_iterator       rend  ()       { return m_Fragments.rend();   }
+  RelocData& append(Relocation& pRelocation);
+
+  reference              front ()       { return m_Relocations.front();  }
+  const_reference        front () const { return m_Relocations.front();  }
+  reference              back  ()       { return m_Relocations.back();   }
+  const_reference        back  () const { return m_Relocations.back();   }
+
+  const_iterator         begin () const { return m_Relocations.begin();  }
+  iterator               begin ()       { return m_Relocations.begin();  }
+  const_iterator         end   () const { return m_Relocations.end();    }
+  iterator               end   ()       { return m_Relocations.end();    }
+  const_reverse_iterator rbegin() const { return m_Relocations.rbegin(); }
+  reverse_iterator       rbegin()       { return m_Relocations.rbegin(); }
+  const_reverse_iterator rend  () const { return m_Relocations.rend();   }
+  reverse_iterator       rend  ()       { return m_Relocations.rend();   }
 
 private:
-  FragmentListType m_Fragments;
-  const LDSection* m_pSection;
+  RelocationListType m_Relocations;
+  LDSection* m_pSection;
 
 };
 
