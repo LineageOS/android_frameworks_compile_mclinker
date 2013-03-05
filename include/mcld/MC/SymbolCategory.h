@@ -11,7 +11,7 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
-#include <mcld/ADT/TypeTraits.h>
+#include <cstddef>
 #include <vector>
 
 namespace mcld
@@ -45,7 +45,7 @@ public:
 
   SymbolCategory& changeCommonsToGlobal();
 
-  SymbolCategory& changeLocalToTLS(const LDSymbol& pSymbol);
+  SymbolCategory& changeLocalToDynamic(const LDSymbol& pSymbol);
 
   // -----  access  ----- //
   LDSymbol& at(size_t pPosition)
@@ -63,17 +63,29 @@ public:
   // -----  observers  ----- //
   size_t numOfSymbols() const;
 
+  size_t numOfFiles() const;
+
   size_t numOfLocals() const;
 
+  size_t numOfLocalDyns() const;
+
   size_t numOfCommons() const;
+
+  size_t numOfDynamics() const;
 
   size_t numOfRegulars() const;
 
   bool empty() const;
 
+  bool emptyFiles() const;
+
   bool emptyLocals() const;
 
+  bool emptyLocalDyns() const;
+
   bool emptyCommons() const;
+
+  bool emptyDynamics() const;
 
   bool emptyRegulars() const;
 
@@ -83,20 +95,30 @@ public:
   const_iterator begin() const;
   const_iterator end() const;
 
+  iterator fileBegin();
+  iterator fileEnd();
+  const_iterator fileBegin() const;
+  const_iterator fileEnd() const;
+
   iterator localBegin();
   iterator localEnd();
   const_iterator localBegin() const;
   const_iterator localEnd() const;
 
-  iterator tlsBegin();
-  iterator tlsEnd();
-  const_iterator tlsBegin() const;
-  const_iterator tlsEnd() const;
+  iterator localDynBegin();
+  iterator localDynEnd();
+  const_iterator localDynBegin() const;
+  const_iterator localDynEnd() const;
 
   iterator commonBegin();
   iterator commonEnd();
   const_iterator commonBegin() const;
   const_iterator commonEnd() const;
+
+  iterator dynamicBegin();
+  iterator dynamicEnd();
+  const_iterator dynamicBegin() const;
+  const_iterator dynamicEnd() const;
 
   iterator regularBegin();
   iterator regularEnd();
@@ -110,10 +132,10 @@ private:
     enum Type {
       File,
       Local,
-      TLS,
+      LocalDyn,
       Common,
-      Weak,
-      Global
+      Dynamic,
+      Regular
     };
 
   public:
@@ -147,18 +169,20 @@ private:
     { return (NULL == next); }
 
     static Type categorize(const ResolveInfo& pInfo);
-
   };
+
+private:
+  SymbolCategory& add(LDSymbol& pSymbol, Category::Type pTarget);
 
 private:
   OutputSymbols m_OutputSymbols;
 
   Category* m_pFile;
   Category* m_pLocal;
-  Category* m_pTLS;
+  Category* m_pLocalDyn;
   Category* m_pCommon;
-  Category* m_pWeak;
-  Category* m_pGlobal;
+  Category* m_pDynamic;
+  Category* m_pRegular;
 };
 
 } // namespace of mcld

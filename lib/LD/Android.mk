@@ -7,7 +7,6 @@ LOCAL_PATH:= $(call my-dir)
 mcld_ld_SRC_FILES := \
   Archive.cpp \
   ArchiveReader.cpp \
-  BinaryWriter.cpp \
   BranchIsland.cpp  \
   BranchIslandFactory.cpp  \
   DWARFLineInfo.cpp \
@@ -17,27 +16,24 @@ mcld_ld_SRC_FILES := \
   DiagnosticLineInfo.cpp  \
   DiagnosticPrinter.cpp \
   DynObjReader.cpp  \
-  DynObjWriter.cpp  \
   ELFBinaryReader.cpp  \
-  ELFBinaryWriter.cpp  \
   ELFSegment.cpp  \
   ELFSegmentFactory.cpp \
   EhFrame.cpp \
   EhFrameHdr.cpp  \
   EhFrameReader.cpp  \
-  ExecWriter.cpp  \
   GroupReader.cpp \
   LDContext.cpp \
   LDFileFormat.cpp  \
   LDReader.cpp  \
   LDSection.cpp \
   LDSymbol.cpp  \
-  LDWriter.cpp  \
   MsgHandler.cpp  \
   NamePool.cpp  \
   ObjectWriter.cpp  \
   RelocData.cpp  \
   RelocationFactory.cpp \
+  Relocator.cpp \
   ResolveInfo.cpp \
   Resolver.cpp  \
   SectionData.cpp \
@@ -80,14 +76,12 @@ mcld_ld_variant_SRC_FILES := \
   GNUArchiveReader.cpp  \
   ELFDynObjFileFormat.cpp \
   ELFDynObjReader.cpp \
-  ELFDynObjWriter.cpp \
   ELFExecFileFormat.cpp \
-  ELFExecWriter.cpp \
   ELFFileFormat.cpp \
   ELFObjectReader.cpp \
   ELFObjectWriter.cpp \
   ELFReader.cpp \
-  ELFWriter.cpp
+  ELFReaderIf.cpp
 
 # For the host
 # =====================================================

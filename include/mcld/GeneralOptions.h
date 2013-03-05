@@ -30,6 +30,28 @@ class Input;
 class GeneralOptions
 {
 public:
+  enum StripSymbolMode {
+    KeepAllSymbols,
+    StripTemporaries,
+    StripLocals,
+    StripAllSymbols
+  };
+
+  enum HashStyle {
+    SystemV = 0x1,
+    GNU     = 0x2,
+    Both    = 0x3
+  };
+
+  typedef std::vector<std::string> RpathList;
+  typedef RpathList::iterator rpath_iterator;
+  typedef RpathList::const_iterator const_rpath_iterator;
+
+  typedef std::vector<std::string> AuxiliaryList;
+  typedef AuxiliaryList::iterator aux_iterator;
+  typedef AuxiliaryList::const_iterator const_aux_iterator;
+
+public:
   GeneralOptions();
   ~GeneralOptions();
 
@@ -42,6 +64,8 @@ public:
   const sys::fs::Path& sysroot() const;
 
   void setSysroot(const sys::fs::Path &pPath);
+
+  bool hasSysroot() const;
 
   /// search directory
   SearchDirs& directories()
@@ -97,12 +121,6 @@ public:
 
   const std::string& soname() const
   { return m_SOName; }
-
-  void setAllowShlibUndefined(bool pEnabled = true)
-  { m_bAllowShlibUndefined = pEnabled; }
-
-  bool isAllowShlibUndefined() const
-  { return m_bAllowShlibUndefined; }
 
   void setVerbose(int8_t pVerbose = -1)
   { m_Verbose = pVerbose; }
@@ -201,7 +219,7 @@ public:
   void setNMagic(bool pMagic = true)
   { m_bNMagic = pMagic; }
 
-  bool nnagic() const
+  bool nmagic() const
   { return m_bNMagic; }
 
   // -N, --omagic
@@ -250,6 +268,56 @@ public:
   bool isFatalWarnings() const
   { return m_bFatalWarnings; }
 
+  StripSymbolMode getStripSymbolMode() const
+  { return m_StripSymbols; }
+
+  void setStripSymbols(StripSymbolMode pMode)
+  { m_StripSymbols = pMode; }
+
+  void setNewDTags(bool pEnable = true)
+  { m_bNewDTags = pEnable; }
+
+  bool hasNewDTags() const
+  { return m_bNewDTags; }
+
+  void setNoStdlib(bool pEnable = true)
+  { m_bNoStdlib = pEnable; }
+
+  bool nostdlib() const
+  { return m_bNoStdlib; }
+
+  unsigned int getHashStyle() const { return m_HashStyle; }
+
+  void setHashStyle(unsigned int pStyle)
+  { m_HashStyle = pStyle; }
+
+  // -----  link-in rpath  ----- //
+  const RpathList& getRpathList() const { return m_RpathList; }
+  RpathList&       getRpathList()       { return m_RpathList; }
+
+  const_rpath_iterator rpath_begin() const { return m_RpathList.begin(); }
+  rpath_iterator       rpath_begin()       { return m_RpathList.begin(); }
+  const_rpath_iterator rpath_end  () const { return m_RpathList.end();   }
+  rpath_iterator       rpath_end  ()       { return m_RpathList.end();   }
+
+  // -----  filter and auxiliary filter  ----- //
+  void setFilter(const std::string& pFilter)
+  { m_Filter = pFilter; }
+
+  const std::string& filter() const
+  { return m_Filter; }
+
+  bool hasFilter() const
+  { return !m_Filter.empty(); }
+
+  const AuxiliaryList& getAuxiliaryList() const { return m_AuxiliaryList; }
+  AuxiliaryList&       getAuxiliaryList()       { return m_AuxiliaryList; }
+
+  const_aux_iterator aux_begin() const { return m_AuxiliaryList.begin(); }
+  aux_iterator       aux_begin()       { return m_AuxiliaryList.begin(); }
+  const_aux_iterator aux_end  () const { return m_AuxiliaryList.end();   }
+  aux_iterator       aux_end  ()       { return m_AuxiliaryList.end();   }
+
 private:
   enum status {
     YES,
@@ -289,7 +357,6 @@ private:
   bool m_Bgroup         : 1;
   bool m_bPIE           : 1;
   bool m_bColor         : 1;   // --color[=true,false,auto]
-  bool m_bAllowShlibUndefined : 1; // --[no-]allow-shlib-undefined and
   bool m_bCreateEhFrameHdr : 1;    // --eh-frame-hdr
   bool m_bNMagic : 1; // -n, --nmagic
   bool m_bOMagic : 1; // -N, --omagic
@@ -299,6 +366,13 @@ private:
   bool m_bBinaryInput : 1; // -b [input-format], --format=[input-format]
   bool m_bDefineCommon : 1; // -d, -dc, -dp
   bool m_bFatalWarnings : 1; // --fatal-warnings
+  bool m_bNewDTags: 1; // --enable-new-dtags
+  bool m_bNoStdlib: 1; // -nostdlib
+  StripSymbolMode m_StripSymbols;
+  RpathList m_RpathList;
+  unsigned int m_HashStyle;
+  std::string m_Filter;
+  AuxiliaryList m_AuxiliaryList;
 };
 
 } // namespace of mcld

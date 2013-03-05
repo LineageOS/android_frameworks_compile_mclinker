@@ -21,9 +21,6 @@
 #include <mcld/LD/GroupReader.h>
 #include <mcld/LD/BinaryReader.h>
 #include <mcld/LD/ObjectWriter.h>
-#include <mcld/LD/DynObjWriter.h>
-#include <mcld/LD/ExecWriter.h>
-#include <mcld/LD/BinaryWriter.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/RelocData.h>
 #include <mcld/Support/RealPath.h>
@@ -35,32 +32,23 @@
 
 #include <llvm/Support/Casting.h>
 
+
 using namespace llvm;
 using namespace mcld;
 
 ObjectLinker::ObjectLinker(const LinkerConfig& pConfig,
-                           Module& pModule,
-                           IRBuilder& pBuilder,
                            TargetLDBackend& pLDBackend)
   : m_Config(pConfig),
-    m_Module(pModule),
-    m_Builder(pBuilder),
     m_pLinker(NULL),
+    m_pModule(NULL),
+    m_pBuilder(NULL),
     m_LDBackend(pLDBackend),
     m_pObjectReader(NULL),
     m_pDynObjReader(NULL),
     m_pArchiveReader(NULL),
     m_pGroupReader(NULL),
     m_pBinaryReader(NULL),
-    m_pObjectWriter(NULL),
-    m_pDynObjWriter(NULL),
-    m_pExecWriter(NULL),
-    m_pBinaryWriter(NULL)
-{
-  // set up soname
-  if (!m_Config.options().soname().empty()) {
-    m_Module.setName(m_Config.options().soname());
-  }
+    m_pWriter(NULL) {
 }
 
 ObjectLinker::~ObjectLinker()
@@ -71,10 +59,17 @@ ObjectLinker::~ObjectLinker()
   delete m_pArchiveReader;
   delete m_pGroupReader;
   delete m_pBinaryReader;
-  delete m_pObjectWriter;
-  delete m_pDynObjWriter;
-  delete m_pExecWriter;
-  delete m_pBinaryWriter;
+  delete m_pWriter;
+}
+
+void ObjectLinker::setup(Module& pModule, IRBuilder& pBuilder)
+{
+  m_pModule = &pModule;
+  m_pBuilder = &pBuilder;
+  // set up soname
+  if (!m_Config.options().soname().empty()) {
+    m_pModule->setName(m_Config.options().soname());
+  }
 }
 
 /// initFragmentLinker - initialize FragmentLinker
@@ -83,49 +78,37 @@ bool ObjectLinker::initFragmentLinker()
 {
   if (NULL == m_pLinker) {
     m_pLinker = new FragmentLinker(m_Config,
-                                   m_Module,
+                                   *m_pModule,
                                    m_LDBackend);
   }
 
   // initialize the readers and writers
   // Because constructor can not be failed, we initalize all readers and
   // writers outside the FragmentLinker constructors.
-  m_pObjectReader  = m_LDBackend.createObjectReader(m_Builder);
-  m_pArchiveReader = m_LDBackend.createArchiveReader(m_Module);
-  m_pDynObjReader  = m_LDBackend.createDynObjReader(m_Builder);
-  m_pGroupReader   = new GroupReader(m_Module, *m_pObjectReader,
+  m_pObjectReader  = m_LDBackend.createObjectReader(*m_pBuilder);
+  m_pArchiveReader = m_LDBackend.createArchiveReader(*m_pModule);
+  m_pDynObjReader  = m_LDBackend.createDynObjReader(*m_pBuilder);
+  m_pGroupReader   = new GroupReader(*m_pModule, *m_pObjectReader,
                                      *m_pDynObjReader, *m_pArchiveReader);
-  m_pBinaryReader  = m_LDBackend.createBinaryReader(m_Builder);
-  m_pObjectWriter  = m_LDBackend.createObjectWriter();
-  m_pDynObjWriter  = m_LDBackend.createDynObjWriter();
-  m_pExecWriter    = m_LDBackend.createExecWriter();
-  m_pBinaryWriter  = m_LDBackend.createBinaryWriter();
+  m_pBinaryReader  = m_LDBackend.createBinaryReader(*m_pBuilder);
+  m_pWriter        = m_LDBackend.createWriter();
 
   // initialize Relocator
-  m_LDBackend.initRelocator(*m_pLinker);
-
-  // initialize BranchIslandFactory
-  m_LDBackend.initBRIslandFactory();
-
-  // initialize StubFactory
-  m_LDBackend.initStubFactory();
-
-  // initialize target stubs
-  m_LDBackend.initTargetStubs(*m_pLinker);
+  m_LDBackend.initRelocator();
   return true;
 }
 
 /// initStdSections - initialize standard sections
 bool ObjectLinker::initStdSections()
 {
-  ObjectBuilder builder(m_Config, m_Module);
+  ObjectBuilder builder(m_Config, *m_pModule);
 
   // initialize standard sections
   if (!m_LDBackend.initStdSections(builder))
     return false;
 
   // initialize target-dependent sections
-  m_LDBackend.initTargetSections(m_Module, builder);
+  m_LDBackend.initTargetSections(*m_pModule, builder);
 
   return true;
 }
@@ -133,11 +116,11 @@ bool ObjectLinker::initStdSections()
 void ObjectLinker::normalize()
 {
   // -----  set up inputs  ----- //
-  Module::input_iterator input, inEnd = m_Module.input_end();
-  for (input = m_Module.input_begin(); input!=inEnd; ++input) {
+  Module::input_iterator input, inEnd = m_pModule->input_end();
+  for (input = m_pModule->input_begin(); input!=inEnd; ++input) {
     // is a group node
     if (isGroup(input)) {
-      getGroupReader()->readGroup(input, m_Builder.getInputBuilder(), m_Config);
+      getGroupReader()->readGroup(input, m_pBuilder->getInputBuilder(), m_Config);
       continue;
     }
 
@@ -149,12 +132,12 @@ void ObjectLinker::normalize()
       continue;
 
     if (Input::Object == (*input)->type()) {
-      m_Module.getObjectList().push_back(*input);
+      m_pModule->getObjectList().push_back(*input);
       continue;
     }
 
     if (Input::DynObj == (*input)->type()) {
-      m_Module.getLibraryList().push_back(*input);
+      m_pModule->getLibraryList().push_back(*input);
       continue;
     }
 
@@ -162,7 +145,7 @@ void ObjectLinker::normalize()
     if (m_Config.options().isBinaryInput()) {
       (*input)->setType(Input::Object);
       getBinaryReader()->readBinary(**input);
-      m_Module.getObjectList().push_back(*input);
+      m_pModule->getObjectList().push_back(*input);
     }
     // is a relocatable object file
     else if (getObjectReader()->isMyFormat(**input)) {
@@ -170,22 +153,22 @@ void ObjectLinker::normalize()
       getObjectReader()->readHeader(**input);
       getObjectReader()->readSections(**input);
       getObjectReader()->readSymbols(**input);
-      m_Module.getObjectList().push_back(*input);
+      m_pModule->getObjectList().push_back(*input);
     }
     // is a shared object file
     else if (getDynObjReader()->isMyFormat(**input)) {
       (*input)->setType(Input::DynObj);
       getDynObjReader()->readHeader(**input);
       getDynObjReader()->readSymbols(**input);
-      m_Module.getLibraryList().push_back(*input);
+      m_pModule->getLibraryList().push_back(*input);
     }
     // is an archive
     else if (getArchiveReader()->isMyFormat(**input)) {
       (*input)->setType(Input::Archive);
-      Archive archive(**input, m_Builder.getInputBuilder());
+      Archive archive(**input, m_pBuilder->getInputBuilder());
       getArchiveReader()->readArchive(archive);
       if(archive.numOfObjectMember() > 0) {
-        m_Module.getInputTree().merge<InputTree::Inclusive>(input,
+        m_pModule->getInputTree().merge<InputTree::Inclusive>(input,
                                                             archive.inputs());
       }
     }
@@ -199,14 +182,14 @@ void ObjectLinker::normalize()
 bool ObjectLinker::linkable() const
 {
   // check we have input and output files
-  if (m_Module.getInputTree().empty()) {
+  if (m_pModule->getInputTree().empty()) {
     error(diag::err_no_inputs);
     return false;
   }
 
   // can not mix -static with shared objects
-  Module::const_lib_iterator lib, libEnd = m_Module.lib_end();
-  for (lib = m_Module.lib_begin(); lib != libEnd; ++lib) {
+  Module::const_lib_iterator lib, libEnd = m_pModule->lib_end();
+  for (lib = m_pModule->lib_begin(); lib != libEnd; ++lib) {
     if((*lib)->attribute()->isStatic()) {
       error(diag::err_mixed_shared_static_objects)
                                       << (*lib)->name() << (*lib)->path();
@@ -214,7 +197,21 @@ bool ObjectLinker::linkable() const
     }
   }
 
-  // can not mix -r with shared objects
+  // --nmagic and --omagic options lead to static executable program.
+  // These options turn off page alignment of sections. Because the
+  // sections are not aligned to pages, these sections can not contain any
+  // exported functions. Also, because the two options disable linking
+  // against shared libraries, the output absolutely does not call outside
+  // functions.
+  if (m_Config.options().nmagic() && !m_Config.isCodeStatic()) {
+    error(diag::err_nmagic_not_static);
+    return false;
+  }
+  if (m_Config.options().omagic() && !m_Config.isCodeStatic()) {
+    error(diag::err_omagic_not_static);
+    return false;
+  }
+
   return true;
 }
 
@@ -225,8 +222,8 @@ bool ObjectLinker::readRelocations()
 {
   // Bitcode is read by the other path. This function reads relocation sections
   // in object files.
-  mcld::InputTree::bfs_iterator input, inEnd = m_Module.getInputTree().bfs_end();
-  for (input=m_Module.getInputTree().bfs_begin(); input!=inEnd; ++input) {
+  mcld::InputTree::bfs_iterator input, inEnd = m_pModule->getInputTree().bfs_end();
+  for (input=m_pModule->getInputTree().bfs_begin(); input!=inEnd; ++input) {
     if ((*input)->type() == Input::Object && (*input)->hasMemArea()) {
       if (!getObjectReader()->readRelocations(**input))
         return false;
@@ -239,9 +236,9 @@ bool ObjectLinker::readRelocations()
 /// mergeSections - put allinput sections into output sections
 bool ObjectLinker::mergeSections()
 {
-  ObjectBuilder builder(m_Config, m_Module);
-  Module::obj_iterator obj, objEnd = m_Module.obj_end();
-  for (obj = m_Module.obj_begin(); obj != objEnd; ++obj) {
+  ObjectBuilder builder(m_Config, *m_pModule);
+  Module::obj_iterator obj, objEnd = m_pModule->obj_end();
+  for (obj = m_pModule->obj_begin(); obj != objEnd; ++obj) {
     LDContext::sect_iterator sect, sectEnd = (*obj)->context()->sectEnd();
     for (sect = (*obj)->context()->sectBegin(); sect != sectEnd; ++sect) {
       switch ((*sect)->kind()) {
@@ -255,7 +252,7 @@ bool ObjectLinker::mergeSections()
           // skip
           continue;
         case LDFileFormat::Target:
-          if (!m_LDBackend.mergeSection(m_Module, **sect)) {
+          if (!m_LDBackend.mergeSection(*m_pModule, **sect)) {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -265,7 +262,7 @@ bool ObjectLinker::mergeSections()
           if (!(*sect)->hasEhFrame())
             continue; // skip
 
-          if (!builder.MergeSection(**sect)) {
+          if (NULL == builder.MergeSection(**sect)) {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -276,7 +273,15 @@ bool ObjectLinker::mergeSections()
           if (!(*sect)->hasSectionData())
             continue; // skip
 
-          if (!builder.MergeSection(**sect)) {
+          LDSection* out_sect = builder.MergeSection(**sect);
+          if (NULL != out_sect) {
+            if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
+              error(diag::err_cannot_merge_section) << (*sect)->name()
+                                                    << (*obj)->name();
+              return false;
+            }
+          }
+          else {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -296,12 +301,12 @@ bool ObjectLinker::mergeSections()
 bool ObjectLinker::addStandardSymbols()
 {
   // create and add section symbols for each output section
-  Module::iterator iter, iterEnd = m_Module.end();
-  for (iter = m_Module.begin(); iter != iterEnd; ++iter) {
-    m_Module.getSectionSymbolSet().add(**iter, m_Module.getNamePool());
+  Module::iterator iter, iterEnd = m_pModule->end();
+  for (iter = m_pModule->begin(); iter != iterEnd; ++iter) {
+    m_pModule->getSectionSymbolSet().add(**iter, m_pModule->getNamePool());
   }
 
-  return m_LDBackend.initStandardSymbols(*m_pLinker, m_Module);
+  return m_LDBackend.initStandardSymbols(*m_pBuilder, *m_pModule);
 }
 
 /// addTargetSymbols - some targets, such as MIPS and ARM, need some
@@ -310,15 +315,24 @@ bool ObjectLinker::addStandardSymbols()
 ///   target symbols, return false
 bool ObjectLinker::addTargetSymbols()
 {
-  m_LDBackend.initTargetSymbols(*m_pLinker);
+  m_LDBackend.initTargetSymbols(*m_pBuilder, *m_pModule);
+  return true;
+}
+
+/// addScriptSymbols - define symbols from the command line option or linker
+/// scripts.
+///   @return if there are some existing symbols with identical name to the
+///   script symbols, return false.
+bool ObjectLinker::addScriptSymbols()
+{
   return true;
 }
 
 bool ObjectLinker::scanRelocations()
 {
   // apply all relocations of all inputs
-  Module::obj_iterator input, inEnd = m_Module.obj_end();
-  for (input = m_Module.obj_begin(); input != inEnd; ++input) {
+  Module::obj_iterator input, inEnd = m_pModule->obj_end();
+  for (input = m_pModule->obj_begin(); input != inEnd; ++input) {
     LDContext::sect_iterator rs, rsEnd = (*input)->context()->relocSectEnd();
     for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
       // bypass the reloc section if
@@ -332,21 +346,37 @@ bool ObjectLinker::scanRelocations()
       for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
         Relocation* relocation = llvm::cast<Relocation>(reloc);
         // scan relocation
-        if (LinkerConfig::Object != m_Config.codeGenType()) {
-          m_LDBackend.scanRelocation(*relocation,
-                                     *m_pLinker,
-                                     m_Module,
-                                     *(*rs)->getLink());
-        }
-        else {
-          m_LDBackend.partialScanRelocation(*relocation,
-                                     *m_pLinker,
-                                     m_Module,
-                                     *(*rs)->getLink());
-        }
+        if (LinkerConfig::Object != m_Config.codeGenType())
+          m_LDBackend.scanRelocation(*relocation, *m_pBuilder, *m_pModule, **rs);
+        else
+          m_LDBackend.partialScanRelocation(*relocation, *m_pModule, **rs);
       } // for all relocations
     } // for all relocation section
   } // for all inputs
+  return true;
+}
+
+/// initStubs - initialize stub-related stuff.
+bool ObjectLinker::initStubs()
+{
+  // initialize BranchIslandFactory
+  m_LDBackend.initBRIslandFactory();
+
+  // initialize StubFactory
+  m_LDBackend.initStubFactory();
+
+  // initialize target stubs
+  m_LDBackend.initTargetStubs();
+  return true;
+}
+
+/// allocateCommonSymobols - allocate fragments for common symbols to the
+/// corresponding sections
+bool ObjectLinker::allocateCommonSymbols()
+{
+  if (LinkerConfig::Object != m_Config.codeGenType() ||
+      m_Config.options().isDefineCommon())
+    return m_LDBackend.allocateCommonSymbols(*m_pModule);
   return true;
 }
 
@@ -355,19 +385,15 @@ bool ObjectLinker::prelayout()
 {
   // finalize the section symbols, set their fragment reference and push them
   // into output symbol table
-  Module::iterator sect, sEnd = m_Module.end();
-  for (sect = m_Module.begin(); sect != sEnd; ++sect) {
-    m_Module.getSectionSymbolSet().finalize(**sect, m_Module.getSymbolTable());
+  Module::iterator sect, sEnd = m_pModule->end();
+  for (sect = m_pModule->begin(); sect != sEnd; ++sect) {
+    m_pModule->getSectionSymbolSet().finalize(**sect, m_pModule->getSymbolTable());
   }
 
-  m_LDBackend.preLayout(m_Module, *m_pLinker);
-
-  if (LinkerConfig::Object != m_Config.codeGenType() ||
-      m_Config.options().isDefineCommon())
-    m_LDBackend.allocateCommonSymbols(m_Module);
+  m_LDBackend.preLayout(*m_pModule, *m_pBuilder);
 
   /// check program interpreter - computer the name size of the runtime dyld
-  if (!m_pLinker->isStaticLink() &&
+  if (!m_Config.isCodeStatic() &&
       (LinkerConfig::Exec == m_Config.codeGenType() ||
        m_Config.options().isPIE() ||
        m_Config.options().hasDyld()))
@@ -379,7 +405,7 @@ bool ObjectLinker::prelayout()
   ///
   /// dump all symbols and strings from FragmentLinker and build the format-dependent
   /// hash table.
-  m_LDBackend.sizeNamePools(m_Module, m_pLinker->isStaticLink());
+  m_LDBackend.sizeNamePools(*m_pModule, m_Config.isCodeStatic());
 
   return true;
 }
@@ -391,14 +417,14 @@ bool ObjectLinker::prelayout()
 ///   directly
 bool ObjectLinker::layout()
 {
-  m_LDBackend.layout(m_Module, *m_pLinker);
+  m_LDBackend.layout(*m_pModule);
   return true;
 }
 
 /// prelayout - help backend to do some modification after layout
 bool ObjectLinker::postlayout()
 {
-  m_LDBackend.postLayout(m_Module, *m_pLinker);
+  m_LDBackend.postLayout(*m_pModule, *m_pBuilder);
   return true;
 }
 
@@ -407,7 +433,7 @@ bool ObjectLinker::postlayout()
 ///   symbol.
 bool ObjectLinker::finalizeSymbolValue()
 {
-  return m_pLinker->finalizeSymbols();
+  return (m_pLinker->finalizeSymbols() && m_LDBackend.finalizeSymbols());
 }
 
 /// relocate - applying relocation entries and create relocation
@@ -423,23 +449,7 @@ bool ObjectLinker::relocation()
 /// emitOutput - emit the output file.
 bool ObjectLinker::emitOutput(MemoryArea& pOutput)
 {
-  switch(m_Config.codeGenType()) {
-    case LinkerConfig::Object:
-      getObjectWriter()->writeObject(m_Module, pOutput);
-      return true;
-    case LinkerConfig::DynObj:
-      getDynObjWriter()->writeDynObj(m_Module, pOutput);
-      return true;
-    case LinkerConfig::Exec:
-      getExecWriter()->writeExecutable(m_Module, pOutput);
-      return true;
-    case LinkerConfig::Binary:
-      getBinaryWriter()->writeBinary(m_Module, pOutput);
-      return true;
-    default:
-      fatal(diag::unrecognized_output_file) << m_Config.codeGenType();
-  }
-  return false;
+  return llvm::errc::success == getWriter()->writeObject(*m_pModule, pOutput);
 }
 
 /// postProcessing - do modification after all processes
@@ -450,7 +460,7 @@ bool ObjectLinker::postProcessing(MemoryArea& pOutput)
   // emit .eh_frame_hdr
   // eh_frame_hdr should be emitted after syncRelocation, because eh_frame_hdr
   // needs FDE PC value, which will be corrected at syncRelocation
-  m_LDBackend.postProcessing(*m_pLinker, pOutput);
+  m_LDBackend.postProcessing(pOutput);
   return true;
 }
 

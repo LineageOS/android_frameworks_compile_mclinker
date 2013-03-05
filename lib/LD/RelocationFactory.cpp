@@ -71,18 +71,16 @@ Relocation* RelocationFactory::produce(RelocationFactory::Type pType,
     pFragRef.memcpy(&target_data, (m_pConfig->targets().bitclass()/8));
   }
 
-  Relocation *result = allocate();
+  Relocation* result = allocate();
   new (result) Relocation(pType, &pFragRef, pAddend, target_data);
   return result;
 }
 
 Relocation* RelocationFactory::produceEmptyEntry()
 {
-  // FIXME: To prevent relocations from double free by both iplist and
-  // GCFactory, currently we new relocations directly and let iplist
-  // delete them.
-
-  return new Relocation(0, 0, 0, 0);
+  Relocation* result = allocate();
+  new (result) Relocation(0, 0, 0, 0);
+  return result;
 }
 
 void RelocationFactory::destroy(Relocation* pRelocation)

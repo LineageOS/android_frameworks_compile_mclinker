@@ -461,6 +461,66 @@ ArgColor("color",
       "surround result strings only if the output is a tty"),
     clEnumValEnd));
 
+static cl::opt<bool>
+ArgDiscardLocals("discard-locals",
+                 cl::desc("Delete all temporary local symbols."),
+                 cl::init(false));
+
+static cl::alias
+ArgDiscardLocalsAlias("X",
+                      cl::desc("alias for --discard-locals"),
+                      cl::aliasopt(ArgDiscardLocals));
+
+static cl::opt<bool>
+ArgDiscardAll("discard-all",
+              cl::desc("Delete all local symbols."),
+              cl::init(false));
+
+static cl::alias
+ArgDiscardAllAlias("x",
+                   cl::desc("alias for --discard-all"),
+                   cl::aliasopt(ArgDiscardAll));
+
+static cl::opt<bool>
+ArgStripDebug("strip-debug",
+              cl::desc("Omit debugger symbol information from the output file."),
+              cl::init(false));
+
+static cl::alias
+ArgStripDebugAlias("S",
+                   cl::desc("alias for --strip-debug"),
+                   cl::aliasopt(ArgStripDebug));
+
+static cl::opt<bool>
+ArgStripAll("strip-all",
+            cl::desc("Omit all symbol information from the output file."),
+            cl::init(false));
+
+static cl::alias
+ArgStripAllAlias("s",
+                 cl::desc("alias for --strip-all"),
+                 cl::aliasopt(ArgStripAll));
+
+static cl::opt<bool>
+ArgNMagic("nmagic",
+          cl::desc("Do not page align data"),
+          cl::init(false));
+
+static cl::alias
+ArgNMagicAlias("n",
+               cl::desc("alias for --nmagic"),
+               cl::aliasopt(ArgNMagic));
+
+static cl::opt<bool>
+ArgOMagic("omagic",
+          cl::desc("Do not page align data, do not make text readonly"),
+          cl::init(false));
+
+static cl::alias
+ArgOMagicAlias("N",
+               cl::desc("alias for --omagic"),
+               cl::aliasopt(ArgOMagic));
+
 /// @{
 /// @name FIXME: begin of unsupported options
 /// @}
@@ -484,6 +544,7 @@ enum Mode {
 
 static cl::opt<icf::Mode>
 ArgICF("icf",
+       cl::ZeroOrMore,
        cl::desc("Identical Code Folding"),
        cl::init(icf::None),
        cl::values(
@@ -502,56 +563,6 @@ ArgFIXCA8("fix-cortex-a8",
           cl::init(false));
 
 static cl::opt<bool>
-ArgDiscardLocals("discard-locals",
-                 cl::desc("Delete all temporary local symbols."),
-                 cl::init(false));
-
-static cl::alias
-ArgDiscardLocalsAlias("X",
-                      cl::desc("alias for --discard-locals"),
-                      cl::aliasopt(ArgDiscardLocals));
-
-static cl::opt<bool>
-ArgDiscardAll("discard-all",
-              cl::desc("Delete all local symbols."),
-              cl::init(false));
-
-static cl::alias
-ArgDiscardAllAlias("x",
-                   cl::desc("alias for --discard-all"),
-                   cl::aliasopt(ArgDiscardAll));
-
-static cl::opt<bool>
-ArgNMagic("nmagic",
-          cl::desc("Do not page align data"),
-          cl::init(false));
-
-static cl::alias
-ArgNMagicAlias("n",
-               cl::desc("alias for --nmagic"),
-               cl::aliasopt(ArgNMagic));
-
-static cl::opt<bool>
-ArgOMagic("omagic",
-          cl::desc("Do not page align data, do not make text readonly"),
-          cl::init(false));
-
-static cl::alias
-ArgOMagicAlias("N",
-               cl::desc("alias for --omagic"),
-               cl::aliasopt(ArgOMagic));
-
-static cl::opt<bool>
-ArgStripDebug("strip-debug",
-              cl::desc("Omit debugger symbol information from the output file."),
-              cl::init(false));
-
-static cl::alias
-ArgStripDebugAlias("S",
-                   cl::desc("alias for --strip-debug"),
-                   cl::aliasopt(ArgStripDebug));
-
-static cl::opt<bool>
 ArgExportDynamic("export-dynamic",
                  cl::desc("Export all dynamic symbols"),
                  cl::init(false));
@@ -566,13 +577,9 @@ ArgEmulation("m",
              cl::desc("Set GNU linker emulation"),
              cl::value_desc("emulation"));
 
-static cl::opt<std::string>
-ArgRuntimePath("rpath",
-               cl::desc("Add a directory to the runtime library search path"),
-               cl::value_desc("dir"));
-
-static cl::opt<std::string>
+static cl::list<std::string, bool, llvm::cl::SearchDirParser>
 ArgRuntimePathLink("rpath-link",
+                   cl::ZeroOrMore,
                    cl::desc("Add a directory to the link time library search path"),
                    cl::value_desc("dir"));
 
@@ -603,23 +610,106 @@ ArgVersionScript("version-script",
                  cl::value_desc("Version script"));
 
 static cl::opt<bool>
-ArgNoStdLib("nostdlib",
-            cl::desc("Only search lib dirs explicitly specified on cmdline"),
-            cl::init(false));
-
-static cl::opt<bool>
 ArgWarnCommon("warn-common",
               cl::desc("warn common symbol"),
               cl::init(false));
 
+static cl::opt<mcld::GeneralOptions::HashStyle>
+ArgHashStyle("hash-style", cl::init(mcld::GeneralOptions::SystemV),
+  cl::desc("Set the type of linker's hash table(s)."),
+  cl::values(
+       clEnumValN(mcld::GeneralOptions::SystemV, "sysv",
+                 "classic ELF .hash section"),
+       clEnumValN(mcld::GeneralOptions::GNU, "gnu",
+                 "new style GNU .gnu.hash section"),
+       clEnumValN(mcld::GeneralOptions::Both, "both",
+                 "both the classic ELF and new style GNU hash tables"),
+       clEnumValEnd));
+
+static cl::opt<std::string>
+ArgFilter("F",
+          cl::desc("Filter for shared object symbol table"),
+          cl::value_desc("name"));
+
+static cl::alias
+ArgFilterAlias("filter",
+               cl::desc("alias for -F"),
+               cl::aliasopt(ArgFilterAlias));
+
+static cl::list<std::string>
+ArgAuxiliary("f",
+             cl::ZeroOrMore,
+             cl::desc("Auxiliary filter for shared object symbol table"),
+             cl::value_desc("name"));
+
+static cl::alias
+ArgAuxiliaryAlias("auxiliary",
+                  cl::desc("alias for -f"),
+                  cl::aliasopt(ArgAuxiliary));
+
 static cl::opt<bool>
-ArgFatalWarnings("fatal-warnings",
-              cl::desc("turn all warnings into errors"),
-              cl::init(false));
+ArgEB("EB",
+      cl::desc("Link big-endian objects. This affects the default output format."),
+      cl::init(false));
+
+static cl::opt<bool>
+ArgEL("EL",
+      cl::desc("Link little-endian objects. This affects the default output format."),
+      cl::init(false));
 
 /// @{
 /// @name FIXME: end of unsupported options
 /// @}
+
+static cl::opt<bool>
+ArgNoStdlib("nostdlib",
+            cl::desc("Only search lib dirs explicitly specified on cmdline"),
+            cl::init(false));
+
+static cl::list<std::string, bool, llvm::cl::SearchDirParser>
+ArgRuntimePath("rpath",
+               cl::ZeroOrMore,
+               cl::desc("Add a directory to the runtime library search path"),
+               cl::value_desc("dir"));
+
+static cl::alias
+ArgRuntimePathAlias("R",
+                    cl::desc("alias for --rpath"),
+                    cl::aliasopt(ArgRuntimePath), cl::Prefix);
+
+static cl::opt<bool>
+ArgEnableNewDTags("enable-new-dtags",
+                  cl::desc("Enable use of DT_RUNPATH and DT_FLAGS"),
+                  cl::init(false));
+
+class FalseParser : public cl::parser<bool> {
+  const char *ArgStr;
+public:
+
+  // parse - Return true on error.
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, bool &Val) {
+    if (cl::parser<bool>::parse(O, ArgName, Arg, Val))
+      return false;
+    Val = false;
+    return false;
+  }
+};
+
+static bool ArgFatalWarnings;
+
+static cl::opt<bool, true, FalseParser>
+ArgNoFatalWarnings("no-fatal-warnings",
+              cl::location(ArgFatalWarnings),
+              cl::desc("do not turn warnings into errors"),
+              cl::init(false),
+              cl::ValueDisallowed);
+
+static cl::opt<bool, true>
+ArgFatalWarnings_("fatal-warnings",
+              cl::location(ArgFatalWarnings),
+              cl::desc("turn all warnings into errors"),
+              cl::init(false),
+              cl::ValueDisallowed);
 
 static cl::opt<bool>
 ArgWarnSharedTextrel("warn-shared-textrel",
@@ -895,8 +985,15 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   // set up soname
   pConfig.options().setSOName(ArgSOName);
 
+  // add all rpath entries
+  cl::list<std::string>::iterator rp;
+  cl::list<std::string>::iterator rpEnd = ArgRuntimePath.end();
+  for (rp = ArgRuntimePath.begin(); rp != rpEnd; ++rp) {
+    pConfig.options().getRpathList().push_back(*rp);
+  }
+
   // --fatal-warnings
-  pConfig.options().setFatalWarnings(ArgFatalWarnings);
+  // pConfig.options().setFatalWarnings(ArgFatalWarnings);
 
   // -shared or -pie
   if (true == ArgShared || true == ArgPIE) {
@@ -952,10 +1049,22 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   pConfig.options().setEhFrameHdr(ArgEhFrameHdr);
   pConfig.options().setNMagic(ArgNMagic);
   pConfig.options().setOMagic(ArgOMagic);
-  pConfig.options().setStripDebug(ArgStripDebug);
+  pConfig.options().setStripDebug(ArgStripDebug || ArgStripAll);
   pConfig.options().setExportDynamic(ArgExportDynamic);
   pConfig.options().setWarnSharedTextrel(ArgWarnSharedTextrel);
   pConfig.options().setDefineCommon(ArgDefineCommon);
+  pConfig.options().setNewDTags(ArgEnableNewDTags);
+  pConfig.options().setHashStyle(ArgHashStyle);
+  pConfig.options().setNoStdlib(ArgNoStdlib);
+
+  if (ArgStripAll)
+    pConfig.options().setStripSymbols(mcld::GeneralOptions::StripAllSymbols);
+  else if (ArgDiscardAll)
+    pConfig.options().setStripSymbols(mcld::GeneralOptions::StripLocals);
+  else if (ArgDiscardLocals)
+    pConfig.options().setStripSymbols(mcld::GeneralOptions::StripTemporaries);
+  else
+    pConfig.options().setStripSymbols(mcld::GeneralOptions::KeepAllSymbols);
 
   // set up rename map, for --wrap
   cl::list<std::string>::iterator wname;
@@ -1034,14 +1143,6 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
     mcld::warning(mcld::diag::warn_unsupported_option) << ArgFIXCA8.ArgStr;
   }
 
-  if (ArgDiscardLocals) {
-    mcld::warning(mcld::diag::warn_unsupported_option) << ArgDiscardLocals.ArgStr;
-  }
-
-  if (ArgDiscardAll) {
-    mcld::warning(mcld::diag::warn_unsupported_option) << ArgDiscardAll.ArgStr;
-  }
-
   // add address mappings
   // -Ttext
   if (-1U != ArgTextSegAddr) {
@@ -1078,6 +1179,14 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
       pConfig.scripts().addressMap().insert(script.substr(0, pos), exist);
     addr_mapping->setValue(address);
   }
+
+  // set up filter/aux filter for shared object
+  pConfig.options().setFilter(ArgFilter);
+
+  cl::list<std::string>::iterator aux;
+  cl::list<std::string>::iterator auxEnd = ArgAuxiliary.end();
+  for (aux = ArgAuxiliary.begin(); aux != auxEnd; ++aux)
+    pConfig.options().getAuxiliaryList().push_back(*aux);
 
   return true;
 }

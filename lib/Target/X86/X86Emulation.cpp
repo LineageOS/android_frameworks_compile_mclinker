@@ -20,7 +20,17 @@ static bool MCLDEmulateX86ELF(LinkerConfig& pConfig)
 
   // set up bitclass and endian
   pConfig.targets().setEndian(TargetOptions::Little);
-  pConfig.targets().setBitClass(32);
+  unsigned int bitclass;
+  Triple::ArchType arch = pConfig.targets().triple().getArch();
+  assert (arch == Triple::x86 || arch == Triple::x86_64);
+  if (arch == Triple::x86 ||
+      pConfig.targets().triple().getEnvironment() == Triple::GNUX32) {
+    bitclass = 32;
+  }
+  else {
+    bitclass = 64;
+  }
+  pConfig.targets().setBitClass(bitclass);
 
   // set up target-dependent constraints of attributes
   pConfig.attribute().constraint().enableWholeArchive();
@@ -59,6 +69,7 @@ bool emulateX86LD(const std::string& pTriple, LinkerConfig& pConfig)
 //===----------------------------------------------------------------------===//
 extern "C" void MCLDInitializeX86Emulation() {
   // Register the emulation
-  mcld::TargetRegistry::RegisterEmulation(mcld::TheX86Target, mcld::emulateX86LD);
+  mcld::TargetRegistry::RegisterEmulation(mcld::TheX86_32Target, mcld::emulateX86LD);
+  mcld::TargetRegistry::RegisterEmulation(mcld::TheX86_64Target, mcld::emulateX86LD);
 }
 

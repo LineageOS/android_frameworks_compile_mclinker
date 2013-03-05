@@ -9,6 +9,8 @@
 #include <mcld/Target/ELFEmulation.h>
 #include <mcld/LinkerConfig.h>
 
+#include <llvm/Support/Host.h>
+
 using namespace mcld;
 
 struct NameMap {
@@ -61,6 +63,7 @@ static const NameMap map[] =
 
 bool mcld::MCLDEmulateELF(LinkerConfig& pConfig)
 {
+  // set up section map
   if (pConfig.codeGenType() != LinkerConfig::Object) {
     const unsigned int map_size =  (sizeof(map) / sizeof(map[0]) );
     for (unsigned int i = 0; i < map_size; ++i) {
@@ -68,6 +71,18 @@ bool mcld::MCLDEmulateELF(LinkerConfig& pConfig)
       pConfig.scripts().sectionMap().append(map[i].from, map[i].to, exist);
       if (exist)
         return false;
+    }
+  }
+
+  if (!pConfig.options().nostdlib()) {
+    // TODO: check if user sets the default search path instead via -Y option
+    // set up default search path
+    if (llvm::Triple::NetBSD == pConfig.targets().triple().getOS()) {
+      pConfig.options().directories().insert("=/usr/lib");
+    }
+    else {
+      pConfig.options().directories().insert("=/lib");
+      pConfig.options().directories().insert("=/usr/lib");
     }
   }
   return true;

@@ -52,194 +52,6 @@ FragmentLinker::~FragmentLinker()
 {
 }
 
-//===----------------------------------------------------------------------===//
-// Symbol Operations
-//===----------------------------------------------------------------------===//
-/// defineSymbolForcefully - define an output symbol and override it immediately
-LDSymbol* FragmentLinker::defineSymbolForcefully(const llvm::StringRef& pName,
-                                           bool pIsDyn,
-                                           ResolveInfo::Type pType,
-                                           ResolveInfo::Desc pDesc,
-                                           ResolveInfo::Binding pBinding,
-                                           ResolveInfo::SizeType pSize,
-                                           LDSymbol::ValueType pValue,
-                                           FragmentRef* pFragmentRef,
-                                           ResolveInfo::Visibility pVisibility)
-{
-  ResolveInfo* info = m_Module.getNamePool().findInfo(pName);
-  LDSymbol* output_sym = NULL;
-  if (NULL == info) {
-    // the symbol is not in the pool, create a new one.
-    // create a ResolveInfo
-    Resolver::Result result;
-    m_Module.getNamePool().insertSymbol(pName, pIsDyn, pType, pDesc,
-                                        pBinding, pSize, pVisibility,
-                                        NULL, result);
-    assert(!result.existent);
-
-    // create a output LDSymbol
-    output_sym = LDSymbol::Create(*result.info);
-    result.info->setSymPtr(output_sym);
-
-    if (shouldForceLocal(*result.info))
-      m_Module.getSymbolTable().forceLocal(*output_sym);
-    else
-      m_Module.getSymbolTable().add(*output_sym);
-  }
-  else {
-    // the symbol is already in the pool, override it
-    ResolveInfo old_info;
-    old_info.override(*info);
-
-    info->setSource(pIsDyn);
-    info->setType(pType);
-    info->setDesc(pDesc);
-    info->setBinding(pBinding);
-    info->setVisibility(pVisibility);
-    info->setIsSymbol(true);
-    info->setSize(pSize);
-
-    output_sym = info->outSymbol();
-    if (NULL != output_sym)
-      m_Module.getSymbolTable().arrange(*output_sym, old_info);
-    else {
-      // create a output LDSymbol
-      output_sym = LDSymbol::Create(*info);
-      info->setSymPtr(output_sym);
-
-      m_Module.getSymbolTable().add(*output_sym);
-    }
-  }
-
-  if (NULL != output_sym) {
-    output_sym->setFragmentRef(pFragmentRef);
-    output_sym->setValue(pValue);
-  }
-
-  return output_sym;
-}
-
-/// defineSymbolAsRefered - define an output symbol and override it immediately
-LDSymbol* FragmentLinker::defineSymbolAsRefered(const llvm::StringRef& pName,
-                                           bool pIsDyn,
-                                           ResolveInfo::Type pType,
-                                           ResolveInfo::Desc pDesc,
-                                           ResolveInfo::Binding pBinding,
-                                           ResolveInfo::SizeType pSize,
-                                           LDSymbol::ValueType pValue,
-                                           FragmentRef* pFragmentRef,
-                                           ResolveInfo::Visibility pVisibility)
-{
-  ResolveInfo* info = m_Module.getNamePool().findInfo(pName);
-
-  if (NULL == info || !(info->isUndef() || info->isDyn())) {
-    // only undefined symbol and dynamic symbol can make a reference.
-    return NULL;
-  }
-
-  // the symbol is already in the pool, override it
-  ResolveInfo old_info;
-  old_info.override(*info);
-
-  info->setSource(pIsDyn);
-  info->setType(pType);
-  info->setDesc(pDesc);
-  info->setBinding(pBinding);
-  info->setVisibility(pVisibility);
-  info->setIsSymbol(true);
-  info->setSize(pSize);
-
-  LDSymbol* output_sym = info->outSymbol();
-  if (NULL != output_sym) {
-    output_sym->setFragmentRef(pFragmentRef);
-    output_sym->setValue(pValue);
-    m_Module.getSymbolTable().arrange(*output_sym, old_info);
-  }
-  else {
-    // create a output LDSymbol
-    output_sym = LDSymbol::Create(*info);
-    info->setSymPtr(output_sym);
-
-    m_Module.getSymbolTable().add(*output_sym);
-  }
-
-  return output_sym;
-}
-
-/// defineAndResolveSymbolForcefully - define an output symbol and resolve it
-/// immediately
-LDSymbol* FragmentLinker::defineAndResolveSymbolForcefully(const llvm::StringRef& pName,
-                                                     bool pIsDyn,
-                                                     ResolveInfo::Type pType,
-                                                     ResolveInfo::Desc pDesc,
-                                                     ResolveInfo::Binding pBinding,
-                                                     ResolveInfo::SizeType pSize,
-                                                     LDSymbol::ValueType pValue,
-                                                     FragmentRef* pFragmentRef,
-                                                     ResolveInfo::Visibility pVisibility)
-{
-  // Result is <info, existent, override>
-  Resolver::Result result;
-  ResolveInfo old_info;
-  m_Module.getNamePool().insertSymbol(pName, pIsDyn, pType, pDesc, pBinding,
-                                      pSize, pVisibility,
-                                      &old_info, result);
-
-  LDSymbol* output_sym = result.info->outSymbol();
-  bool has_output_sym = (NULL != output_sym);
-
-  if (!result.existent || !has_output_sym) {
-    output_sym = LDSymbol::Create(*result.info);
-    result.info->setSymPtr(output_sym);
-  }
-
-  if (result.overriden || !has_output_sym) {
-    output_sym->setFragmentRef(pFragmentRef);
-    output_sym->setValue(pValue);
-  }
-
-  // After symbol resolution, the visibility is changed to the most restrict.
-  // arrange the output position
-  if (shouldForceLocal(*result.info))
-    m_Module.getSymbolTable().forceLocal(*output_sym);
-  else if (has_output_sym)
-    m_Module.getSymbolTable().arrange(*output_sym, old_info);
-  else
-    m_Module.getSymbolTable().add(*output_sym);
-
-  return output_sym;
-}
-
-/// defineAndResolveSymbolAsRefered - define an output symbol and resolve it
-/// immediately.
-LDSymbol* FragmentLinker::defineAndResolveSymbolAsRefered(const llvm::StringRef& pName,
-                                                    bool pIsDyn,
-                                                    ResolveInfo::Type pType,
-                                                    ResolveInfo::Desc pDesc,
-                                                    ResolveInfo::Binding pBinding,
-                                                    ResolveInfo::SizeType pSize,
-                                                    LDSymbol::ValueType pValue,
-                                                    FragmentRef* pFragmentRef,
-                                                    ResolveInfo::Visibility pVisibility)
-{
-  ResolveInfo* info = m_Module.getNamePool().findInfo(pName);
-
-  if (NULL == info || !(info->isUndef() || info->isDyn())) {
-    // only undefined symbol and dynamic symbol can make a reference.
-    return NULL;
-  }
-
-  return defineAndResolveSymbolForcefully(pName,
-                                          pIsDyn,
-                                          pType,
-                                          pDesc,
-                                          pBinding,
-                                          pSize,
-                                          pValue,
-                                          pFragmentRef,
-                                          pVisibility);
-}
-
 bool FragmentLinker::finalizeSymbols()
 {
   Module::sym_iterator symbol, symEnd = m_Module.sym_end();
@@ -270,24 +82,7 @@ bool FragmentLinker::finalizeSymbols()
     }
   }
 
-  // finialize target-dependent symbols
-  return m_Backend.finalizeSymbols(*this);
-}
-
-bool FragmentLinker::shouldForceLocal(const ResolveInfo& pInfo) const
-{
-  // forced local symbol matches all rules:
-  // 1. We are not doing incremental linking.
-  // 2. The symbol is with Hidden or Internal visibility.
-  // 3. The symbol should be global or weak. Otherwise, local symbol is local.
-  // 4. The symbol is defined or common
-  if (LinkerConfig::Object != m_Config.codeGenType() &&
-      (pInfo.visibility() == ResolveInfo::Hidden ||
-         pInfo.visibility() == ResolveInfo::Internal) &&
-      (pInfo.isGlobal() || pInfo.isWeak()) &&
-      (pInfo.isDefine() || pInfo.isCommon()))
-    return true;
-  return false;
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -426,15 +221,25 @@ void FragmentLinker::partialSyncRelocationResult(MemoryArea& pOutput)
 void FragmentLinker::writeRelocationResult(Relocation& pReloc, uint8_t* pOutput)
 {
   // get output file offset
-  size_t out_offset = pReloc.targetRef().frag()->getParent()->getSection().offset() +
-                      pReloc.targetRef().getOutputOffset();
+  size_t out_offset =
+                 pReloc.targetRef().frag()->getParent()->getSection().offset() +
+                 pReloc.targetRef().getOutputOffset();
 
   uint8_t* target_addr = pOutput + out_offset;
   // byte swapping if target and host has different endian, and then write back
   if(llvm::sys::isLittleEndianHost() != m_Config.targets().isLittleEndian()) {
      uint64_t tmp_data = 0;
 
-     switch(m_Config.targets().bitclass()) {
+     switch(pReloc.size(*m_Backend.getRelocator())) {
+       case 8u:
+         std::memcpy(target_addr, &pReloc.target(), 1);
+         break;
+
+       case 16u:
+         tmp_data = mcld::bswap16(pReloc.target());
+         std::memcpy(target_addr, &tmp_data, 2);
+         break;
+
        case 32u:
          tmp_data = mcld::bswap32(pReloc.target());
          std::memcpy(target_addr, &tmp_data, 4);
@@ -450,33 +255,7 @@ void FragmentLinker::writeRelocationResult(Relocation& pReloc, uint8_t* pOutput)
     }
   }
   else
-    std::memcpy(target_addr, &pReloc.target(), m_Config.targets().bitclass()/8);
-}
-
-/// isOutputPIC - return whether the output is position-independent
-bool FragmentLinker::isOutputPIC() const
-{
-  return checkIsOutputPIC();
-}
-
-/// isStaticLink - return whether we're doing static link
-bool FragmentLinker::isStaticLink() const
-{
-  return checkIsStaticLink();
-}
-
-bool FragmentLinker::checkIsOutputPIC() const
-{
-  if (LinkerConfig::DynObj == m_Config.codeGenType() ||
-      m_Config.options().isPIE())
-    return true;
-  return false;
-}
-
-bool FragmentLinker::checkIsStaticLink() const
-{
-  if (m_Module.getLibraryList().empty() && !isOutputPIC())
-    return true;
-  return false;
+    std::memcpy(target_addr, &pReloc.target(),
+                                      pReloc.size(*m_Backend.getRelocator())/8);
 }
 

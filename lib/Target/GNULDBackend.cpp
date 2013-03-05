@@ -13,6 +13,7 @@
 #include <cassert>
 #include <vector>
 #include <algorithm>
+#include <map>
 
 #include <mcld/Module.h>
 #include <mcld/LinkerConfig.h>
@@ -28,7 +29,6 @@
 #include <mcld/LD/RelocData.h>
 #include <mcld/LD/RelocationFactory.h>
 #include <mcld/MC/Attribute.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
@@ -66,7 +66,6 @@ GNULDBackend::GNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo)
     m_ELFSegmentTable(9), // magic number
     m_pBRIslandFactory(NULL),
     m_pStubFactory(NULL),
-    m_pEhFrame(NULL),
     m_pEhFrameHdr(NULL),
     m_bHasTextRel(false),
     m_bHasStaticTLS(false),
@@ -97,14 +96,11 @@ GNULDBackend::~GNULDBackend()
   delete m_pInfo;
   delete m_pDynObjFileFormat;
   delete m_pExecFileFormat;
+  delete m_pObjectFileFormat;
   delete m_pSymIndexMap;
-  delete m_pEhFrame;
   delete m_pEhFrameHdr;
-
-  if (NULL != m_pBRIslandFactory)
-    delete m_pBRIslandFactory;
-  if (NULL != m_pStubFactory)
-    delete m_pStubFactory;
+  delete m_pBRIslandFactory;
+  delete m_pStubFactory;
 }
 
 size_t GNULDBackend::sectionStartOffset() const
@@ -126,16 +122,16 @@ size_t GNULDBackend::sectionStartOffset() const
   }
 }
 
-uint64_t GNULDBackend::segmentStartAddr(const FragmentLinker& pLinker) const
+uint64_t GNULDBackend::segmentStartAddr() const
 {
   ScriptOptions::AddressMap::const_iterator mapping =
     config().scripts().addressMap().find(".text");
   if (mapping != config().scripts().addressMap().end())
     return mapping.getEntry()->value();
-  else if (pLinker.isOutputPIC())
+  else if (config().isCodeIndep())
     return 0x0;
   else
-    return defaultTextSegmentAddr();
+    return m_pInfo->defaultTextSegmentAddr();
 }
 
 GNUArchiveReader*
@@ -161,24 +157,9 @@ ELFBinaryReader* GNULDBackend::createBinaryReader(IRBuilder& pBuilder)
   return new ELFBinaryReader(*this, pBuilder, config());
 }
 
-ELFObjectWriter* GNULDBackend::createObjectWriter()
+ELFObjectWriter* GNULDBackend::createWriter()
 {
   return new ELFObjectWriter(*this, config());
-}
-
-ELFDynObjWriter* GNULDBackend::createDynObjWriter()
-{
-  return new ELFDynObjWriter(*this, config());
-}
-
-ELFExecWriter* GNULDBackend::createExecWriter()
-{
-  return new ELFExecWriter(*this, config());
-}
-
-ELFBinaryWriter* GNULDBackend::createBinaryWriter()
-{
-  return new ELFBinaryWriter(*this, config());
 }
 
 bool GNULDBackend::initStdSections(ObjectBuilder& pBuilder)
@@ -214,7 +195,7 @@ bool GNULDBackend::initStdSections(ObjectBuilder& pBuilder)
 
 /// initStandardSymbols - define and initialize standard symbols.
 /// This function is called after section merging but before read relocations.
-bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
+bool GNULDBackend::initStandardSymbols(IRBuilder& pBuilder,
                                        Module& pModule)
 {
   if (LinkerConfig::Object == config().codeGenType())
@@ -244,9 +225,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
       llvm::StringRef start_name = llvm::StringRef("__start_" + section->name());
       FragmentRef* start_fragref = FragmentRef::Create(
                                        section->getSectionData()->front(), 0x0);
-      pLinker.defineSymbol<FragmentLinker::AsRefered,
-                           FragmentLinker::Resolve>(start_name,
-                                                    false, // isDyn
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    start_name,
                                                     ResolveInfo::NoType,
                                                     ResolveInfo::Define,
                                                     ResolveInfo::Global,
@@ -258,9 +238,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
       llvm::StringRef stop_name = llvm::StringRef("__stop_" + section->name());
       FragmentRef* stop_fragref = FragmentRef::Create(
                            section->getSectionData()->front(), section->size());
-      pLinker.defineSymbol<FragmentLinker::AsRefered,
-                           FragmentLinker::Resolve>(stop_name,
-                                                    false, // isDyn
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    stop_name,
                                                     ResolveInfo::NoType,
                                                     ResolveInfo::Define,
                                                     ResolveInfo::Global,
@@ -285,9 +264,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
     preinit_array = FragmentRef::Null();
   }
   f_pPreInitArrayStart =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__preinit_array_start",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__preinit_array_start",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -296,9 +274,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              preinit_array, // FragRef
                                              ResolveInfo::Hidden);
   f_pPreInitArrayEnd =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__preinit_array_end",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__preinit_array_end",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -319,9 +296,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   }
 
   f_pInitArrayStart =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__init_array_start",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__init_array_start",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -330,9 +306,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              init_array, // FragRef
                                              ResolveInfo::Hidden);
   f_pInitArrayEnd =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__init_array_end",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__init_array_end",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -353,9 +328,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   }
 
   f_pFiniArrayStart =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__fini_array_start",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__fini_array_start",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -364,9 +338,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              fini_array, // FragRef
                                              ResolveInfo::Hidden);
   f_pFiniArrayEnd =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__fini_array_end",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__fini_array_end",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -387,9 +360,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   }
 
   f_pStack =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__stack",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__stack",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Global,
@@ -402,9 +374,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   // TODO: add SectionData for .dynamic section, and then we can get the correct
   // symbol section index for _DYNAMIC. Now it will be ABS.
   f_pDynamic =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("_DYNAMIC",
-                                                   false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                   "_DYNAMIC",
                                                    ResolveInfo::Object,
                                                    ResolveInfo::Define,
                                                    ResolveInfo::Local,
@@ -415,9 +386,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
 
   // -----  segment symbols  ----- //
   f_pExecutableStart =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__executable_start",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__executable_start",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -426,9 +396,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              FragmentRef::Null(), // FragRef
                                              ResolveInfo::Default);
   f_pEText =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("etext",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "etext",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -437,9 +406,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              FragmentRef::Null(), // FragRef
                                              ResolveInfo::Default);
   f_p_EText =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("_etext",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "_etext",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -448,9 +416,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              FragmentRef::Null(), // FragRef
                                              ResolveInfo::Default);
   f_p__EText =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("__etext",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "__etext",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -459,9 +426,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              FragmentRef::Null(), // FragRef
                                              ResolveInfo::Default);
   f_pEData =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("edata",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "edata",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -471,9 +437,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
                                              ResolveInfo::Default);
 
   f_pEnd =
-     pLinker.defineSymbol<FragmentLinker::AsRefered,
-                          FragmentLinker::Resolve>("end",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                             "end",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -485,9 +450,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   // _edata is defined forcefully.
   // @ref Google gold linker: defstd.cc: 186
   f_p_EData =
-     pLinker.defineSymbol<FragmentLinker::Force,
-                          FragmentLinker::Resolve>("_edata",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                                             "_edata",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -499,9 +463,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   // __bss_start is defined forcefully.
   // @ref Google gold linker: defstd.cc: 214
   f_pBSSStart =
-     pLinker.defineSymbol<FragmentLinker::Force,
-                          FragmentLinker::Resolve>("__bss_start",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                                             "__bss_start",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -513,9 +476,8 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   // _end is defined forcefully.
   // @ref Google gold linker: defstd.cc: 228
   f_p_End =
-     pLinker.defineSymbol<FragmentLinker::Force,
-                          FragmentLinker::Resolve>("_end",
-                                             false, // isDyn
+     pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                                             "_end",
                                              ResolveInfo::NoType,
                                              ResolveInfo::Define,
                                              ResolveInfo::Absolute,
@@ -527,8 +489,7 @@ bool GNULDBackend::initStandardSymbols(FragmentLinker& pLinker,
   return true;
 }
 
-bool
-GNULDBackend::finalizeStandardSymbols(FragmentLinker& pLinker)
+bool GNULDBackend::finalizeStandardSymbols()
 {
   if (LinkerConfig::Object == config().codeGenType())
     return true;
@@ -752,7 +713,6 @@ const ELFFileFormat* GNULDBackend::getOutputFormat() const
 }
 
 void GNULDBackend::partialScanRelocation(Relocation& pReloc,
-                                         FragmentLinker& pLinker,
                                          Module& pModule,
                                          const LDSection& pSection)
 {
@@ -778,8 +738,7 @@ void GNULDBackend::partialScanRelocation(Relocation& pReloc,
 /// sizeNamePools - compute the size of regular name pools
 /// In ELF executable files, regular name pools are .symtab, .strtab,
 /// .dynsym, .dynstr, .hash and .shstrtab.
-void
-GNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
+void GNULDBackend::sizeNamePools(Module& pModule, bool pIsStaticLink)
 {
   // number of entries in symbol tables starts from 1 to hold the special entry
   // at index 0 (STN_UNDEF). See ELF Spec Book I, p1-21.
@@ -788,112 +747,118 @@ GNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
 
   // size of string tables starts from 1 to hold the null character in their
   // first byte
-  size_t strtab = 1;
-  size_t dynstr = pIsStaticLink ? 0 : 1;
+  size_t strtab   = 1;
+  size_t dynstr   = pIsStaticLink ? 0 : 1;
   size_t shstrtab = 1;
-  size_t hash   = 0;
+  size_t hash     = 0;
+  size_t gnuhash  = 0;
 
-  // number of local symbol in the .dynsym
+  // number of local symbol in the .symtab and .dynsym
+  size_t symtab_local_cnt = 0;
   size_t dynsym_local_cnt = 0;
 
-  /// compute the size of .symtab, .dynsym and .strtab
+  Module::SymbolTable& symbols = pModule.getSymbolTable();
+  Module::const_sym_iterator symbol, symEnd;
+  /// Compute the size of .symtab, .strtab, and symtab_local_cnt
   /// @{
-  Module::const_sym_iterator symbol;
-  const Module::SymbolTable& symbols = pModule.getSymbolTable();
-  size_t str_size = 0;
-  // compute the size of symbols in Local and File category
-  Module::const_sym_iterator symEnd = symbols.localEnd();
-  for (symbol = symbols.localBegin(); symbol != symEnd; ++symbol) {
-    str_size = (*symbol)->nameSize() + 1;
-    if (!pIsStaticLink && isDynamicSymbol(**symbol)) {
-      ++dynsym;
-      if (ResolveInfo::Section != (*symbol)->type())
-        dynstr += str_size;
-    }
+  symEnd = symbols.end();
+  for (symbol = symbols.begin(); symbol != symEnd; ++symbol) {
     ++symtab;
     if (ResolveInfo::Section != (*symbol)->type())
-      strtab += str_size;
+      strtab += (*symbol)->nameSize() + 1;
   }
-  // compute the size of symbols in TLS category
-  symEnd = symbols.tlsEnd();
-  for (symbol = symbols.tlsBegin(); symbol != symEnd; ++symbol) {
-    str_size = (*symbol)->nameSize() + 1;
-    if (!pIsStaticLink) {
-      ++dynsym;
-      if (ResolveInfo::Section != (*symbol)->type())
-        dynstr += str_size;
-    }
-    ++symtab;
-    if (ResolveInfo::Section != (*symbol)->type())
-      strtab += str_size;
-  }
-  dynsym_local_cnt = dynsym;
-  // compute the size of the reset of symbols
-  symEnd = pModule.sym_end();
-  for (symbol = symbols.tlsEnd(); symbol != symEnd; ++symbol) {
-    str_size = (*symbol)->nameSize() + 1;
-    if (!pIsStaticLink && isDynamicSymbol(**symbol)) {
-      ++dynsym;
-      if (ResolveInfo::Section != (*symbol)->type())
-        dynstr += str_size;
-    }
-    ++symtab;
-    if (ResolveInfo::Section != (*symbol)->type())
-      strtab += str_size;
-  }
+  symtab_local_cnt = 1 + symbols.numOfFiles() + symbols.numOfLocals() +
+                     symbols.numOfLocalDyns();
 
   ELFFileFormat* file_format = getOutputFormat();
 
   switch(config().codeGenType()) {
-    // compute size of .dynstr and .hash
     case LinkerConfig::DynObj: {
       // soname
-      if (!pIsStaticLink)
-        dynstr += pModule.name().size() + 1;
+      dynstr += pModule.name().size() + 1;
     }
     /** fall through **/
     case LinkerConfig::Exec:
     case LinkerConfig::Binary: {
-      // add DT_NEED strings into .dynstr and .dynamic
-      // Rules:
-      //   1. ignore --no-add-needed
-      //   2. force count in --no-as-needed
-      //   3. judge --as-needed
       if (!pIsStaticLink) {
-        Module::const_lib_iterator lib, libEnd = pModule.lib_end();
-        for (lib = pModule.lib_begin(); lib != libEnd; ++lib) {
-          // --add-needed
-          if ((*lib)->attribute()->isAddNeeded()) {
-            // --no-as-needed
-            if (!(*lib)->attribute()->isAsNeeded()) {
-              dynstr += (*lib)->name().size() + 1;
-              dynamic().reserveNeedEntry();
-            }
-            // --as-needed
-            else if ((*lib)->isNeeded()) {
-              dynstr += (*lib)->name().size() + 1;
-              dynamic().reserveNeedEntry();
-            }
+        /// Compute the size of .dynsym, .dynstr, and dynsym_local_cnt
+        symEnd = symbols.dynamicEnd();
+        for (symbol = symbols.localDynBegin(); symbol != symEnd; ++symbol) {
+          ++dynsym;
+          if (ResolveInfo::Section != (*symbol)->type())
+            dynstr += (*symbol)->nameSize() + 1;
+        }
+        dynsym_local_cnt = 1 + symbols.numOfLocalDyns();
+
+        // compute .gnu.hash
+        if (GeneralOptions::GNU  == config().options().getHashStyle() ||
+            GeneralOptions::Both == config().options().getHashStyle()) {
+          // count the number of dynsym to hash
+          size_t hashed_sym_cnt = 0;
+          symEnd = symbols.dynamicEnd();
+          for (symbol = symbols.dynamicBegin(); symbol != symEnd; ++symbol) {
+            if (DynsymCompare().needGNUHash(**symbol))
+              ++hashed_sym_cnt;
+          }
+          // Special case for empty .dynsym
+          if (hashed_sym_cnt == 0)
+            gnuhash = 5 * 4 + config().targets().bitclass() / 8;
+          else {
+            size_t nbucket = getHashBucketCount(hashed_sym_cnt, true);
+            gnuhash = (4 + nbucket + hashed_sym_cnt) * 4;
+            gnuhash += (1U << getGNUHashMaskbitslog2(hashed_sym_cnt)) / 8;
           }
         }
 
         // compute .hash
-        // Both Elf32_Word and Elf64_Word are 4 bytes
-        hash = (2 + getHashBucketCount(dynsym, false) + dynsym) *
-               sizeof(llvm::ELF::Elf32_Word);
+        if (GeneralOptions::SystemV == config().options().getHashStyle() ||
+            GeneralOptions::Both == config().options().getHashStyle()) {
+          // Both Elf32_Word and Elf64_Word are 4 bytes
+          hash = (2 + getHashBucketCount(dynsym, false) + dynsym) *
+                 sizeof(llvm::ELF::Elf32_Word);
+        }
+
+        // add DT_NEEDED
+        Module::const_lib_iterator lib, libEnd = pModule.lib_end();
+        for (lib = pModule.lib_begin(); lib != libEnd; ++lib) {
+          if (!(*lib)->attribute()->isAsNeeded() || (*lib)->isNeeded()) {
+            dynstr += (*lib)->name().size() + 1;
+            dynamic().reserveNeedEntry();
+          }
+        }
+
+        // add DT_RPATH
+        if (!config().options().getRpathList().empty()) {
+          dynamic().reserveNeedEntry();
+          GeneralOptions::const_rpath_iterator rpath,
+            rpathEnd = config().options().rpath_end();
+          for (rpath = config().options().rpath_begin();
+               rpath != rpathEnd; ++rpath)
+            dynstr += (*rpath).size() + 1;
+        }
+
+        // set size
+        if (config().targets().is32Bits()) {
+          file_format->getDynSymTab().setSize(dynsym *
+                                              sizeof(llvm::ELF::Elf32_Sym));
+        } else {
+          file_format->getDynSymTab().setSize(dynsym *
+                                              sizeof(llvm::ELF::Elf64_Sym));
+        }
+        file_format->getDynStrTab().setSize(dynstr);
+        file_format->getHashTab().setSize(hash);
+        file_format->getGNUHashTab().setSize(gnuhash);
+
+        // set .dynsym sh_info to one greater than the symbol table
+        // index of the last local symbol
+        file_format->getDynSymTab().setInfo(dynsym_local_cnt);
+
+        // Because some entries in .dynamic section need information of .dynsym,
+        // .dynstr, .symtab, .strtab and .hash, we can not reserve non-DT_NEEDED
+        // entries until we get the size of the sections mentioned above
+        dynamic().reserveEntries(*file_format);
+        file_format->getDynamic().setSize(dynamic().numOfBytes());
       }
-
-      // set size
-      if (config().targets().is32Bits())
-        file_format->getDynSymTab().setSize(dynsym*sizeof(llvm::ELF::Elf32_Sym));
-      else
-        file_format->getDynSymTab().setSize(dynsym*sizeof(llvm::ELF::Elf64_Sym));
-      file_format->getDynStrTab().setSize(dynstr);
-      file_format->getHashTab().setSize(hash);
-
-      // set .dynsym sh_info to one greater than the symbol table
-      // index of the last local symbol
-      file_format->getDynSymTab().setInfo(dynsym_local_cnt);
     }
     /* fall through */
     case LinkerConfig::Object: {
@@ -905,41 +870,46 @@ GNULDBackend::sizeNamePools(const Module& pModule, bool pIsStaticLink)
 
       // set .symtab sh_info to one greater than the symbol table
       // index of the last local symbol
-      file_format->getSymTab().setInfo(symbols.numOfLocals() + 1);
+      file_format->getSymTab().setInfo(symtab_local_cnt);
+
+      // compute the size of .shstrtab section.
+      Module::const_iterator sect, sectEnd = pModule.end();
+      for (sect = pModule.begin(); sect != sectEnd; ++sect) {
+        switch ((*sect)->kind()) {
+        case LDFileFormat::Null:
+          break;
+        // take StackNote directly
+        case LDFileFormat::StackNote:
+          shstrtab += ((*sect)->name().size() + 1);
+          break;
+        case LDFileFormat::EhFrame:
+          if (((*sect)->size() != 0) ||
+              ((*sect)->hasEhFrame() &&
+               config().codeGenType() == LinkerConfig::Object))
+            shstrtab += ((*sect)->name().size() + 1);
+          break;
+        case LDFileFormat::Relocation:
+          if (((*sect)->size() != 0) ||
+              ((*sect)->hasRelocData() &&
+               config().codeGenType() == LinkerConfig::Object))
+            shstrtab += ((*sect)->name().size() + 1);
+          break;
+        default:
+          if (((*sect)->size() != 0) ||
+              ((*sect)->hasSectionData() &&
+               config().codeGenType() == LinkerConfig::Object))
+            shstrtab += ((*sect)->name().size() + 1);
+          break;
+        } // end of switch
+      } // end of for
+      shstrtab += (strlen(".shstrtab") + 1);
+      file_format->getShStrTab().setSize(shstrtab);
       break;
     }
     default:
       fatal(diag::fatal_illegal_codegen_type) << pModule.name();
       break;
   } // end of switch
-  /// @}
-
-  /// reserve fixed entries in the .dynamic section.
-  /// @{
-  if (LinkerConfig::DynObj == config().codeGenType() ||
-      LinkerConfig::Exec   == config().codeGenType() ||
-      LinkerConfig::Binary == config().codeGenType()) {
-    // Because some entries in .dynamic section need information of .dynsym,
-    // .dynstr, .symtab, .strtab and .hash, we can not reserve non-DT_NEEDED
-    // entries until we get the size of the sections mentioned above
-    if (!pIsStaticLink)
-      dynamic().reserveEntries(*file_format);
-    file_format->getDynamic().setSize(dynamic().numOfBytes());
-  }
-  /// @}
-
-  /// compute the size of .shstrtab section.
-  /// @{
-  Module::const_iterator sect, sectEnd = pModule.end();
-  for (sect = pModule.begin(); sect != sectEnd; ++sect) {
-    // StackNote sections will always be in output!
-    if (0 != (*sect)->size() || LDFileFormat::StackNote == (*sect)->kind()) {
-      shstrtab += ((*sect)->name().size() + 1);
-    }
-  }
-  shstrtab += (strlen(".shstrtab") + 1);
-  file_format->getShStrTab().setSize(shstrtab);
-  /// @}
 }
 
 /// emitSymbol32 - emit an ELF32 symbol
@@ -974,14 +944,19 @@ void GNULDBackend::emitSymbol64(llvm::ELF::Elf64_Sym& pSym,
 {
    // FIXME: check the endian between host and target
    // write out symbol
+   if (ResolveInfo::Section != pSymbol.type()) {
+     pSym.st_name  = pStrtabsize;
+     strcpy((pStrtab + pStrtabsize), pSymbol.name());
+   }
+   else {
+     pSym.st_name  = 0;
+   }
    pSym.st_name  = pStrtabsize;
    pSym.st_value = pSymbol.value();
    pSym.st_size  = getSymbolSize(pSymbol);
    pSym.st_info  = getSymbolInfo(pSymbol);
    pSym.st_other = pSymbol.visibility();
    pSym.st_shndx = getSymbolShndx(pSymbol);
-   // write out string
-   strcpy((pStrtab + pStrtabsize), pSymbol.name());
 }
 
 /// emitRegNamePools - emit regular name pools - .symtab, .strtab
@@ -1015,54 +990,37 @@ void GNULDBackend::emitRegNamePools(const Module& pModule,
 
   // set up strtab_region
   char* strtab = (char*)strtab_region->start();
-  strtab[0] = '\0';
 
-  // initialize the first ELF symbol
-  if (config().targets().is32Bits()) {
-    symtab32[0].st_name  = 0;
-    symtab32[0].st_value = 0;
-    symtab32[0].st_size  = 0;
-    symtab32[0].st_info  = 0;
-    symtab32[0].st_other = 0;
-    symtab32[0].st_shndx = 0;
-  }
-  else { // must 64
-    symtab64[0].st_name  = 0;
-    symtab64[0].st_value = 0;
-    symtab64[0].st_size  = 0;
-    symtab64[0].st_info  = 0;
-    symtab64[0].st_other = 0;
-    symtab64[0].st_shndx = 0;
-  }
+  // emit the first ELF symbol
+  if (config().targets().is32Bits())
+    emitSymbol32(symtab32[0], *LDSymbol::Null(), strtab, 0, 0);
+  else
+    emitSymbol64(symtab64[0], *LDSymbol::Null(), strtab, 0, 0);
 
   bool sym_exist = false;
   HashTableType::entry_type* entry = NULL;
   if (LinkerConfig::Object == config().codeGenType()) {
-    entry = m_pSymIndexMap->insert(NULL, sym_exist);
+    entry = m_pSymIndexMap->insert(LDSymbol::Null(), sym_exist);
     entry->setValue(0);
   }
 
-  size_t symtabIdx = 1;
+  size_t symIdx = 1;
   size_t strtabsize = 1;
-  // compute size of .symtab, .dynsym and .strtab
-  Module::const_sym_iterator symbol;
-  Module::const_sym_iterator symEnd = pModule.sym_end();
-  for (symbol = pModule.sym_begin(); symbol != symEnd; ++symbol) {
-    // maintain output's symbol and index map if building .o file
+
+  const Module::SymbolTable& symbols = pModule.getSymbolTable();
+  Module::const_sym_iterator symbol, symEnd;
+
+  symEnd = symbols.end();
+  for (symbol = symbols.begin(); symbol != symEnd; ++symbol) {
     if (LinkerConfig::Object == config().codeGenType()) {
       entry = m_pSymIndexMap->insert(*symbol, sym_exist);
-      entry->setValue(symtabIdx);
+      entry->setValue(symIdx);
     }
-
     if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
+      emitSymbol32(symtab32[symIdx], **symbol, strtab, strtabsize, symIdx);
     else
-      emitSymbol64(symtab64[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-
-    // sum up counters
-    ++symtabIdx;
+      emitSymbol64(symtab64[symIdx], **symbol, strtab, strtabsize, symIdx);
+    ++symIdx;
     if (ResolveInfo::Section != (*symbol)->type())
       strtabsize += (*symbol)->nameSize() + 1;
   }
@@ -1072,13 +1030,11 @@ void GNULDBackend::emitRegNamePools(const Module& pModule,
 ///
 /// the size of these tables should be computed before layout
 /// layout should computes the start offset of these tables
-void GNULDBackend::emitDynNamePools(const Module& pModule,
-                                    MemoryArea& pOutput)
+void GNULDBackend::emitDynNamePools(Module& pModule, MemoryArea& pOutput)
 {
   ELFFileFormat* file_format = getOutputFormat();
   if (!file_format->hasDynSymTab() ||
       !file_format->hasDynStrTab() ||
-      !file_format->hasHashTab()   ||
       !file_format->hasDynamic())
     return;
 
@@ -1087,15 +1043,12 @@ void GNULDBackend::emitDynNamePools(const Module& pModule,
 
   LDSection& symtab_sect = file_format->getDynSymTab();
   LDSection& strtab_sect = file_format->getDynStrTab();
-  LDSection& hash_sect   = file_format->getHashTab();
   LDSection& dyn_sect    = file_format->getDynamic();
 
   MemoryRegion* symtab_region = pOutput.request(symtab_sect.offset(),
                                                 symtab_sect.size());
   MemoryRegion* strtab_region = pOutput.request(strtab_sect.offset(),
                                                 strtab_sect.size());
-  MemoryRegion* hash_region   = pOutput.request(hash_sect.offset(),
-                                                hash_sect.size());
   MemoryRegion* dyn_region    = pOutput.request(dyn_sect.offset(),
                                                 dyn_sect.size());
   // set up symtab_region
@@ -1110,125 +1063,76 @@ void GNULDBackend::emitDynNamePools(const Module& pModule,
                                       << config().targets().bitclass();
   }
 
-  // initialize the first ELF symbol
-  if (config().targets().is32Bits()) {
-    symtab32[0].st_name  = 0;
-    symtab32[0].st_value = 0;
-    symtab32[0].st_size  = 0;
-    symtab32[0].st_info  = 0;
-    symtab32[0].st_other = 0;
-    symtab32[0].st_shndx = 0;
-  }
-  else { // must 64
-    symtab64[0].st_name  = 0;
-    symtab64[0].st_value = 0;
-    symtab64[0].st_size  = 0;
-    symtab64[0].st_info  = 0;
-    symtab64[0].st_other = 0;
-    symtab64[0].st_shndx = 0;
-  }
   // set up strtab_region
   char* strtab = (char*)strtab_region->start();
-  strtab[0] = '\0';
 
-  // add the first symbol into m_pSymIndexMap
-  entry = m_pSymIndexMap->insert(NULL, sym_exist);
-  entry->setValue(0);
+  // emit the first ELF symbol
+  if (config().targets().is32Bits())
+    emitSymbol32(symtab32[0], *LDSymbol::Null(), strtab, 0, 0);
+  else
+    emitSymbol64(symtab64[0], *LDSymbol::Null(), strtab, 0, 0);
 
-  size_t symtabIdx = 1;
+  size_t symIdx = 1;
   size_t strtabsize = 1;
 
-  // emit of .dynsym, and .dynstr
-  Module::const_sym_iterator symbol;
-  const Module::SymbolTable& symbols = pModule.getSymbolTable();
-  // emit symbol in File and Local category if it's dynamic symbol
-  Module::const_sym_iterator symEnd = symbols.localEnd();
-  for (symbol = symbols.localBegin(); symbol != symEnd; ++symbol) {
-    if (!isDynamicSymbol(**symbol))
-      continue;
-
-    if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-    else
-      emitSymbol64(symtab64[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-
-    // maintain output's symbol and index map
-    entry = m_pSymIndexMap->insert(*symbol, sym_exist);
-    entry->setValue(symtabIdx);
-    // sum up counters
-    ++symtabIdx;
-    if (ResolveInfo::Section != (*symbol)->type())
-      strtabsize += (*symbol)->nameSize() + 1;
+  Module::SymbolTable& symbols = pModule.getSymbolTable();
+  // emit .gnu.hash
+  if (GeneralOptions::GNU  == config().options().getHashStyle() ||
+      GeneralOptions::Both == config().options().getHashStyle()) {
+    // Currently we may add output symbols after sizeNamePools(), and a
+    // non-stable sort is used in SymbolCategory::arrange(), so we just
+    // sort .dynsym right before emitting .gnu.hash
+    std::stable_sort(symbols.dynamicBegin(), symbols.dynamicEnd(),
+                     DynsymCompare());
+    emitGNUHashTab(symbols, pOutput);
   }
+  // emit .hash
+  if (GeneralOptions::SystemV == config().options().getHashStyle() ||
+      GeneralOptions::Both == config().options().getHashStyle())
+    emitELFHashTab(symbols, pOutput);
 
-  // emit symbols in TLS category, all symbols in TLS category shold be emitited
-  symEnd = symbols.tlsEnd();
-  for (symbol = symbols.tlsBegin(); symbol != symEnd; ++symbol) {
+  // emit .dynsym, and .dynstr (emit LocalDyn and Dynamic category)
+  Module::const_sym_iterator symbol, symEnd = symbols.dynamicEnd();
+  for (symbol = symbols.localDynBegin(); symbol != symEnd; ++symbol) {
     if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
+      emitSymbol32(symtab32[symIdx], **symbol, strtab, strtabsize, symIdx);
     else
-      emitSymbol64(symtab64[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-
+      emitSymbol64(symtab64[symIdx], **symbol, strtab, strtabsize, symIdx);
     // maintain output's symbol and index map
     entry = m_pSymIndexMap->insert(*symbol, sym_exist);
-    entry->setValue(symtabIdx);
+    entry->setValue(symIdx);
     // sum up counters
-    ++symtabIdx;
-    if (ResolveInfo::Section != (*symbol)->type())
-      strtabsize += (*symbol)->nameSize() + 1;
-  }
-
-  // emit the reset of the symbols if the symbol is dynamic symbol
-  symEnd = pModule.sym_end();
-  for (symbol = symbols.tlsEnd(); symbol != symEnd; ++symbol) {
-    if (!isDynamicSymbol(**symbol))
-      continue;
-
-    if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-    else
-      emitSymbol64(symtab64[symtabIdx], **symbol, strtab, strtabsize,
-                   symtabIdx);
-
-    // maintain output's symbol and index map
-    entry = m_pSymIndexMap->insert(*symbol, sym_exist);
-    entry->setValue(symtabIdx);
-    // sum up counters
-    ++symtabIdx;
+    ++symIdx;
     if (ResolveInfo::Section != (*symbol)->type())
       strtabsize += (*symbol)->nameSize() + 1;
   }
 
   // emit DT_NEED
   // add DT_NEED strings into .dynstr
-  // Rules:
-  //   1. ignore --no-add-needed
-  //   2. force count in --no-as-needed
-  //   3. judge --as-needed
   ELFDynamic::iterator dt_need = dynamic().needBegin();
   Module::const_lib_iterator lib, libEnd = pModule.lib_end();
   for (lib = pModule.lib_begin(); lib != libEnd; ++lib) {
-    // --add-needed
-    if ((*lib)->attribute()->isAddNeeded()) {
-      // --no-as-needed
-      if (!(*lib)->attribute()->isAsNeeded()) {
-        strcpy((strtab + strtabsize), (*lib)->name().c_str());
-        (*dt_need)->setValue(llvm::ELF::DT_NEEDED, strtabsize);
-        strtabsize += (*lib)->name().size() + 1;
-        ++dt_need;
-      }
-      // --as-needed
-      else if ((*lib)->isNeeded()) {
-        strcpy((strtab + strtabsize), (*lib)->name().c_str());
-        (*dt_need)->setValue(llvm::ELF::DT_NEEDED, strtabsize);
-        strtabsize += (*lib)->name().size() + 1;
-        ++dt_need;
-      }
+    if (!(*lib)->attribute()->isAsNeeded() || (*lib)->isNeeded()) {
+      strcpy((strtab + strtabsize), (*lib)->name().c_str());
+      (*dt_need)->setValue(llvm::ELF::DT_NEEDED, strtabsize);
+      strtabsize += (*lib)->name().size() + 1;
+      ++dt_need;
+    }
+  }
+
+  if (!config().options().getRpathList().empty()) {
+    if (!config().options().hasNewDTags())
+      (*dt_need)->setValue(llvm::ELF::DT_RPATH, strtabsize);
+    else
+      (*dt_need)->setValue(llvm::ELF::DT_RUNPATH, strtabsize);
+    ++dt_need;
+
+    GeneralOptions::const_rpath_iterator rpath,
+      rpathEnd = config().options().rpath_end();
+    for (rpath = config().options().rpath_begin(); rpath != rpathEnd; ++rpath) {
+      memcpy((strtab + strtabsize), (*rpath).data(), (*rpath).size());
+      strtabsize += (*rpath).size();
+      strtab[strtabsize++] = (rpath + 1 == rpathEnd ? '\0' : ':');
     }
   }
 
@@ -1245,18 +1149,27 @@ void GNULDBackend::emitDynNamePools(const Module& pModule,
     strcpy((strtab + strtabsize), pModule.name().c_str());
     strtabsize += pModule.name().size() + 1;
   }
-  // emit hash table
-  // FIXME: this verion only emit SVR4 hash section.
-  //        Please add GNU new hash section
+}
 
+/// emitELFHashTab - emit .hash
+void GNULDBackend::emitELFHashTab(const Module::SymbolTable& pSymtab,
+                                  MemoryArea& pOutput)
+{
+  ELFFileFormat* file_format = getOutputFormat();
+  if (!file_format->hasHashTab())
+    return;
+  LDSection& hash_sect = file_format->getHashTab();
+  MemoryRegion* hash_region = pOutput.request(hash_sect.offset(),
+                                              hash_sect.size());
   // both 32 and 64 bits hash table use 32-bit entry
   // set up hash_region
   uint32_t* word_array = (uint32_t*)hash_region->start();
   uint32_t& nbucket = word_array[0];
   uint32_t& nchain  = word_array[1];
 
-  nbucket = getHashBucketCount(symtabIdx, false);
-  nchain  = symtabIdx;
+  size_t dynsymSize = 1 + pSymtab.numOfLocalDyns() + pSymtab.numOfDynamics();
+  nbucket = getHashBucketCount(dynsymSize, false);
+  nchain  = dynsymSize;
 
   uint32_t* bucket = (word_array + 2);
   uint32_t* chain  = (bucket + nbucket);
@@ -1266,21 +1179,140 @@ void GNULDBackend::emitDynNamePools(const Module& pModule,
 
   StringHash<ELF> hash_func;
 
-  if (config().targets().is32Bits()) {
-    for (size_t sym_idx=0; sym_idx < symtabIdx; ++sym_idx) {
-      llvm::StringRef name(strtab + symtab32[sym_idx].st_name);
-      size_t bucket_pos = hash_func(name) % nbucket;
-      chain[sym_idx] = bucket[bucket_pos];
-      bucket[bucket_pos] = sym_idx;
-    }
+  size_t idx = 1;
+  Module::const_sym_iterator symbol, symEnd = pSymtab.dynamicEnd();
+  for (symbol = pSymtab.localDynBegin(); symbol != symEnd; ++symbol) {
+    llvm::StringRef name((*symbol)->name());
+    size_t bucket_pos = hash_func(name) % nbucket;
+    chain[idx] = bucket[bucket_pos];
+    bucket[bucket_pos] = idx;
+    ++idx;
   }
-  else if (config().targets().is64Bits()) {
-    for (size_t sym_idx=0; sym_idx < symtabIdx; ++sym_idx) {
-      llvm::StringRef name(strtab + symtab64[sym_idx].st_name);
-      size_t bucket_pos = hash_func(name) % nbucket;
-      chain[sym_idx] = bucket[bucket_pos];
-      bucket[bucket_pos] = sym_idx;
+}
+
+/// emitGNUHashTab - emit .gnu.hash
+void GNULDBackend::emitGNUHashTab(Module::SymbolTable& pSymtab,
+                                  MemoryArea& pOutput)
+{
+  ELFFileFormat* file_format = getOutputFormat();
+  if (!file_format->hasGNUHashTab())
+    return;
+
+  MemoryRegion* gnuhash_region =
+    pOutput.request(file_format->getGNUHashTab().offset(),
+                    file_format->getGNUHashTab().size());
+
+  uint32_t* word_array = (uint32_t*)gnuhash_region->start();
+  // fixed-length fields
+  uint32_t& nbucket   = word_array[0];
+  uint32_t& symidx    = word_array[1];
+  uint32_t& maskwords = word_array[2];
+  uint32_t& shift2    = word_array[3];
+  // variable-length fields
+  uint8_t*  bitmask = (uint8_t*)(word_array + 4);
+  uint32_t* bucket  = NULL;
+  uint32_t* chain   = NULL;
+
+  // count the number of dynsym to hash
+  size_t unhashed_sym_cnt = pSymtab.numOfLocalDyns();
+  size_t hashed_sym_cnt   = pSymtab.numOfDynamics();
+  Module::const_sym_iterator symbol, symEnd = pSymtab.dynamicEnd();
+  for (symbol = pSymtab.dynamicBegin(); symbol != symEnd; ++symbol) {
+    if (DynsymCompare().needGNUHash(**symbol))
+      break;
+      ++unhashed_sym_cnt;
+      --hashed_sym_cnt;
+  }
+
+  // special case for the empty hash table
+  if (hashed_sym_cnt == 0) {
+    nbucket   = 1; // one empty bucket
+    symidx    = 1 + unhashed_sym_cnt; // symidx above unhashed symbols
+    maskwords = 1; // bitmask length
+    shift2    = 0; // bloom filter
+
+    if (config().targets().is32Bits()) {
+      uint32_t* maskval = (uint32_t*)bitmask;
+      *maskval = 0; // no valid hashes
+    } else {
+      // must be 64
+      uint64_t* maskval = (uint64_t*)bitmask;
+      *maskval = 0; // no valid hashes
     }
+    bucket  = (uint32_t*)(bitmask + config().targets().bitclass() / 8);
+    *bucket = 0; // no hash in the only bucket
+    return;
+  }
+
+  uint32_t maskbitslog2 = getGNUHashMaskbitslog2(hashed_sym_cnt);
+  uint32_t maskbits = 1u << maskbitslog2;
+  uint32_t shift1 = config().targets().is32Bits() ? 5 : 6;
+  uint32_t mask = (1u << shift1) - 1;
+
+  nbucket   = getHashBucketCount(hashed_sym_cnt, true);
+  symidx    = 1 + unhashed_sym_cnt;
+  maskwords = 1 << (maskbitslog2 - shift1);
+  shift2    = maskbitslog2;
+
+  // setup bucket and chain
+  bucket = (uint32_t*)(bitmask + maskbits / 8);
+  chain  = (bucket + nbucket);
+
+  // build the gnu style hash table
+  typedef std::multimap<uint32_t,
+                        std::pair<LDSymbol*, uint32_t> > SymMapType;
+  SymMapType symmap;
+  symEnd = pSymtab.dynamicEnd();
+  for (symbol = pSymtab.localDynBegin() + symidx - 1; symbol != symEnd;
+    ++symbol) {
+    StringHash<DJB> hasher;
+    uint32_t djbhash = hasher((*symbol)->name());
+    uint32_t hash = djbhash % nbucket;
+    symmap.insert(std::make_pair(hash, std::make_pair(*symbol, djbhash)));
+  }
+
+  // compute bucket, chain, and bitmask
+  std::vector<uint64_t> bitmasks(maskwords);
+  size_t hashedidx = symidx;
+  for (size_t idx = 0; idx < nbucket; ++idx) {
+    size_t count = 0;
+    std::pair<SymMapType::iterator, SymMapType::iterator> ret;
+    ret = symmap.equal_range(idx);
+    for (SymMapType::iterator it = ret.first; it != ret.second; ) {
+      // rearrange the hashed symbol ordering
+      *(pSymtab.localDynBegin() + hashedidx - 1) = it->second.first;
+      uint32_t djbhash = it->second.second;
+      uint32_t val = ((djbhash >> shift1) & ((maskbits >> shift1) - 1));
+      bitmasks[val] |= 1u << (djbhash & mask);
+      bitmasks[val] |= 1u << ((djbhash >> shift2) & mask);
+      val = djbhash & ~1u;
+      // advance the iterator and check if we're dealing w/ the last elment
+      if (++it == ret.second) {
+        // last element terminates the chain
+        val |= 1;
+      }
+      chain[hashedidx - symidx] = val;
+
+      ++hashedidx;
+      ++count;
+    }
+
+    if (count == 0)
+      bucket[idx] = 0;
+    else
+      bucket[idx] = hashedidx - count;
+  }
+
+  // write the bitmasks
+  if (config().targets().is32Bits()) {
+    uint32_t* maskval = (uint32_t*)bitmask;
+    for (size_t i = 0; i < maskwords; ++i)
+      std::memcpy(maskval + i, &bitmasks[i], 4);
+  } else {
+    // must be 64
+    uint64_t* maskval = (uint64_t*)bitmask;
+    for (size_t i = 0; i < maskwords; ++i)
+      std::memcpy(maskval + i, &bitmasks[i], 8);
   }
 }
 
@@ -1291,7 +1323,7 @@ void GNULDBackend::sizeInterp()
   if (config().options().hasDyld())
     dyld_name = config().options().dyld().c_str();
   else
-    dyld_name = dyld();
+    dyld_name = m_pInfo->dyld();
 
   LDSection& interp = getOutputFormat()->getInterp();
   interp.setSize(std::strlen(dyld_name) + 1);
@@ -1307,7 +1339,7 @@ void GNULDBackend::emitInterp(MemoryArea& pOutput)
     if (config().options().hasDyld())
       dyld_name = config().options().dyld().c_str();
     else
-      dyld_name = dyld();
+      dyld_name = m_pInfo->dyld();
 
     std::memcpy(region->start(), dyld_name, interp.size());
   }
@@ -1381,9 +1413,14 @@ unsigned int GNULDBackend::getSectionOrder(const LDSection& pSectHdr) const
     case LDFileFormat::Target:
       return getTargetSectionOrder(pSectHdr);
 
-    // handle .interp
+    // handle .interp and .note.* sections
     case LDFileFormat::Note:
-      return SHO_INTERP;
+      if (file_format->hasInterp() && (&pSectHdr == &file_format->getInterp()))
+        return SHO_INTERP;
+      else if (is_write)
+        return SHO_RW_NOTE;
+      else
+        return SHO_RO_NOTE;
 
     case LDFileFormat::EhFrame:
     case LDFileFormat::EhFrameHdr:
@@ -1456,7 +1493,8 @@ GNULDBackend::getSymbolShndx(const LDSymbol& pSymbol) const
   if (pSymbol.resolveInfo()->isUndef() || pSymbol.isDyn())
     return llvm::ELF::SHN_UNDEF;
 
-  if (pSymbol.resolveInfo()->isLocal()) {
+  if (pSymbol.resolveInfo()->isLocal() &&
+      LinkerConfig::Object != config().codeGenType()) {
     switch (pSymbol.type()) {
       case ResolveInfo::NoType:
       case ResolveInfo::File:
@@ -1472,10 +1510,41 @@ GNULDBackend::getSymbolShndx(const LDSymbol& pSymbol) const
 }
 
 /// getSymbolIdx - called by emitRelocation to get the ouput symbol table index
-size_t GNULDBackend::getSymbolIdx(LDSymbol* pSymbol) const
+size_t GNULDBackend::getSymbolIdx(const LDSymbol* pSymbol) const
 {
-   HashTableType::iterator entry = m_pSymIndexMap->find(pSymbol);
+   HashTableType::iterator entry = m_pSymIndexMap->find(const_cast<LDSymbol *>(pSymbol));
+   assert(entry != m_pSymIndexMap->end() && "symbol not found in the symbol table");
    return entry.getEntry()->value();
+}
+
+/// isTemporary - Whether pSymbol is a local label.
+bool GNULDBackend::isTemporary(const LDSymbol& pSymbol) const
+{
+  if (ResolveInfo::Local != pSymbol.binding())
+    return false;
+
+  if (pSymbol.nameSize() < 2)
+    return false;
+
+  const char* name = pSymbol.name();
+  if ('.' == name[0] && 'L' == name[1])
+    return true;
+
+  // UnixWare 2.1 cc generate DWARF debugging symbols with `..' prefix.
+  // @ref Google gold linker, target.cc:39 @@ Target::do_is_local_label_name()
+  if (name[0] == '.' && name[1] == '.')
+    return true;
+
+  // Work arround for gcc's bug
+  // gcc sometimes generate symbols with '_.L_' prefix.
+  // @ref Google gold linker, target.cc:39 @@ Target::do_is_local_label_name()
+  if (pSymbol.nameSize() < 4)
+    return false;
+
+  if (name[0] == '_' && name[1] == '.' && name[2] == 'L' && name[3] == '_')
+    return true;
+
+  return false;
 }
 
 /// allocateCommonSymbols - allocate common symbols in the corresponding
@@ -1486,7 +1555,8 @@ GNULDBackend::allocateCommonSymbols(Module& pModule)
 {
   SymbolCategory& symbol_list = pModule.getSymbolTable();
 
-  if (symbol_list.emptyCommons() && symbol_list.emptyLocals())
+  if (symbol_list.emptyCommons() && symbol_list.emptyFiles() &&
+      symbol_list.emptyLocals() && symbol_list.emptyLocalDyns())
     return true;
 
   SymbolCategory::iterator com_sym, com_end;
@@ -1575,10 +1645,33 @@ GNULDBackend::allocateCommonSymbols(Module& pModule)
   return true;
 }
 
+/// updateSectionFlags - update pTo's flags when merging pFrom
+/// update the output section flags based on input section flags.
+/// @ref The Google gold linker:
+///      output.cc: 2809: Output_section::update_flags_for_input_section
+bool GNULDBackend::updateSectionFlags(LDSection& pTo, const LDSection& pFrom)
+{
+  // union the flags from input
+  uint32_t flags = pTo.flag();
+  flags |= (pFrom.flag() &
+              (llvm::ELF::SHF_WRITE |
+               llvm::ELF::SHF_ALLOC |
+               llvm::ELF::SHF_EXECINSTR));
+
+  // if there is an input section is not SHF_MERGE, clean this flag
+  if (0 == (pFrom.flag() & llvm::ELF::SHF_MERGE))
+    flags &= ~llvm::ELF::SHF_MERGE;
+
+  // if there is an input section is not SHF_STRINGS, clean this flag
+  if (0 == (pFrom.flag() & llvm::ELF::SHF_STRINGS))
+    flags &= ~llvm::ELF::SHF_STRINGS;
+
+  pTo.setFlag(flags);
+  return true;
+}
 
 /// createProgramHdrs - base on output sections to create the program headers
-void GNULDBackend::createProgramHdrs(Module& pModule,
-                                     const FragmentLinker& pLinker)
+void GNULDBackend::createProgramHdrs(Module& pModule)
 {
   ELFFileFormat *file_format = getOutputFormat();
 
@@ -1633,7 +1726,8 @@ void GNULDBackend::createProgramHdrs(Module& pModule,
     if (createPT_LOAD) {
       // create new PT_LOAD segment
       load_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_LOAD, cur_flag);
-      load_seg->setAlign(abiPageSize());
+      if (!config().options().nmagic() && !config().options().omagic())
+        load_seg->setAlign(abiPageSize());
     }
 
     assert(NULL != load_seg);
@@ -1695,12 +1789,31 @@ void GNULDBackend::createProgramHdrs(Module& pModule,
                               getSegmentFlag(file_format->getStackNote().flag()));
   }
 
+  // make PT_NOTE
+  ELFSegment *note_seg = NULL;
+  prev_flag = getSegmentFlag(0);
+  for (sect = pModule.begin(); sect != sect_end; ++sect) {
+    if ((*sect)->kind() != LDFileFormat::Note ||
+        ((*sect)->flag() & llvm::ELF::SHF_ALLOC) == 0)
+      continue;
+
+    cur_flag = getSegmentFlag((*sect)->flag());
+    // we have different section orders for read-only and writable notes, so
+    // create 2 segments if needed.
+    if (note_seg == NULL ||
+        (cur_flag & llvm::ELF::PF_W) != (prev_flag & llvm::ELF::PF_W))
+      note_seg = m_ELFSegmentTable.produce(llvm::ELF::PT_NOTE, cur_flag);
+
+    note_seg->addSection(*sect);
+    prev_flag = cur_flag;
+  }
+
   // create target dependent segments
-  doCreateProgramHdrs(pModule, pLinker);
+  doCreateProgramHdrs(pModule);
 }
 
 /// setupProgramHdrs - set up the attributes of segments
-void GNULDBackend::setupProgramHdrs(const FragmentLinker& pLinker)
+void GNULDBackend::setupProgramHdrs()
 {
   // update segment info
   ELFSegmentFactory::iterator seg, seg_end = m_ELFSegmentTable.end();
@@ -1719,7 +1832,7 @@ void GNULDBackend::setupProgramHdrs(const FragmentLinker& pLinker)
         phdr_size = sizeof(llvm::ELF::Elf64_Phdr);
       }
       segment.setOffset(offset);
-      segment.setVaddr(segmentStartAddr(pLinker) + offset);
+      segment.setVaddr(segmentStartAddr() + offset);
       segment.setPaddr(segment.vaddr());
       segment.setFilesz(numOfSegments() * phdr_size);
       segment.setMemsz(numOfSegments() * phdr_size);
@@ -1734,7 +1847,7 @@ void GNULDBackend::setupProgramHdrs(const FragmentLinker& pLinker)
     segment.setOffset(segment.front()->offset());
     if (llvm::ELF::PT_LOAD == segment.type() &&
         LDFileFormat::Null == segment.front()->kind())
-      segment.setVaddr(segmentStartAddr(pLinker));
+      segment.setVaddr(segmentStartAddr());
     else
       segment.setVaddr(segment.front()->addr());
     segment.setPaddr(segment.vaddr());
@@ -1752,7 +1865,7 @@ void GNULDBackend::setupProgramHdrs(const FragmentLinker& pLinker)
 
 /// setupGNUStackInfo - setup the section flag of .note.GNU-stack in output
 /// @ref gold linker: layout.cc:2608
-void GNULDBackend::setupGNUStackInfo(Module& pModule, FragmentLinker& pLinker)
+void GNULDBackend::setupGNUStackInfo(Module& pModule)
 {
   uint32_t flag = 0x0;
   if (config().options().hasStackSet()) {
@@ -1787,7 +1900,7 @@ void GNULDBackend::setupGNUStackInfo(Module& pModule, FragmentLinker& pLinker)
     // 2.3 a special case. Use the target default to decide if the stack should
     //     be executable
     if (llvm::ELF::SHF_EXECINSTR != flag && object_count != stack_note_count)
-      if (isDefaultExecStack())
+      if (m_pInfo->isDefaultExecStack())
         flag = llvm::ELF::SHF_EXECINSTR;
   }
 
@@ -1877,8 +1990,7 @@ void GNULDBackend::setOutputSectionOffset(Module& pModule,
 }
 
 /// setOutputSectionOffset - helper function to set output sections' address
-void GNULDBackend::setOutputSectionAddress(FragmentLinker& pLinker,
-                                           Module& pModule,
+void GNULDBackend::setOutputSectionAddress(Module& pModule,
                                            Module::iterator pSectBegin,
                                            Module::iterator pSectEnd)
 {
@@ -1907,39 +2019,43 @@ void GNULDBackend::setOutputSectionAddress(FragmentLinker& pLinker,
       mapping = config().scripts().addressMap().find((*seg).front()->name());
 
     if (mapping != config().scripts().addressMap().end()) {
-      // check address mapping
+      // use address mapping in script options
       start_addr = mapping.getEntry()->value();
-      if ((*seg).front()->kind() != LDFileFormat::Null) {
-        const uint64_t remainder = start_addr % abiPageSize();
-        if (remainder != (*seg).front()->offset() % abiPageSize()) {
-          uint64_t padding = abiPageSize() + remainder -
-                             (*seg).front()->offset() % abiPageSize();
-          setOutputSectionOffset(pModule,
-                                 pModule.begin() + (*seg).front()->index(),
-                                 pModule.end(),
-                                 (*seg).front()->offset() + padding);
-          if (config().options().hasRelro())
-            setupRelro(pModule);
-        }
-      }
     }
     else {
       if ((*seg).front()->kind() == LDFileFormat::Null) {
         // 1st PT_LOAD
-        start_addr = segmentStartAddr(pLinker);
+        start_addr = segmentStartAddr();
       }
       else if ((*prev).front()->kind() == LDFileFormat::Null) {
         // prev segment is 1st PT_LOAD
-        start_addr = segmentStartAddr(pLinker) + (*seg).front()->offset();
+        start_addr = segmentStartAddr() + (*seg).front()->offset();
       }
       else {
         // Others
         start_addr = (*prev).front()->addr() + (*seg).front()->offset();
       }
+      // Try to align p_vaddr at page boundary if not in script options.
+      // To do so will add more padding in file, but can save one page
+      // at runtime.
+      alignAddress(start_addr, (*seg).align());
+    }
 
-      // padding
-      if (((*seg).front()->offset() & (abiPageSize() - 1)) != 0)
-        start_addr += abiPageSize();
+    // in p75, http://www.sco.com/developers/devspecs/gabi41.pdf
+    // p_align: As "Program Loading" describes in this chapter of the
+    // processor supplement, loadable process segments must have congruent
+    // values for p_vaddr and p_offset, modulo the page size.
+    if ((start_addr & ((*seg).align() - 1)) !=
+        ((*seg).front()->offset() & ((*seg).align() - 1))) {
+      uint64_t padding = (*seg).align() +
+                         (start_addr & ((*seg).align() - 1)) -
+                         ((*seg).front()->offset() & ((*seg).align() - 1));
+      setOutputSectionOffset(pModule,
+                             pModule.begin() + (*seg).front()->index(),
+                             pModule.end(),
+                             (*seg).front()->offset() + padding);
+      if (config().options().hasRelro())
+        setupRelro(pModule);
     }
 
     for (ELFSegment::sect_iterator sect = (*seg).begin(),
@@ -1963,7 +2079,7 @@ void GNULDBackend::setOutputSectionAddress(FragmentLinker& pLinker,
 }
 
 /// layout - layout method
-void GNULDBackend::layout(Module& pModule, FragmentLinker& pLinker)
+void GNULDBackend::layout(Module& pModule)
 {
   std::vector<SHOEntry> output_list;
   // 1. determine what sections will go into final output, and push the needed
@@ -1971,44 +2087,55 @@ void GNULDBackend::layout(Module& pModule, FragmentLinker& pLinker)
   for (Module::iterator it = pModule.begin(), ie = pModule.end(); it != ie;
        ++it) {
     switch ((*it)->kind()) {
-      // take NULL and StackNote directly
-      case LDFileFormat::Null:
-      case LDFileFormat::StackNote:
+    // take NULL and StackNote directly
+    case LDFileFormat::Null:
+    case LDFileFormat::StackNote:
+      output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
+      break;
+    // ignore if section size is 0
+    case LDFileFormat::EhFrame:
+      if (((*it)->size() != 0) ||
+          ((*it)->hasEhFrame() &&
+           config().codeGenType() == LinkerConfig::Object))
         output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
-        break;
-      // ignore if section size is 0
-      case LDFileFormat::Regular:
-      case LDFileFormat::Target:
-      case LDFileFormat::MetaData:
-      case LDFileFormat::BSS:
-      case LDFileFormat::Debug:
-      case LDFileFormat::EhFrame:
-      case LDFileFormat::GCCExceptTable:
-      case LDFileFormat::NamePool:
-      case LDFileFormat::Relocation:
-      case LDFileFormat::Note:
-      case LDFileFormat::EhFrameHdr:
-        if (0 != (*it)->size()) {
-          output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
-        }
-        break;
-      case LDFileFormat::Group:
-        if (LinkerConfig::Object == config().codeGenType()) {
-          //TODO: support incremental linking
-          ;
-        }
-        break;
-      case LDFileFormat::Version:
-        if (0 != (*it)->size()) {
-          output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
-          warning(diag::warn_unsupported_symbolic_versioning) << (*it)->name();
-        }
-        break;
-      default:
-        if (0 != (*it)->size()) {
-          error(diag::err_unsupported_section) << (*it)->name() << (*it)->kind();
-        }
-        break;
+      break;
+    case LDFileFormat::Relocation:
+      if (((*it)->size() != 0) ||
+          ((*it)->hasRelocData() &&
+           config().codeGenType() == LinkerConfig::Object))
+        output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
+      break;
+    case LDFileFormat::Regular:
+    case LDFileFormat::Target:
+    case LDFileFormat::MetaData:
+    case LDFileFormat::BSS:
+    case LDFileFormat::Debug:
+    case LDFileFormat::GCCExceptTable:
+    case LDFileFormat::Note:
+    case LDFileFormat::NamePool:
+    case LDFileFormat::EhFrameHdr:
+      if (((*it)->size() != 0) ||
+          ((*it)->hasSectionData() &&
+           config().codeGenType() == LinkerConfig::Object))
+        output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
+      break;
+    case LDFileFormat::Group:
+      if (LinkerConfig::Object == config().codeGenType()) {
+        //TODO: support incremental linking
+        ;
+      }
+      break;
+    case LDFileFormat::Version:
+      if (0 != (*it)->size()) {
+        output_list.push_back(std::make_pair(*it, getSectionOrder(**it)));
+        warning(diag::warn_unsupported_symbolic_versioning) << (*it)->name();
+      }
+      break;
+    default:
+      if (0 != (*it)->size()) {
+        error(diag::err_unsupported_section) << (*it)->name() << (*it)->kind();
+      }
+      break;
     }
   } // end of for
 
@@ -2024,7 +2151,7 @@ void GNULDBackend::layout(Module& pModule, FragmentLinker& pLinker)
 
   // 4. create program headers
   if (LinkerConfig::Object != config().codeGenType()) {
-    createProgramHdrs(pModule, pLinker);
+    createProgramHdrs(pModule);
   }
 
   // 5. set output section offset
@@ -2032,12 +2159,13 @@ void GNULDBackend::layout(Module& pModule, FragmentLinker& pLinker)
 }
 
 /// preLayout - Backend can do any needed modification before layout
-void GNULDBackend::preLayout(Module& pModule, FragmentLinker& pLinker)
+void GNULDBackend::preLayout(Module& pModule, IRBuilder& pBuilder)
 {
   // prelayout target first
-  doPreLayout(pLinker);
+  doPreLayout(pBuilder);
 
-  if (config().options().hasEhFrameHdr() && getOutputFormat()->hasEhFrame()) {
+  if (LinkerConfig::Object != config().codeGenType() &&
+      config().options().hasEhFrameHdr() && getOutputFormat()->hasEhFrame()) {
     // init EhFrameHdr and size the output section
     ELFFileFormat* format = getOutputFormat();
     m_pEhFrameHdr = new EhFrameHdr(format->getEhFrameHdr(),
@@ -2045,12 +2173,12 @@ void GNULDBackend::preLayout(Module& pModule, FragmentLinker& pLinker)
     m_pEhFrameHdr->sizeOutput();
   }
 
-  // change .tbss and .tdata section symbol from Local to TLS category
+  // change .tbss and .tdata section symbol from Local to LocalDyn category
   if (NULL != f_pTDATA)
-    pModule.getSymbolTable().changeLocalToTLS(*f_pTDATA);
+    pModule.getSymbolTable().changeLocalToDynamic(*f_pTDATA);
 
   if (NULL != f_pTBSS)
-    pModule.getSymbolTable().changeLocalToTLS(*f_pTBSS);
+    pModule.getSymbolTable().changeLocalToDynamic(*f_pTBSS);
 
   // To merge input's relocation sections into output's relocation sections.
   //
@@ -2111,12 +2239,11 @@ void GNULDBackend::preLayout(Module& pModule, FragmentLinker& pLinker)
   } // end of if
 
   // set up the section flag of .note.GNU-stack section
-  setupGNUStackInfo(pModule, pLinker);
+  setupGNUStackInfo(pModule);
 }
 
 /// postLayout - Backend can do any needed modification after layout
-void GNULDBackend::postLayout(Module& pModule,
-                              FragmentLinker& pLinker)
+void GNULDBackend::postLayout(Module& pModule, IRBuilder& pBuilder)
 {
   // 1. set up section address and segment attributes
   if (LinkerConfig::Object != config().codeGenType()) {
@@ -2126,25 +2253,28 @@ void GNULDBackend::postLayout(Module& pModule,
     }
 
     // 1.2 set up the output sections' address
-    setOutputSectionAddress(pLinker, pModule, pModule.begin(), pModule.end());
+    setOutputSectionAddress(pModule, pModule.begin(), pModule.end());
 
     // 1.3 do relaxation
-    relax(pModule, pLinker);
+    relax(pModule, pBuilder);
 
     // 1.4 set up the attributes of program headers
-    setupProgramHdrs(pLinker);
+    setupProgramHdrs();
   }
 
   // 2. target specific post layout
-  doPostLayout(pModule, pLinker);
+  doPostLayout(pModule, pBuilder);
 }
 
-void GNULDBackend::postProcessing(FragmentLinker& pLinker, MemoryArea& pOutput)
+void GNULDBackend::postProcessing(MemoryArea& pOutput)
 {
-  if (config().options().hasEhFrameHdr() && getOutputFormat()->hasEhFrame()) {
+  if (LinkerConfig::Object != config().codeGenType() &&
+      config().options().hasEhFrameHdr() && getOutputFormat()->hasEhFrame()) {
     // emit eh_frame_hdr
     if (config().targets().is32Bits())
       m_pEhFrameHdr->emitOutput<32>(pOutput);
+    else
+      m_pEhFrameHdr->emitOutput<64>(pOutput);
   }
 }
 
@@ -2174,6 +2304,27 @@ unsigned GNULDBackend::getHashBucketCount(unsigned pNumOfSymbols,
   return result;
 }
 
+/// getGNUHashMaskbitslog2 - calculate the number of mask bits in log2
+/// @ref binutils gold, dynobj.cc:1165
+unsigned GNULDBackend::getGNUHashMaskbitslog2(unsigned pNumOfSymbols) const
+{
+  uint32_t maskbitslog2 = 1;
+  for (uint32_t x = pNumOfSymbols >> 1; x != 0; x >>=1)
+    ++maskbitslog2;
+
+  if (maskbitslog2 < 3)
+    maskbitslog2 = 5;
+  else if (((1U << (maskbitslog2 - 2)) & pNumOfSymbols) != 0)
+    maskbitslog2 += 3;
+  else
+    maskbitslog2 += 2;
+
+  if (config().targets().bitclass() == 64 && maskbitslog2 == 5)
+    maskbitslog2 = 6;
+
+  return maskbitslog2;
+}
+
 /// isDynamicSymbol
 /// @ref Google gold linker: symtab.cc:311
 bool GNULDBackend::isDynamicSymbol(const LDSymbol& pSymbol)
@@ -2189,10 +2340,8 @@ bool GNULDBackend::isDynamicSymbol(const LDSymbol& pSymbol)
       LinkerConfig::Exec   == config().codeGenType() ||
       LinkerConfig::Binary == config().codeGenType()) {
     if (pSymbol.resolveInfo()->visibility() == ResolveInfo::Default ||
-        pSymbol.resolveInfo()->visibility() == ResolveInfo::Protected ||
-        pSymbol.resolveInfo()->type() == ResolveInfo::ThreadLocal) {
+        pSymbol.resolveInfo()->visibility() == ResolveInfo::Protected)
       return true;
-    }
   }
   return false;
 }
@@ -2212,10 +2361,8 @@ bool GNULDBackend::isDynamicSymbol(const ResolveInfo& pResolveInfo)
       LinkerConfig::Exec   == config().codeGenType() ||
       LinkerConfig::Binary == config().codeGenType()) {
     if (pResolveInfo.visibility() == ResolveInfo::Default ||
-        pResolveInfo.visibility() == ResolveInfo::Protected ||
-        pResolveInfo.type() == ResolveInfo::ThreadLocal) {
+        pResolveInfo.visibility() == ResolveInfo::Protected)
       return true;
-    }
   }
   return false;
 }
@@ -2227,7 +2374,7 @@ uint64_t GNULDBackend::commonPageSize() const
   if (config().options().commPageSize() > 0)
     return std::min(config().options().commPageSize(), abiPageSize());
   else
-    return std::min(static_cast<uint64_t>(0x1000), abiPageSize());
+    return std::min(m_pInfo->commonPageSize(), abiPageSize());
 }
 
 /// abiPageSize - the abi page size of the target machine.
@@ -2237,7 +2384,7 @@ uint64_t GNULDBackend::abiPageSize() const
   if (config().options().maxPageSize() > 0)
     return config().options().maxPageSize();
   else
-    return static_cast<uint64_t>(0x1000);
+    return m_pInfo->abiPageSize();
 }
 
 /// isSymbolPreemtible - whether the symbol can be preemted by other
@@ -2271,8 +2418,7 @@ bool GNULDBackend::isSymbolPreemptible(const ResolveInfo& pSym) const
 
 /// symbolNeedsDynRel - return whether the symbol needs a dynamic relocation
 /// @ref Google gold linker, symtab.h:645
-bool GNULDBackend::symbolNeedsDynRel(const FragmentLinker& pLinker,
-                                     const ResolveInfo& pSym,
+bool GNULDBackend::symbolNeedsDynRel(const ResolveInfo& pSym,
                                      bool pSymHasPLT,
                                      bool isAbsReloc) const
 {
@@ -2284,13 +2430,17 @@ bool GNULDBackend::symbolNeedsDynRel(const FragmentLinker& pLinker,
        LinkerConfig::Binary == config().codeGenType()))
     return false;
 
-  if (pSym.isAbsolute())
+  // An absolute symbol can be resolved directly if it is either local
+  // or we are linking statically. Otherwise it can still be overridden
+  // at runtime.
+  if (pSym.isAbsolute() &&
+      (pSym.binding() == ResolveInfo::Local || config().isCodeStatic()))
     return false;
-  if (pLinker.isOutputPIC() && isAbsReloc)
+  if (config().isCodeIndep() && isAbsReloc)
     return true;
   if (pSymHasPLT && ResolveInfo::Function == pSym.type())
     return false;
-  if (!pLinker.isOutputPIC() && pSymHasPLT)
+  if (!config().isCodeIndep() && pSymHasPLT)
     return false;
   if (pSym.isDyn() || pSym.isUndef() ||
       isSymbolPreemptible(pSym))
@@ -2301,8 +2451,7 @@ bool GNULDBackend::symbolNeedsDynRel(const FragmentLinker& pLinker,
 
 /// symbolNeedsPLT - return whether the symbol needs a PLT entry
 /// @ref Google gold linker, symtab.h:596
-bool GNULDBackend::symbolNeedsPLT(const FragmentLinker& pLinker,
-                                  const ResolveInfo& pSym) const
+bool GNULDBackend::symbolNeedsPLT(const ResolveInfo& pSym) const
 {
   if (pSym.isUndef() &&
       !pSym.isDyn() &&
@@ -2316,7 +2465,7 @@ bool GNULDBackend::symbolNeedsPLT(const FragmentLinker& pLinker,
   if (pSym.type() != ResolveInfo::Function)
     return false;
 
-  if (pLinker.isStaticLink() && !pLinker.isOutputPIC())
+  if (config().isCodeStatic())
     return false;
 
   if (config().options().isPIE())
@@ -2330,12 +2479,12 @@ bool GNULDBackend::symbolNeedsPLT(const FragmentLinker& pLinker,
 /// symbolHasFinalValue - return true if the symbol's value can be decided at
 /// link time
 /// @ref Google gold linker, Symbol::final_value_is_known
-bool GNULDBackend::symbolFinalValueIsKnown(const FragmentLinker& pLinker,
-                                           const ResolveInfo& pSym) const
+bool GNULDBackend::symbolFinalValueIsKnown(const ResolveInfo& pSym) const
 {
   // if the output is pic code or if not executables, symbols' value may change
   // at runtime
-  if (pLinker.isOutputPIC() ||
+  // FIXME: CodeIndep() || LinkerConfig::Relocatable == CodeGenType
+  if (config().isCodeIndep() ||
       (LinkerConfig::Exec != config().codeGenType() &&
        LinkerConfig::Binary != config().codeGenType()))
     return false;
@@ -2352,17 +2501,16 @@ bool GNULDBackend::symbolFinalValueIsKnown(const FragmentLinker& pLinker,
   // if the symbol is undefined and not in dynamic objects, for example, a weak
   // undefined symbol, then whether the symbol's final value can be known
   // depends on whrther we're doing static link
-  return pLinker.isStaticLink();
+  return config().isCodeStatic();
 }
 
 /// symbolNeedsCopyReloc - return whether the symbol needs a copy relocation
-bool GNULDBackend::symbolNeedsCopyReloc(const FragmentLinker& pLinker,
-                                        const Relocation& pReloc,
+bool GNULDBackend::symbolNeedsCopyReloc(const Relocation& pReloc,
                                         const ResolveInfo& pSym) const
 {
   // only the reference from dynamic executable to non-function symbol in
   // the dynamic objects may need copy relocation
-  if (pLinker.isOutputPIC() ||
+  if (config().isCodeIndep() ||
       !pSym.isDyn() ||
       pSym.type() == ResolveInfo::Function ||
       pSym.size() == 0)
@@ -2437,14 +2585,14 @@ bool GNULDBackend::initStubFactory()
   return true;
 }
 
-bool GNULDBackend::relax(Module& pModule, FragmentLinker& pLinker)
+bool GNULDBackend::relax(Module& pModule, IRBuilder& pBuilder)
 {
   if (!mayRelax())
     return true;
 
   bool finished = true;
   do {
-    if (doRelax(pModule, pLinker, finished)) {
+    if (doRelax(pModule, pBuilder, finished)) {
       // If the sections (e.g., .text) are relaxed, the layout is also changed
       // We need to do the following:
 
@@ -2456,10 +2604,24 @@ bool GNULDBackend::relax(Module& pModule, FragmentLinker& pLinker)
         setupRelro(pModule);
 
       // 3. set up the output sections' address
-      setOutputSectionAddress(pLinker, pModule, pModule.begin(), pModule.end());
+      setOutputSectionAddress(pModule, pModule.begin(), pModule.end());
     }
   } while (!finished);
 
   return true;
+}
+
+bool GNULDBackend::DynsymCompare::needGNUHash(const LDSymbol& X) const
+{
+  // FIXME: in bfd and gold linker, an undefined symbol might be hashed
+  // when the ouput is not PIC, if the symbol is referred by a non pc-relative
+  // reloc, and its value is set to the addr of the plt entry.
+  return !X.resolveInfo()->isUndef() && !X.isDyn();
+}
+
+bool GNULDBackend::DynsymCompare::operator()(const LDSymbol* X,
+                                             const LDSymbol* Y) const
+{
+  return !needGNUHash(*X) && needGNUHash(*Y);
 }
 

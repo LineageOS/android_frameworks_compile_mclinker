@@ -41,7 +41,6 @@ GeneralOptions::GeneralOptions()
     m_Bgroup(false),
     m_bPIE(false),
     m_bColor(true),
-    m_bAllowShlibUndefined(true),
     m_bCreateEhFrameHdr(false),
     m_bNMagic(false),
     m_bOMagic(false),
@@ -50,8 +49,11 @@ GeneralOptions::GeneralOptions()
     m_bWarnSharedTextrel(false),
     m_bBinaryInput(false),
     m_bDefineCommon(false),
-    m_bFatalWarnings(false)
-{
+    m_bFatalWarnings(false),
+    m_bNewDTags(false),
+    m_bNoStdlib(false),
+    m_StripSymbols(KeepAllSymbols),
+    m_HashStyle(SystemV) {
 }
 
 GeneralOptions::~GeneralOptions()
@@ -80,6 +82,11 @@ const mcld::sys::fs::Path& GeneralOptions::sysroot() const
 void GeneralOptions::setSysroot(const mcld::sys::fs::Path &pSysroot)
 {
   m_SearchDirs.setSysRoot(pSysroot);
+}
+
+bool GeneralOptions::hasSysroot() const
+{
+  return !sysroot().empty();
 }
 
 void GeneralOptions::setSOName(const std::string& pName)

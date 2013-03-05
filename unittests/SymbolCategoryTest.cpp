@@ -80,13 +80,13 @@ TEST_F(SymbolCategoryTest, upward_test) {
   ++sym;
   ASSERT_STREQ("e", (*sym)->name());
 
-  ASSERT_TRUE(2 == m_pTestee->numOfLocals());
+  ASSERT_TRUE(1 == m_pTestee->numOfLocals());
   ASSERT_TRUE(1 == m_pTestee->numOfCommons());
-  ASSERT_TRUE(2 == m_pTestee->numOfRegulars());
+  ASSERT_TRUE(2 == m_pTestee->numOfDynamics());
   ASSERT_TRUE(5 == m_pTestee->numOfSymbols());
 }
 
-TEST_F(SymbolCategoryTest, change_local_to_tls) {
+TEST_F(SymbolCategoryTest, change_local_to_dynamic) {
   ResolveInfo* a = ResolveInfo::Create("a");
   ResolveInfo* b = ResolveInfo::Create("b");
   ResolveInfo* c = ResolveInfo::Create("c");
@@ -129,7 +129,7 @@ TEST_F(SymbolCategoryTest, change_local_to_tls) {
   ++sym;
   ASSERT_STREQ("e", (*sym)->name());
 
-  m_pTestee->changeLocalToTLS(*bb);
+  m_pTestee->changeLocalToDynamic(*bb);
 
   sym = m_pTestee->begin();
   ASSERT_STREQ("c", (*sym)->name());

@@ -2,6 +2,7 @@ LOCAL_PATH:= $(call my-dir)
 
 mcld_fragment_SRC_FILES := \
   AlignFragment.cpp \
+  FGNode.cpp \
   FillFragment.cpp \
   Fragment.cpp \
   FragmentLinker.cpp \

@@ -15,7 +15,6 @@
 namespace mcld {
 
 class LinkerConfig;
-class FragmentLinker;
 class OutputRelocSection;
 class SectionMap;
 class MemoryArea;
@@ -43,10 +42,10 @@ public:
   void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(FragmentLinker& pLinker);
+  void initTargetSymbols(IRBuilder& pBuilder, Module& pModule);
 
   /// initRelocator - create and initialize Relocator.
-  bool initRelocator(const FragmentLinker& pLinker);
+  bool initRelocator();
 
   /// getRelocator - return relocator.
   Relocator* getRelocator();
@@ -55,23 +54,15 @@ public:
   /// create the empty entries if needed.
   /// For Mips, the GOT, GP, and dynamic relocation entries are check to create.
   void scanRelocation(Relocation& pReloc,
-                      FragmentLinker& pLinker,
+                      IRBuilder& pBuilder,
                       Module& pModule,
-                      const LDSection& pSection);
-
-  /// flags - the value of ElfXX_Ehdr::e_flags
-  uint64_t flags() const;
-
-  uint64_t defaultTextSegmentAddr() const;
-
-  /// abiPageSize - the abi page size of the target machine
-  uint64_t abiPageSize() const;
+                      LDSection& pSection);
 
   /// preLayout - Backend can do any needed modification before layout
-  void doPreLayout(FragmentLinker& pLinker);
+  void doPreLayout(IRBuilder& pBuilder);
 
-  /// postLayout -Backend can do any needed modification after layout
-  void doPostLayout(Module& pModule, FragmentLinker& pLinker);
+  /// postLayout - Backend can do any needed modification after layout
+  void doPostLayout(Module& pModule, IRBuilder& pBuilder);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -98,10 +89,10 @@ public:
   uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
-  void sizeNamePools(const Module& pModule, bool pIsStaticLink);
+  void sizeNamePools(Module& pModule, bool pIsStaticLink);
 
   /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
-  void emitDynNamePools(const Module& pModule, MemoryArea& pOut);
+  void emitDynNamePools(Module& pModule, MemoryArea& pOut);
 
 
   MipsGOT& getGOT();
@@ -114,18 +105,22 @@ public:
   unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeSymbol - finalize the symbol value
-  bool finalizeTargetSymbols(FragmentLinker& pLinker);
+  bool finalizeTargetSymbols();
 
   /// allocateCommonSymbols - allocate common symbols in the corresponding
   /// sections.
   bool allocateCommonSymbols(Module& pModule);
 
 private:
-  void scanLocalReloc(Relocation& pReloc, FragmentLinker& pLinker);
+  void scanLocalReloc(Relocation& pReloc,
+                      IRBuilder& pBuilder,
+                      const LDSection& pSection);
 
-  void scanGlobalReloc(Relocation& pReloc, FragmentLinker& pLinker);
+  void scanGlobalReloc(Relocation& pReloc,
+                       IRBuilder& pBuilder,
+                       const LDSection& pSection);
 
-  void defineGOTSymbol(FragmentLinker& pLinker);
+  void defineGOTSymbol(IRBuilder& pBuilder);
 
   /// emitSymbol32 - emit an ELF32 symbol, override parent's function
   void emitSymbol32(llvm::ELF::Elf32_Sym& pSym32,
@@ -144,8 +139,7 @@ private:
 
   /// doCreateProgramHdrs - backend can implement this function to create the
   /// target-dependent segments
-  virtual void doCreateProgramHdrs(Module& pModule,
-                                   const FragmentLinker& pLinker);
+  void doCreateProgramHdrs(Module& pModule);
 
 private:
   Relocator* m_pRelocator;

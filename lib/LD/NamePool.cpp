@@ -22,6 +22,11 @@ NamePool::NamePool(NamePool::size_type pSize)
 NamePool::~NamePool()
 {
   delete m_pResolver;
+
+  FreeInfoSet::iterator info, iEnd = m_FreeInfoSet.end();
+  for (info = m_FreeInfoSet.begin(); info != iEnd; ++info) {
+    ResolveInfo::Destroy(*info);
+  }
 }
 
 /// createSymbol - create a symbol
@@ -33,15 +38,16 @@ ResolveInfo* NamePool::createSymbol(const llvm::StringRef& pName,
                                     ResolveInfo::SizeType pSize,
                                     ResolveInfo::Visibility pVisibility)
 {
-  ResolveInfo* result = ResolveInfo::Create(pName);
-  result->setIsSymbol(true);
-  result->setSource(pIsDyn);
-  result->setType(pType);
-  result->setDesc(pDesc);
-  result->setBinding(pBinding);
-  result->setVisibility(pVisibility);
-  result->setSize(pSize);
-  return result;
+  ResolveInfo** result = m_FreeInfoSet.allocate();
+  (*result) = ResolveInfo::Create(pName);
+  (*result)->setIsSymbol(true);
+  (*result)->setSource(pIsDyn);
+  (*result)->setType(pType);
+  (*result)->setDesc(pDesc);
+  (*result)->setBinding(pBinding);
+  (*result)->setVisibility(pVisibility);
+  (*result)->setSize(pSize);
+  return *result;
 }
 
 /// insertSymbol - insert a symbol and resolve it immediately
@@ -65,7 +71,6 @@ void NamePool::insertSymbol(const llvm::StringRef& pName,
   ResolveInfo* old_symbol = m_Table.insert(pName, exist);
   ResolveInfo* new_symbol = NULL;
   if (exist && old_symbol->isSymbol()) {
-    exist = true;
     new_symbol = m_Table.getEntryFactory().produce(pName);
   }
   else {
@@ -82,7 +87,7 @@ void NamePool::insertSymbol(const llvm::StringRef& pName,
   new_symbol->setSize(pSize);
 
   if (!exist) {
-    // not exit or not a symbol
+    // old_symbol is neither existed nor a symbol.
     pResult.info      = new_symbol;
     pResult.existent  = false;
     pResult.overriden = true;
@@ -102,8 +107,11 @@ void NamePool::insertSymbol(const llvm::StringRef& pName,
     pResult.existent  = true;
     pResult.overriden = override;
   }
-  else
+  else {
       m_pResolver->resolveAgain(*this, action, *old_symbol, *new_symbol, pResult);
+  }
+
+  m_Table.getEntryFactory().destroy(new_symbol);
   return;
 }
 

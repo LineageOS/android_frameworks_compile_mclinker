@@ -32,7 +32,7 @@
 using namespace mcld;
 
 Linker::Linker()
-  : m_pConfig(NULL), m_pModule(NULL), m_pIRBuilder(NULL),
+  : m_pConfig(NULL), m_pIRBuilder(NULL),
     m_pTarget(NULL), m_pBackend(NULL), m_pObjLinker(NULL) {
 }
 
@@ -51,6 +51,9 @@ bool Linker::config(LinkerConfig& pConfig)
   if (!initBackend())
     return false;
 
+  m_pObjLinker = new ObjectLinker(*m_pConfig,
+                                  *m_pBackend);
+
   if (!initEmulator())
     return false;
 
@@ -62,13 +65,19 @@ bool Linker::config(LinkerConfig& pConfig)
 
 bool Linker::link(Module& pModule, IRBuilder& pBuilder)
 {
+  if (!resolve(pModule, pBuilder))
+    return false;
+
+  return layout();
+}
+
+bool Linker::resolve(Module& pModule, IRBuilder& pBuilder)
+{
   assert(NULL != m_pConfig);
 
   m_pIRBuilder = &pBuilder;
-  m_pObjLinker = new ObjectLinker(*m_pConfig,
-                                  pModule,
-                                  *m_pIRBuilder,
-                                  *m_pBackend);
+  assert(m_pObjLinker!=NULL);
+  m_pObjLinker->setup(pModule, pBuilder);
 
   // 2. - initialize FragmentLinker
   if (!m_pObjLinker->initFragmentLinker())
@@ -78,7 +87,13 @@ bool Linker::link(Module& pModule, IRBuilder& pBuilder)
   if (!m_pObjLinker->initStdSections())
     return false;
 
+  if (!Diagnose())
+    return false;
+
   // 4. - normalize the input tree
+  //   read out sections and symbol/string tables (from the files) and
+  //   set them in Module. When reading out the symbol, resolve their symbols
+  //   immediately and set their ResolveInfo (i.e., Symbol Resolution).
   m_pObjLinker->normalize();
 
   if (m_pConfig->options().trace()) {
@@ -112,39 +127,80 @@ bool Linker::link(Module& pModule, IRBuilder& pBuilder)
     }
   }
 
-  // 5. - check if we can do static linking and if we use split-stack.
+  // 5. - set up code position
+  if (LinkerConfig::DynObj == m_pConfig->codeGenType() ||
+      m_pConfig->options().isPIE()) {
+    m_pConfig->setCodePosition(LinkerConfig::Independent);
+  }
+  else if (pModule.getLibraryList().empty()) {
+    // If the output is dependent on its loaded address, and it does not need
+    // to call outside functions, then we can treat the output static dependent
+    // and perform better optimizations.
+    m_pConfig->setCodePosition(LinkerConfig::StaticDependent);
+  }
+  else {
+    m_pConfig->setCodePosition(LinkerConfig::DynamicDependent);
+  }
+
   if (!m_pObjLinker->linkable())
     return Diagnose();
 
   // 6. - read all relocation entries from input files
+  //   For all relocation sections of each input file (in the tree),
+  //   read out reloc entry info from the object file and accordingly
+  //   initiate their reloc entries in SectOrRelocData of LDSection.
   m_pObjLinker->readRelocations();
 
   // 7. - merge all sections
+  //   Push sections into Module's SectionTable.
+  //   Merge sections that have the same name.
+  //   Maintain them as fragments in the section.
   if (!m_pObjLinker->mergeSections())
     return false;
 
-  // 8. - add standard symbols and target-dependent symbols
+  // 8. - allocateCommonSymbols
+  //   Allocate fragments for common symbols to the corresponding sections.
+  if (!m_pObjLinker->allocateCommonSymbols())
+    return false;
+  return true;
+}
+
+bool Linker::layout()
+{
+  assert(NULL != m_pConfig && NULL != m_pObjLinker);
+
+  // 9. - add standard symbols, target-dependent symbols and script symbols
   // m_pObjLinker->addUndefSymbols();
   if (!m_pObjLinker->addStandardSymbols() ||
-      !m_pObjLinker->addTargetSymbols())
+      !m_pObjLinker->addTargetSymbols() ||
+      !m_pObjLinker->addScriptSymbols())
     return false;
 
-  // 9. - scan all relocation entries by output symbols.
+  // 10. - scan all relocation entries by output symbols.
+  //   reserve GOT space for layout.
+  //   the space info is needed by pre-layout to compute the section size
   m_pObjLinker->scanRelocations();
 
-  // 10.a - pre-layout
+  // 11.a - init relaxation stuff.
+  m_pObjLinker->initStubs();
+
+  // 11.b - pre-layout
   m_pObjLinker->prelayout();
 
-  // 10.b - linear layout
+  // 11.c - linear layout
+  //   Decide which sections will be left in. Sort the sections according to
+  //   a given order. Then, create program header accordingly.
+  //   Finally, set the offset for sections (@ref LDSection)
+  //   according to the new order.
   m_pObjLinker->layout();
 
-  // 10.c - post-layout (create segment, instruction relaxing)
+  // 11.d - post-layout (create segment, instruction relaxing)
   m_pObjLinker->postlayout();
 
-  // 11. - finalize symbol value
+  // 12. - finalize symbol value
   m_pObjLinker->finalizeSymbolValue();
 
-  // 12. - apply relocations
+  // 13. - apply relocations
   m_pObjLinker->relocation();
 
   if (!Diagnose())
@@ -202,7 +258,6 @@ bool Linker::emit(int pFileDescriptor)
 bool Linker::reset()
 {
   m_pConfig = NULL;
-  m_pModule = NULL;
   m_pIRBuilder = NULL;
   m_pTarget = NULL;
 
@@ -210,6 +265,7 @@ bool Linker::reset()
   // RelocData before deleting target backend.
   RelocData::Clear();
   SectionData::Clear();
+  EhFrame::Clear();
 
   delete m_pBackend;
   m_pBackend = NULL;

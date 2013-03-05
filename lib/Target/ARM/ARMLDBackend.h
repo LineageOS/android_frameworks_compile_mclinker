@@ -20,7 +20,6 @@ namespace mcld {
 
 class LinkerConfig;
 class GNUInfo;
-class FragmentLinker;
 class SectionMap;
 
 //===----------------------------------------------------------------------===//
@@ -93,10 +92,10 @@ public:
   void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(FragmentLinker& pLinker);
+  void initTargetSymbols(IRBuilder& pBuilder, Module& pModule);
 
   /// initRelocator - create and initialize Relocator.
-  bool initRelocator(const FragmentLinker& pLinker);
+  bool initRelocator();
 
   /// getRelocator - return relocator.
   Relocator* getRelocator();
@@ -108,22 +107,15 @@ public:
   /// - PLT entry (for .plt section)
   /// - dynamin relocation entries (for .rel.plt and .rel.dyn sections)
   void scanRelocation(Relocation& pReloc,
-                      FragmentLinker& pLinker,
+                      IRBuilder& pBuilder,
                       Module& pModule,
-                      const LDSection& pSection);
-
-  /// flags - the value of ElfXX_Ehdr::e_flags
-  virtual uint64_t flags() const
-  { return (llvm::ELF::EF_ARM_EABIMASK & 0x05000000); }
-
-  uint64_t defaultTextSegmentAddr() const
-  { return 0x8000; }
+                      LDSection& pSection);
 
   /// doPreLayout - Backend can do any needed modification before layout
-  void doPreLayout(FragmentLinker& pLinker);
+  void doPreLayout(IRBuilder& pBuilder);
 
   /// doPostLayout -Backend can do any needed modification after layout
-  void doPostLayout(Module& pModule, FragmentLinker& pLinker);
+  void doPostLayout(Module& pModule, IRBuilder& pBuilder);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -172,7 +164,7 @@ public:
   unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeTargetSymbols - finalize the symbol value
-  bool finalizeTargetSymbols(FragmentLinker& pLinker);
+  bool finalizeTargetSymbols();
 
   /// mergeSection - merge target dependent sections
   bool mergeSection(Module& pModule, LDSection& pSection);
@@ -181,12 +173,13 @@ public:
   bool readSection(Input& pInput, SectionData& pSD);
 
 private:
-  void scanLocalReloc(Relocation& pReloc, FragmentLinker& pLinker);
+  void scanLocalReloc(Relocation& pReloc, const LDSection& pSection);
 
-  void scanGlobalReloc(Relocation& pReloc, FragmentLinker& pLinker);
+  void scanGlobalReloc(Relocation& pReloc,
+                       IRBuilder& pBuilder,
+                       const LDSection& pSection);
 
-  void checkValidReloc(Relocation& pReloc,
-                       const FragmentLinker& pLinker) const;
+  void checkValidReloc(Relocation& pReloc) const;
 
   /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
   /// @param pSym - A resolved copy symbol that defined in BSS section
@@ -195,10 +188,10 @@ private:
   /// defineSymbolforCopyReloc - allocate a space in BSS section and
   /// and force define the copy of pSym to BSS section
   /// @return the output LDSymbol of the copy symbol
-  LDSymbol& defineSymbolforCopyReloc(FragmentLinker& pLinker,
+  LDSymbol& defineSymbolforCopyReloc(IRBuilder& pLinker,
                                      const ResolveInfo& pSym);
 
-  void defineGOTSymbol(FragmentLinker& pLinker);
+  void defineGOTSymbol(IRBuilder& pBuilder);
 
   /// maxBranchOffset
   /// FIXME: if we can handle arm attributes, we may refine this!
@@ -211,10 +204,10 @@ private:
   /// implementation. Return true if the output (e.g., .text) is "relaxed"
   /// (i.e. layout is changed), and set pFinished to true if everything is fit,
   /// otherwise set it to false.
-  bool doRelax(Module& pModule, FragmentLinker& pLinker, bool& pFinished);
+  bool doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished);
 
   /// initTargetStubs
-  bool initTargetStubs(FragmentLinker& pLinker);
+  bool initTargetStubs();
 
   /// getRelEntrySize - the size in BYTE of rel type relocation
   size_t getRelEntrySize()
@@ -226,8 +219,7 @@ private:
 
   /// doCreateProgramHdrs - backend can implement this function to create the
   /// target-dependent segments
-  virtual void doCreateProgramHdrs(Module& pModule,
-                                   const FragmentLinker& pLinker);
+  virtual void doCreateProgramHdrs(Module& pModule);
 
 private:
   Relocator* m_pRelocator;
@@ -252,24 +244,6 @@ private:
 //  LDSection* m_pDebugOverlay;    // .ARM.debug_overlay
 //  LDSection* m_pOverlayTable;    // .ARM.overlay_table
 };
-
-//===----------------------------------------------------------------------===//
-/// ARMMachOLDBackend - linker backend of ARM target of MachO format
-///
-/**
-class ARMMachOLDBackend : public DarwinARMLDBackend
-{
-public:
-  ARMMachOLDBackend();
-  ~ARMMachOLDBackend();
-
-private:
-  MCMachOTargetArchiveReader *createTargetArchiveReader() const;
-  MCMachOTargetObjectReader *createTargetObjectReader() const;
-  MCMachOTargetObjectWriter *createTargetObjectWriter() const;
-
-};
-**/
 } // namespace of mcld
 
 #endif

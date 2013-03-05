@@ -26,10 +26,11 @@ class TargetLDBackend;
 class Relocator
 {
 public:
-  typedef Relocation::Type Type;
+  typedef Relocation::Type    Type;
   typedef Relocation::Address Address;
-  typedef Relocation::DWord DWord;
-  typedef Relocation::SWord SWord;
+  typedef Relocation::DWord   DWord;
+  typedef Relocation::SWord   SWord;
+  typedef Relocation::Size    Size;
 
 public:
   enum Result {
@@ -41,33 +42,21 @@ public:
   };
 
 public:
-  virtual ~Relocator() {}
+  virtual ~Relocator() = 0;
 
   /// apply - general apply function
   virtual Result applyRelocation(Relocation& pRelocation) = 0;
 
-  void setFragmentLinker(const FragmentLinker& pLinker)
-  { m_pLinker = &pLinker; }
-
   // ------ observers -----//
-  const FragmentLinker& getFragmentLinker() const
-  {
-    assert(NULL != m_pLinker);
-    return *m_pLinker;
-  }
-
-  bool hasFragmentLinker() const
-  { return (NULL != m_pLinker); }
-
   virtual TargetLDBackend& getTarget() = 0;
 
   virtual const TargetLDBackend& getTarget() const = 0;
 
+  /// getName - get the name of a relocation
   virtual const char* getName(Type pType) const = 0;
 
-private:
-  const FragmentLinker* m_pLinker;
-
+  /// getSize - get the size of a relocation in bit
+  virtual Size getSize(Type pType) const = 0;
 };
 
 } // namespace of mcld

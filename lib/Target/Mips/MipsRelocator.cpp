@@ -9,7 +9,6 @@
 
 #include <llvm/ADT/Twine.h>
 #include <llvm/Support/ELF.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Target/OutputRelocSection.h>
 
@@ -32,6 +31,7 @@ struct ApplyFunctionTriple
   ApplyFunctionType func;
   unsigned int type;
   const char* name;
+  unsigned int size;
 };
 
 // declare the table of applying functions
@@ -68,9 +68,13 @@ const char* MipsRelocator::getName(Relocation::Type pType) const
   return ApplyFunctions[pType].name;
 }
 
+Relocator::Size MipsRelocator::getSize(Relocation::Type pType) const
+{
+  return ApplyFunctions[pType].size;
+}
+
 //===----------------------------------------------------------------------===//
 // Relocation helper function
-
 //===----------------------------------------------------------------------===//
 static const char * const GP_DISP_NAME = "_gp_disp";
 

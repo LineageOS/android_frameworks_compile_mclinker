@@ -14,7 +14,7 @@
 
 #include <llvm/ADT/DenseMap.h>
 
-#include <mcld/Target/GOT.h>
+#include "X86GOT.h"
 
 namespace mcld {
 
@@ -23,27 +23,15 @@ class LDSection;
 
 const unsigned int X86GOTPLT0Num = 3;
 
-class X86GOTPLTEntry : public GOT::Entry<4>
-{
-public:
-  X86GOTPLTEntry(uint64_t pContent, SectionData* pParent)
-   : GOT::Entry<4>(pContent, pParent)
-  {}
-};
-
-/** \class X86GOTPLT
- *  \brief X86 .got.plt section.
+/** \class X86_32GOTPLT
+ *  \brief X86_32 .got.plt section.
  */
-class X86GOTPLT : public GOT
+class X86_32GOTPLT : public X86_32GOT
 {
 public:
-  X86GOTPLT(LDSection &pSection);
+  X86_32GOTPLT(LDSection &pSection);
 
-  ~X86GOTPLT();
-
-  void reserve(size_t pNum = 1);
-
-  X86GOTPLTEntry* consume();
+  ~X86_32GOTPLT();
 
   // hasGOT1 - return if this section has any GOT1 entry
   bool hasGOT1() const;
@@ -51,9 +39,24 @@ public:
   void applyGOT0(uint64_t pAddress);
 
   void applyAllGOTPLT(const X86PLT& pPLT);
+};
 
-private:
-  X86GOTPLTEntry* m_pLast; ///< the last consumed entry
+/** \class X86_64GOTPLT
+ *  \brief X86_64 .got.plt section.
+ */
+class X86_64GOTPLT : public X86_64GOT
+{
+public:
+  X86_64GOTPLT(LDSection &pSection);
+
+  ~X86_64GOTPLT();
+
+  // hasGOT1 - return if this section has any GOT1 entry
+  bool hasGOT1() const;
+
+  void applyGOT0(uint64_t pAddress);
+
+  void applyAllGOTPLT(const X86PLT& pPLT);
 };
 
 } // namespace of mcld

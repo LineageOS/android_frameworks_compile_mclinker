@@ -6,6 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include "mcld/Config/Config.h"
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/FileSystem.h>
 #include <errno.h>
@@ -127,7 +128,7 @@ bool FileHandle::delegate(int pFD, FileHandle::OpenMode pMode)
 
   m_Handler = pFD;
   m_OpenMode = pMode;
-  m_State = GoodBit;
+  m_State = (GoodBit | DeputedBit);
 
   if (!get_size(m_Handler, m_Size)) {
     setState(FailBit);
@@ -144,9 +145,11 @@ bool FileHandle::close()
     return false;
   }
 
-  if (-1 == ::close(m_Handler)) {
-    setState(FailBit);
-    return false;
+  if (isOwned()) {
+    if (-1 == ::close(m_Handler)) {
+      setState(FailBit);
+      return false;
+    }
   }
 
   m_Path.native().clear();
@@ -325,5 +328,10 @@ bool FileHandle::isBad() const
 bool FileHandle::isFailed() const
 {
   return (m_State & (BadBit | FailBit));
+}
+
+bool FileHandle::isOwned() const
+{
+  return !(m_State & DeputedBit);
 }
 

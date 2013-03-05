@@ -28,7 +28,6 @@
 #include <mcld/Fragment/FillFragment.h>
 #include <mcld/Fragment/AlignFragment.h>
 #include <mcld/Fragment/RegionFragment.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MsgHandling.h>
@@ -115,63 +114,80 @@ void ARMGNULDBackend::initTargetSections(Module& pModule, ObjectBuilder& pBuilde
   }
 }
 
-void ARMGNULDBackend::initTargetSymbols(FragmentLinker& pLinker)
+void ARMGNULDBackend::initTargetSymbols(IRBuilder& pBuilder, Module& pModule)
 {
   // Define the symbol _GLOBAL_OFFSET_TABLE_ if there is a symbol with the
   // same name in input
-  m_pGOTSymbol = pLinker.defineSymbol<FragmentLinker::AsRefered, FragmentLinker::Resolve>(
-                   "_GLOBAL_OFFSET_TABLE_",
-                   false,
-                   ResolveInfo::Object,
-                   ResolveInfo::Define,
-                   ResolveInfo::Local,
-                   0x0,  // size
-                   0x0,  // value
-                   FragmentRef::Null(), // FragRef
-                   ResolveInfo::Hidden);
-
-  FragmentRef* exidx_start = NULL;
-  FragmentRef* exidx_end = NULL;
-  ResolveInfo::Desc desc = ResolveInfo::Undefined;
+  m_pGOTSymbol = pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                  "_GLOBAL_OFFSET_TABLE_",
+                                                  ResolveInfo::Object,
+                                                  ResolveInfo::Define,
+                                                  ResolveInfo::Local,
+                                                  0x0,  // size
+                                                  0x0,  // value
+                                                  FragmentRef::Null(),
+                                                  ResolveInfo::Hidden);
   if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size()) {
-    exidx_start = FragmentRef::Create(m_pEXIDX->getSectionData()->front(), 0x0);
-    exidx_end = FragmentRef::Create(m_pEXIDX->getSectionData()->back(), 0x0);
-    desc = ResolveInfo::Define;
-  }
-  else {
-    exidx_start = FragmentRef::Null();
-    exidx_end = FragmentRef::Null();
-  }
-  m_pEXIDXStart =
-    pLinker.defineSymbol<FragmentLinker::Force,
-                         FragmentLinker::Resolve>("__exidx_start",
-                                                  false,
-                                                  ResolveInfo::NoType,
-                                                  desc, // ResolveInfo::Desc
-                                                  ResolveInfo::Global,
-                                                  0x0,  // size
-                                                  0x0,  // value
-                                                  exidx_start, // FragRef
-                                                  ResolveInfo::Hidden);
+    FragmentRef* exidx_start =
+      FragmentRef::Create(m_pEXIDX->getSectionData()->front(), 0x0);
+    FragmentRef* exidx_end =
+      FragmentRef::Create(m_pEXIDX->getSectionData()->front(),
+                          m_pEXIDX->size());
+    m_pEXIDXStart =
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    "__exidx_start",
+                                                    ResolveInfo::Object,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Local,
+                                                    0x0, // size
+                                                    0x0, // value
+                                                    exidx_start, // FragRef
+                                                    ResolveInfo::Default);
 
-  m_pEXIDXEnd =
-    pLinker.defineSymbol<FragmentLinker::Force,
-                         FragmentLinker::Resolve>("__exidx_end",
-                                                  false,
-                                                  ResolveInfo::NoType,
-                                                  desc, //ResolveInfo::Desc
-                                                  ResolveInfo::Global,
-                                                  0x0,  // size
-                                                  0x0,  // value
-                                                  exidx_end, // FragRef
-                                                  ResolveInfo::Hidden);
+    m_pEXIDXEnd =
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    "__exidx_end",
+                                                    ResolveInfo::Object,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Local,
+                                                    0x0, // size
+                                                    0x0, // value
+                                                    exidx_end, // FragRef
+                                                    ResolveInfo::Default);
+    // change __exidx_start/_end to local dynamic category
+    if (NULL != m_pEXIDXStart)
+      pModule.getSymbolTable().changeLocalToDynamic(*m_pEXIDXStart);
+    if (NULL != m_pEXIDXEnd)
+      pModule.getSymbolTable().changeLocalToDynamic(*m_pEXIDXEnd);
+  } else {
+    m_pEXIDXStart =
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    "__exidx_start",
+                                                    ResolveInfo::NoType,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Absolute,
+                                                    0x0, // size
+                                                    0x0, // value
+                                                    FragmentRef::Null(),
+                                                    ResolveInfo::Default);
+
+    m_pEXIDXEnd =
+      pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                                                    "__exidx_end",
+                                                    ResolveInfo::NoType,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Absolute,
+                                                    0x0, // size
+                                                    0x0, // value
+                                                    FragmentRef::Null(),
+                                                    ResolveInfo::Default);
+  }
 }
 
-bool ARMGNULDBackend::initRelocator(const FragmentLinker& pLinker)
+bool ARMGNULDBackend::initRelocator()
 {
   if (NULL == m_pRelocator) {
     m_pRelocator = new ARMRelocator(*this);
-    m_pRelocator->setFragmentLinker(pLinker);
   }
   return true;
 }
@@ -182,8 +198,12 @@ Relocator* ARMGNULDBackend::getRelocator()
   return m_pRelocator;
 }
 
-void ARMGNULDBackend::doPreLayout(FragmentLinker& pLinker)
+void ARMGNULDBackend::doPreLayout(IRBuilder& pBuilder)
 {
+  // initialize .dynamic data
+  if (!config().isCodeStatic() && NULL == m_pDynamic)
+    m_pDynamic = new ARMELFDynamic(*this, config());
+
   // set .got size
   // when building shared object, the .got section is must
   if (LinkerConfig::Object != config().codeGenType()) {
@@ -191,7 +211,7 @@ void ARMGNULDBackend::doPreLayout(FragmentLinker& pLinker)
         m_pGOT->hasGOT1() ||
         NULL != m_pGOTSymbol) {
       m_pGOT->finalizeSectionSize();
-      defineGOTSymbol(pLinker);
+      defineGOTSymbol(pBuilder);
     }
 
     // set .plt size
@@ -200,19 +220,24 @@ void ARMGNULDBackend::doPreLayout(FragmentLinker& pLinker)
 
     ELFFileFormat* file_format = getOutputFormat();
     // set .rel.dyn size
-    if (!m_pRelDyn->empty())
+    if (!m_pRelDyn->empty()) {
+      assert(!config().isCodeStatic() &&
+            "static linkage should not result in a dynamic relocation section");
       file_format->getRelDyn().setSize(
                                   m_pRelDyn->numOfRelocs() * getRelEntrySize());
+    }
 
     // set .rel.plt size
-    if (!m_pRelPLT->empty())
+    if (!m_pRelPLT->empty()) {
+      assert(!config().isCodeStatic() &&
+            "static linkage should not result in a dynamic relocation section");
       file_format->getRelPlt().setSize(
                                   m_pRelPLT->numOfRelocs() * getRelEntrySize());
+    }
   }
 }
 
-void ARMGNULDBackend::doPostLayout(Module& pModule,
-                                   FragmentLinker& pLinker)
+void ARMGNULDBackend::doPostLayout(Module& pModule, IRBuilder& pBuilder)
 {
   const ELFFileFormat *file_format = getOutputFormat();
 
@@ -242,9 +267,7 @@ void ARMGNULDBackend::doPostLayout(Module& pModule,
 /// Use co-variant return type to return its own dynamic section.
 ARMELFDynamic& ARMGNULDBackend::dynamic()
 {
-  if (NULL == m_pDynamic)
-    m_pDynamic = new ARMELFDynamic(*this, config());
-
+  assert(NULL != m_pDynamic);
   return *m_pDynamic;
 }
 
@@ -252,17 +275,16 @@ ARMELFDynamic& ARMGNULDBackend::dynamic()
 /// Use co-variant return type to return its own dynamic section.
 const ARMELFDynamic& ARMGNULDBackend::dynamic() const
 {
-  assert( NULL != m_pDynamic);
+  assert(NULL != m_pDynamic);
   return *m_pDynamic;
 }
 
-void ARMGNULDBackend::defineGOTSymbol(FragmentLinker& pLinker)
+void ARMGNULDBackend::defineGOTSymbol(IRBuilder& pBuilder)
 {
   // define symbol _GLOBAL_OFFSET_TABLE_ when .got create
   if (m_pGOTSymbol != NULL) {
-    pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Unresolve>(
+    pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
                      "_GLOBAL_OFFSET_TABLE_",
-                     false,
                      ResolveInfo::Object,
                      ResolveInfo::Define,
                      ResolveInfo::Local,
@@ -272,9 +294,8 @@ void ARMGNULDBackend::defineGOTSymbol(FragmentLinker& pLinker)
                      ResolveInfo::Hidden);
   }
   else {
-    m_pGOTSymbol = pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Resolve>(
+    m_pGOTSymbol = pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Resolve>(
                      "_GLOBAL_OFFSET_TABLE_",
-                     false,
                      ResolveInfo::Object,
                      ResolveInfo::Define,
                      ResolveInfo::Local,
@@ -301,7 +322,7 @@ void ARMGNULDBackend::addCopyReloc(ResolveInfo& pSym)
 /// copy.
 /// This is executed at scan relocation stage.
 LDSymbol&
-ARMGNULDBackend::defineSymbolforCopyReloc(FragmentLinker& pLinker,
+ARMGNULDBackend::defineSymbolforCopyReloc(IRBuilder& pBuilder,
                                           const ResolveInfo& pSym)
 {
   // get or create corresponding BSS LDSection
@@ -336,9 +357,8 @@ ARMGNULDBackend::defineSymbolforCopyReloc(FragmentLinker& pLinker,
     binding = ResolveInfo::Global;
 
   // Define the copy symbol in the bss section and resolve it
-  LDSymbol* cpy_sym = pLinker.defineSymbol<FragmentLinker::Force, FragmentLinker::Resolve>(
+  LDSymbol* cpy_sym = pBuilder.AddSymbol<IRBuilder::Force, IRBuilder::Resolve>(
                       pSym.name(),
-                      false,
                       (ResolveInfo::Type)pSym.type(),
                       ResolveInfo::Define,
                       binding,
@@ -352,11 +372,10 @@ ARMGNULDBackend::defineSymbolforCopyReloc(FragmentLinker& pLinker,
 
 /// checkValidReloc - When we attempt to generate a dynamic relocation for
 /// ouput file, check if the relocation is supported by dynamic linker.
-void ARMGNULDBackend::checkValidReloc(Relocation& pReloc,
-                                      const FragmentLinker& pLinker) const
+void ARMGNULDBackend::checkValidReloc(Relocation& pReloc) const
 {
   // If not PIC object, no relocation type is invalid
-  if (!pLinker.isOutputPIC())
+  if (!config().isCodeIndep())
     return;
 
   switch(pReloc.type()) {
@@ -379,8 +398,8 @@ void ARMGNULDBackend::checkValidReloc(Relocation& pReloc,
   }
 }
 
-void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
-                                     FragmentLinker& pLinker)
+void
+ARMGNULDBackend::scanLocalReloc(Relocation& pReloc, const LDSection& pSection)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
@@ -398,11 +417,12 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
       // If buiding PIC object (shared library or PIC executable),
       // a dynamic relocations with RELATIVE type to this location is needed.
       // Reserve an entry in .rel.dyn
-      if (pLinker.isOutputPIC()) {
+      if (config().isCodeIndep()) {
         m_pRelDyn->reserveEntry();
         // set Rel bit
         rsym->setReserved(rsym->reserved() | ReserveRel);
-        }
+        checkAndSetHasTextRel(*pSection.getLink());
+      }
       return;
     }
 
@@ -416,7 +436,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_THM_MOVW_ABS_NC:
     case llvm::ELF::R_ARM_THM_MOVT_ABS: {
       // PIC code should not contain these kinds of relocation
-      if (pLinker.isOutputPIC()) {
+      if (config().isCodeIndep()) {
         error(diag::non_pic_relocation) << (int)pReloc.type()
                                         << pReloc.symInfo()->name();
       }
@@ -443,7 +463,7 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
       // If building PIC object, a dynamic relocation with
       // type RELATIVE is needed to relocate this GOT entry.
       // Reserve an entry in .rel.dyn
-      if (pLinker.isOutputPIC()) {
+      if (config().isCodeIndep()) {
         // create .rel.dyn section if not exist
         m_pRelDyn->reserveEntry();
         // set GOTRel bit
@@ -479,7 +499,8 @@ void ARMGNULDBackend::scanLocalReloc(Relocation& pReloc,
 }
 
 void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
-                                      FragmentLinker& pLinker)
+                                      IRBuilder& pBuilder,
+                                      const LDSection& pSection)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
@@ -505,7 +526,7 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_ABS32_NOI: {
       // Absolute relocation type, symbol may needs PLT entry or
       // dynamic relocation entry
-      if (symbolNeedsPLT(pLinker, *rsym)) {
+      if (symbolNeedsPLT(*rsym)) {
         // create plt for this symbol if it does not have one
         if (!(rsym->reserved() & ReservePLT)){
           // Symbol needs PLT entry, we need to reserve a PLT entry
@@ -519,18 +540,18 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
         }
       }
 
-      if (symbolNeedsDynRel(
-                      pLinker, *rsym, (rsym->reserved() & ReservePLT), true)) {
+      if (symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT), true)) {
         // symbol needs dynamic relocation entry, reserve an entry in .rel.dyn
         m_pRelDyn->reserveEntry();
-        if (symbolNeedsCopyReloc(pLinker, pReloc, *rsym)) {
-          LDSymbol& cpy_sym = defineSymbolforCopyReloc(pLinker, *rsym);
+        if (symbolNeedsCopyReloc(pReloc, *rsym)) {
+          LDSymbol& cpy_sym = defineSymbolforCopyReloc(pBuilder, *rsym);
           addCopyReloc(*cpy_sym.resolveInfo());
         }
         else {
-          checkValidReloc(pReloc, pLinker);
+          checkValidReloc(pReloc);
           // set Rel bit
           rsym->setReserved(rsym->reserved() | ReserveRel);
+          checkAndSetHasTextRel(*pSection.getLink());
         }
       }
       return;
@@ -594,18 +615,18 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
     case llvm::ELF::R_ARM_MOVT_BREL:
     case llvm::ELF::R_ARM_MOVW_BREL: {
       // Relative addressing relocation, may needs dynamic relocation
-      if (symbolNeedsDynRel(
-                     pLinker, *rsym, (rsym->reserved() & ReservePLT), false)) {
+      if (symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT), false)) {
         // symbol needs dynamic relocation entry, reserve an entry in .rel.dyn
         m_pRelDyn->reserveEntry();
-        if (symbolNeedsCopyReloc(pLinker, pReloc, *rsym)) {
-          LDSymbol& cpy_sym = defineSymbolforCopyReloc(pLinker, *rsym);
+        if (symbolNeedsCopyReloc(pReloc, *rsym)) {
+          LDSymbol& cpy_sym = defineSymbolforCopyReloc(pBuilder, *rsym);
           addCopyReloc(*cpy_sym.resolveInfo());
         }
         else {
-          checkValidReloc(pReloc, pLinker);
+          checkValidReloc(pReloc);
           // set Rel bit
           rsym->setReserved(rsym->reserved() | ReserveRel);
+          checkAndSetHasTextRel(*pSection.getLink());
         }
       }
       return;
@@ -630,7 +651,7 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
         return;
 
       // if the symbol's value can be decided at link time, then no need plt
-      if (symbolFinalValueIsKnown(pLinker, *rsym))
+      if (symbolFinalValueIsKnown(*rsym))
         return;
 
       // if symbol is defined in the ouput file and it's not
@@ -666,7 +687,7 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
       m_pGOT->reserveGOT();
       // if the symbol cannot be fully resolved at link time, then we need a
       // dynamic relocation
-      if (!symbolFinalValueIsKnown(pLinker, *rsym)) {
+      if (!symbolFinalValueIsKnown(*rsym)) {
         m_pRelDyn->reserveEntry();
         // set GOTRel bit
         rsym->setReserved(rsym->reserved() | GOTRel);
@@ -693,16 +714,17 @@ void ARMGNULDBackend::scanGlobalReloc(Relocation& pReloc,
 }
 
 void ARMGNULDBackend::scanRelocation(Relocation& pReloc,
-                                     FragmentLinker& pLinker,
+                                     IRBuilder& pBuilder,
                                      Module& pModule,
-                                     const LDSection& pSection)
+                                     LDSection& pSection)
 {
   // rsym - The relocation target symbol
   ResolveInfo* rsym = pReloc.symInfo();
   assert(NULL != rsym && "ResolveInfo of relocation not set while scanRelocation");
 
   pReloc.updateAddend();
-  if (0 == (pSection.flag() & llvm::ELF::SHF_ALLOC))
+  assert(NULL != pSection.getLink());
+  if (0 == (pSection.getLink()->flag() & llvm::ELF::SHF_ALLOC))
     return;
 
   // Scan relocation type to determine if an GOT/PLT/Dynamic Relocation
@@ -711,21 +733,16 @@ void ARMGNULDBackend::scanRelocation(Relocation& pReloc,
 
   // rsym is local
   if (rsym->isLocal())
-    scanLocalReloc(pReloc, pLinker);
+    scanLocalReloc(pReloc, pSection);
 
   // rsym is external
   else
-    scanGlobalReloc(pReloc, pLinker);
+    scanGlobalReloc(pReloc, pBuilder, pSection);
 
   // check if we shoule issue undefined reference for the relocation target
   // symbol
   if (rsym->isUndef() && !rsym->isDyn() && !rsym->isWeak() && !rsym->isNull())
     fatal(diag::undefined_reference) << rsym->name();
-
-  if ((rsym->reserved() & ReserveRel) != 0x0) {
-    // set hasTextRelSection if needed
-    checkAndSetHasTextRel(pSection);
-  }
 }
 
 uint64_t ARMGNULDBackend::emitSectionData(const LDSection& pSection,
@@ -765,7 +782,7 @@ uint64_t ARMGNULDBackend::emitSectionData(const LDSection& pSection,
           break;
         }
         case Fragment::Alignment: {
-          AlignFragment& align_frag = llvm::cast<AlignFragment>(*frag_iter);
+          const AlignFragment& align_frag = llvm::cast<AlignFragment>(*frag_iter);
           uint64_t count = size / align_frag.getValueSize();
           switch (align_frag.getValueSize()) {
             case 1u:
@@ -809,17 +826,8 @@ uint64_t ARMGNULDBackend::emitSectionData(const LDSection& pSection,
 }
 
 /// finalizeSymbol - finalize the symbol value
-bool ARMGNULDBackend::finalizeTargetSymbols(FragmentLinker& pLinker)
+bool ARMGNULDBackend::finalizeTargetSymbols()
 {
-  if (NULL != m_pEXIDXStart) {
-    if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size())
-      m_pEXIDXStart->setValue(m_pEXIDX->addr());
-  }
-
-  if (NULL != m_pEXIDXEnd) {
-    if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size())
-      m_pEXIDXEnd->setValue(m_pEXIDX->addr() + m_pEXIDX->size());
-  }
   return true;
 }
 
@@ -829,7 +837,7 @@ bool ARMGNULDBackend::mergeSection(Module& pModule, LDSection& pSection)
     case llvm::ELF::SHT_ARM_ATTRIBUTES: {
       // FIXME: (Luba)
       // Handle ARM attributes in the right way.
-      // In current milestone, FragmentLinker goes through the shortcut.
+      // In current milestone, we goes through the shortcut.
       // It reads input's ARM attributes and copies the first ARM attributes
       // into the output file. The correct way is merge these sections, not
       // just copy.
@@ -940,7 +948,8 @@ ARMGNULDBackend::getTargetSectionOrder(const LDSection& pSectHdr) const
 }
 
 /// doRelax
-bool ARMGNULDBackend::doRelax(Module& pModule, FragmentLinker& pLinker, bool& pFinished)
+bool
+ARMGNULDBackend::doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished)
 {
   assert(NULL != getStubFactory() && NULL != getBRIslandFactory());
 
@@ -984,17 +993,20 @@ bool ARMGNULDBackend::doRelax(Module& pModule, FragmentLinker& pLinker, bool& pF
 
             Stub* stub = getStubFactory()->create(*relocation, // relocation
                                                   sym_value, // symbol value
-                                                  pLinker,
+                                                  pBuilder,
                                                   *getBRIslandFactory());
             if (NULL != stub) {
-              assert(NULL != stub->symInfo());
-              // increase the size of .symtab and .strtab
+              // a stub symbol should be local
+              assert(NULL != stub->symInfo() && stub->symInfo()->isLocal());
               LDSection& symtab = file_format->getSymTab();
               LDSection& strtab = file_format->getStrTab();
+
+              // increase the size of .symtab and .strtab if needed
               if (config().targets().is32Bits())
                 symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf32_Sym));
               else
                 symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf64_Sym));
+              symtab.setInfo(symtab.getInfo() + 1);
               strtab.setSize(strtab.size() + stub->symInfo()->nameSize() + 1);
 
               isRelaxed = true;
@@ -1042,13 +1054,13 @@ bool ARMGNULDBackend::doRelax(Module& pModule, FragmentLinker& pLinker, bool& pF
 }
 
 /// initTargetStubs
-bool ARMGNULDBackend::initTargetStubs(FragmentLinker& pLinker)
+bool ARMGNULDBackend::initTargetStubs()
 {
   if (NULL != getStubFactory()) {
-    getStubFactory()->addPrototype(new ARMToARMStub(pLinker.isOutputPIC()));
-    getStubFactory()->addPrototype(new ARMToTHMStub(pLinker.isOutputPIC()));
-    getStubFactory()->addPrototype(new THMToTHMStub(pLinker.isOutputPIC()));
-    getStubFactory()->addPrototype(new THMToARMStub(pLinker.isOutputPIC()));
+    getStubFactory()->addPrototype(new ARMToARMStub(config().isCodeIndep()));
+    getStubFactory()->addPrototype(new ARMToTHMStub(config().isCodeIndep()));
+    getStubFactory()->addPrototype(new THMToTHMStub(config().isCodeIndep()));
+    getStubFactory()->addPrototype(new THMToARMStub(config().isCodeIndep()));
     return true;
   }
   return false;
@@ -1056,8 +1068,7 @@ bool ARMGNULDBackend::initTargetStubs(FragmentLinker& pLinker)
 
 /// doCreateProgramHdrs - backend can implement this function to create the
 /// target-dependent segments
-void ARMGNULDBackend::doCreateProgramHdrs(Module& pModule,
-                                          const FragmentLinker& pLinker)
+void ARMGNULDBackend::doCreateProgramHdrs(Module& pModule)
 {
    if (NULL != m_pEXIDX && 0x0 != m_pEXIDX->size()) {
      // make PT_ARM_EXIDX

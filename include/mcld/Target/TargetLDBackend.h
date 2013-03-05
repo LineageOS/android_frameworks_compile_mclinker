@@ -16,7 +16,6 @@ namespace mcld {
 class Module;
 class LinkerConfig;
 class IRBuilder;
-class FragmentLinker;
 class Relocation;
 class RelocationFactory;
 class Relocator;
@@ -56,13 +55,13 @@ public:
   virtual ~TargetLDBackend();
 
   // -----  target dependent  ----- //
-  virtual void initTargetSegments(FragmentLinker& pLinker) { }
+  virtual void initTargetSegments(IRBuilder& pBuilder) { }
   virtual void initTargetSections(Module& pModule, ObjectBuilder& pBuilder) { }
-  virtual void initTargetSymbols(FragmentLinker& pLinker) { }
-  virtual void initTargetRelocation(FragmentLinker& pLinker) { }
-  virtual bool initStandardSymbols(FragmentLinker& pLinker, Module& pModule) = 0;
+  virtual void initTargetSymbols(IRBuilder& pBuilder, Module& pModule) { }
+  virtual void initTargetRelocation(IRBuilder& pBuilder) { }
+  virtual bool initStandardSymbols(IRBuilder& pBuilder, Module& pModule) = 0;
 
-  virtual bool initRelocator(const FragmentLinker& pLinker) = 0;
+  virtual bool initRelocator() = 0;
 
   virtual Relocator* getRelocator() = 0;
 
@@ -74,9 +73,9 @@ public:
   /// @param pInputSym - the input LDSymbol of relocation target symbol
   /// @param pSection - the section of relocation applying target
   virtual void scanRelocation(Relocation& pReloc,
-                              FragmentLinker& pLinker,
+                              IRBuilder& pBuilder,
                               Module& pModule,
-                              const LDSection& pSection) = 0;
+                              LDSection& pSection) = 0;
 
   /// partialScanRelocation - When doing partial linking, backend can do any
   /// modification to relocation to fix the relocation offset after section
@@ -85,7 +84,6 @@ public:
   /// @param pInputSym - the input LDSymbol of relocation target symbol
   /// @param pSection - the section of relocation applying target
   virtual void partialScanRelocation(Relocation& pReloc,
-                                     FragmentLinker& pLinker,
                                      Module& pModule,
                                      const LDSection& pSection) = 0;
 
@@ -94,31 +92,21 @@ public:
   virtual ObjectReader*  createObjectReader(IRBuilder&) = 0;
   virtual DynObjReader*  createDynObjReader(IRBuilder&) = 0;
   virtual BinaryReader*  createBinaryReader(IRBuilder&) = 0;
-  virtual ObjectWriter*  createObjectWriter() = 0;
-  virtual DynObjWriter*  createDynObjWriter() = 0;
-  virtual ExecWriter*    createExecWriter() = 0;
-  virtual BinaryWriter*  createBinaryWriter() = 0;
+  virtual ObjectWriter*  createWriter() = 0;
 
   virtual bool initStdSections(ObjectBuilder& pBuilder) = 0;
 
   /// layout - layout method
-  virtual void layout(Module& pModule, FragmentLinker& pLinker) = 0;
+  virtual void layout(Module& pModule) = 0;
 
   /// preLayout - Backend can do any needed modification before layout
-  virtual void preLayout(Module& pModule, FragmentLinker& pLinker) = 0;
+  virtual void preLayout(Module& pModule, IRBuilder& pBuilder) = 0;
 
-  /// postLayout -Backend can do any needed modification after layout
-  virtual void postLayout(Module& pModule, FragmentLinker& pLinker) = 0;
+  /// postLayout - Backend can do any needed modification after layout
+  virtual void postLayout(Module& pModule, IRBuilder& pBuilder) = 0;
 
   /// postProcessing - Backend can do any needed modification in the final stage
-  virtual void postProcessing(FragmentLinker& pLinker,
-                              MemoryArea& pOutput) = 0;
-
-  /// the common page size of the target machine
-  virtual uint64_t commonPageSize() const = 0;
-
-  /// the abi page size of the target machine
-  virtual uint64_t abiPageSize() const = 0;
+  virtual void postProcessing(MemoryArea& pOutput) = 0;
 
   /// section start offset in the output file
   virtual size_t sectionStartOffset() const = 0;
@@ -129,14 +117,13 @@ public:
   /// sizeNamePools - compute the size of regular name pools
   /// In ELF executable files, regular name pools are .symtab, .strtab.,
   /// .dynsym, .dynstr, and .hash
-  virtual void
-  sizeNamePools(const Module& pModule, bool pIsStaticLink) = 0;
+  virtual void sizeNamePools(Module& pModule, bool pIsStaticLink) = 0;
 
   /// finalizeSymbol - Linker checks pSymbol.reserved() if it's not zero,
   /// then it will ask backend to finalize the symbol value.
   /// @return ture - if backend set the symbol value sucessfully
   /// @return false - if backend do not recognize the symbol
-  virtual bool finalizeSymbols(FragmentLinker& pLinker) = 0;
+  virtual bool finalizeSymbols() = 0;
 
   /// finalizeTLSSymbol - Linker asks backend to set the symbol value when it
   /// meets a TLS symbol
@@ -150,12 +137,16 @@ public:
   virtual bool mergeSection(Module& pModule, LDSection& pInputSection)
   { return true; }
 
+  /// updateSectionFlags - update pTo's flags when merging pFrom
+  /// update the output section flags based on input section flags.
+  /// FIXME: (Luba) I know ELF need to merge flags, but I'm not sure if
+  /// MachO and COFF also need this.
+  virtual bool updateSectionFlags(LDSection& pTo, const LDSection& pFrom)
+  { return true; }
+
   /// readSection - read a target dependent section
   virtual bool readSection(Input& pInput, SectionData& pSD)
   { return true; }
-
-  /// dyld - the name of the default dynamic linker
-  virtual const char* dyld() const = 0;
 
   /// sizeInterp - compute the size of program interpreter's name
   /// In ELF executables, this is the length of dynamic linker's path name
@@ -164,13 +155,13 @@ public:
   // -----  relaxation  ----- //
   virtual bool initBRIslandFactory() = 0;
   virtual bool initStubFactory() = 0;
-  virtual bool initTargetStubs(FragmentLinker& pLinker) { return true; }
+  virtual bool initTargetStubs() { return true; }
 
   virtual BranchIslandFactory* getBRIslandFactory() = 0;
   virtual StubFactory*         getStubFactory() = 0;
 
   /// relax - the relaxation pass
-  virtual bool relax(Module& pModule, FragmentLinker& pLinker) = 0;
+  virtual bool relax(Module& pModule, IRBuilder& pBuilder) = 0;
 
   /// mayRelax - return true if the backend needs to do relaxation
   virtual bool mayRelax() = 0;

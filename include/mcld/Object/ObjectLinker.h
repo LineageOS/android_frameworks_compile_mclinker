@@ -44,11 +44,11 @@ class ObjectLinker
 {
 public:
   ObjectLinker(const LinkerConfig& pConfig,
-               Module& pModule,
-               IRBuilder& pBuilder,
                TargetLDBackend& pLDBackend);
 
   ~ObjectLinker();
+
+  void setup(Module& pModule, IRBuilder& pBuilder);
 
   /// initFragmentLinker - initialize FragmentLinker
   ///  Connect all components in FragmentLinker
@@ -72,6 +72,10 @@ public:
   /// mergeSections - put allinput sections into output sections
   bool mergeSections();
 
+  /// allocateCommonSymobols - allocate fragments for common symbols to the
+  /// corresponding sections
+  bool allocateCommonSymbols();
+
   /// addStandardSymbols - shared object and executable files need some
   /// standard symbols
   ///   @return if there are some input symbols with the same name to the
@@ -84,8 +88,17 @@ public:
   ///   target symbols, return false
   bool addTargetSymbols();
 
+  /// addScriptSymbols - define symbols from the command line option or linker
+  /// scripts.
+  ///   @return if there are some existing symbols with identical name to the
+  ///   script symbols, return false.
+  bool addScriptSymbols();
+
   /// scanRelocations - scan all relocation entries by output symbols.
   bool scanRelocations();
+
+  /// initStubs - initialize stub-related stuff.
+  bool initStubs();
 
   /// prelayout - help backend to do some modification before layout
   bool prelayout();
@@ -140,25 +153,15 @@ public:
   const BinaryReader*  getBinaryReader () const { return m_pBinaryReader;  }
   BinaryReader*        getBinaryReader ()       { return m_pBinaryReader;  }
 
-  const ObjectWriter*  getObjectWriter () const { return m_pObjectWriter;  }
-  ObjectWriter*        getObjectWriter ()       { return m_pObjectWriter;  }
-
-  const DynObjWriter*  getDynObjWriter () const { return m_pDynObjWriter;  }
-  DynObjWriter*        getDynObjWriter ()       { return m_pDynObjWriter;  }
-
-  const ExecWriter*    getExecWriter   () const { return m_pExecWriter;    }
-  ExecWriter*          getExecWriter   ()       { return m_pExecWriter;    }
-
-  const BinaryWriter*  getBinaryWriter () const { return m_pBinaryWriter;  }
-  BinaryWriter*        getBinaryWriter ()       { return m_pBinaryWriter;  }
+  const ObjectWriter*  getWriter () const { return m_pWriter;  }
+  ObjectWriter*        getWriter ()       { return m_pWriter;  }
 
 private:
   const LinkerConfig& m_Config;
-  Module& m_Module;
-
-  IRBuilder& m_Builder; 
-
   FragmentLinker* m_pLinker;
+  Module* m_pModule;
+  IRBuilder* m_pBuilder;
+
   TargetLDBackend &m_LDBackend;
 
   // -----  readers and writers  ----- //
@@ -167,10 +170,7 @@ private:
   ArchiveReader* m_pArchiveReader;
   GroupReader*   m_pGroupReader;
   BinaryReader*  m_pBinaryReader;
-  ObjectWriter*  m_pObjectWriter;
-  DynObjWriter*  m_pDynObjWriter;
-  ExecWriter*    m_pExecWriter;
-  BinaryWriter*  m_pBinaryWriter;
+  ObjectWriter*  m_pWriter;
 };
 
 } // end namespace mcld
