@@ -37,7 +37,6 @@ mcld_ld_SRC_FILES := \
   ResolveInfo.cpp \
   Resolver.cpp  \
   SectionData.cpp \
-  SectionRules.cpp \
   SectionSymbolSet.cpp \
   StaticResolver.cpp  \
   StubFactory.cpp  \

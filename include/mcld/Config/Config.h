@@ -23,7 +23,16 @@
 # define MCLD_ON_WIN32 1
 #endif
 
-#define MCLD_VERSION "RockBull - 2.0.0"
+/* Target triple MCLinker will generate code for by default */
+#define MCLD_DEFAULT_TARGET_TRIPLE "x86_64-unknown-linux-gnu"
+
+/* MCLINKER version */
+#define MCLD_VERSION "2.3.0.RC-WhiteStone"
+
+
+/* Version number of package */
+#define VERSION "WhiteStone"
+
 
 #define MCLD_REGION_CHUNK_SIZE 32
 #define MCLD_NUM_OF_INPUTS 32
