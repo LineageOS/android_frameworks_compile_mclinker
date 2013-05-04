@@ -99,6 +99,16 @@ void EhFrame::addFragment(RegionFragment& pFrag)
   pFrag.setOffset(offset);
 }
 
+void EhFrame::addFragment(NullFragment& pFrag)
+{
+  uint32_t offset = 0;
+  if (!m_pSectionData->empty())
+    offset = m_pSectionData->back().getOffset() + m_pSectionData->back().size();
+
+  m_pSectionData->getFragmentList().push_back(&pFrag);
+  pFrag.setOffset(offset);
+}
+
 void EhFrame::addCIE(EhFrame::CIE& pCIE)
 {
   m_CIEs.push_back(&pCIE);
@@ -113,7 +123,7 @@ void EhFrame::addFDE(EhFrame::FDE& pFDE)
 
 EhFrame& EhFrame::merge(EhFrame& pOther)
 {
-  ObjectBuilder::MoveSectionData(pOther.getSectionData(), *m_pSectionData);
+  ObjectBuilder::MoveSectionData(*pOther.getSectionData(), *m_pSectionData);
 
   m_CIEs.reserve(pOther.numOfCIEs() + m_CIEs.size());
   for (cie_iterator cie = pOther.cie_begin(); cie != pOther.cie_end(); ++cie)

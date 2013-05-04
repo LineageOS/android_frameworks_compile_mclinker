@@ -12,9 +12,9 @@
 #include <gtest.h>
 #endif
 #include <string>
+#include <vector>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/FileSystem.h>
-#include <mcld/MC/SearchDirs.h>
 #include <mcld/MC/ZOption.h>
 
 namespace mcld {
@@ -25,7 +25,6 @@ class Input;
  *  \brief GeneralOptions collects the options that not be one of the
  *     - input files
  *     - attribute of input files
- *     - script options
  */
 class GeneralOptions
 {
@@ -59,20 +58,6 @@ public:
   bool hasDefaultLDScript() const;
   const char* defaultLDScript() const;
   void setDefaultLDScript(const std::string& pFilename);
-
-  /// sysroot
-  const sys::fs::Path& sysroot() const;
-
-  void setSysroot(const sys::fs::Path &pPath);
-
-  bool hasSysroot() const;
-
-  /// search directory
-  SearchDirs& directories()
-  { return m_SearchDirs; }
-
-  const SearchDirs& directories() const
-  { return m_SearchDirs; }
 
   /// trace
   void setTrace(bool pEnableTrace = true)
@@ -286,6 +271,20 @@ public:
   bool nostdlib() const
   { return m_bNoStdlib; }
 
+  // -M, --print-map
+  void setPrintMap(bool pEnable = true)
+  { m_bPrintMap = pEnable; }
+
+  bool printMap() const
+  { return m_bPrintMap; }
+
+  // -G, max GP size option
+  void setGPSize(int gpsize)
+  { m_GPSize = gpsize; }
+
+  int getGPSize() const
+  { return m_GPSize; }
+
   unsigned int getHashStyle() const { return m_HashStyle; }
 
   void setHashStyle(unsigned int pStyle)
@@ -328,7 +327,6 @@ private:
 private:
   Input* m_pDefaultBitcode;
   std::string m_DefaultLDScript;
-  SearchDirs m_SearchDirs;
   std::string m_Entry;
   std::string m_Dyld;
   std::string m_SOName;
@@ -368,6 +366,8 @@ private:
   bool m_bFatalWarnings : 1; // --fatal-warnings
   bool m_bNewDTags: 1; // --enable-new-dtags
   bool m_bNoStdlib: 1; // -nostdlib
+  bool m_bPrintMap: 1; // --print-map
+  uint32_t m_GPSize; // -G, --gpsize
   StripSymbolMode m_StripSymbols;
   RpathList m_RpathList;
   unsigned int m_HashStyle;

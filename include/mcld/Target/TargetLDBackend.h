@@ -65,28 +65,6 @@ public:
 
   virtual Relocator* getRelocator() = 0;
 
-  /// scanRelocation - When read in relocations, backend can do any modification
-  /// to relocation and generate empty entries, such as GOT, dynamic relocation
-  /// entries and other target dependent entries. These entries are generated
-  /// for layout to adjust the ouput offset.
-  /// @param pReloc - a read in relocation entry
-  /// @param pInputSym - the input LDSymbol of relocation target symbol
-  /// @param pSection - the section of relocation applying target
-  virtual void scanRelocation(Relocation& pReloc,
-                              IRBuilder& pBuilder,
-                              Module& pModule,
-                              LDSection& pSection) = 0;
-
-  /// partialScanRelocation - When doing partial linking, backend can do any
-  /// modification to relocation to fix the relocation offset after section
-  /// merge
-  /// @param pReloc - a read in relocation entry
-  /// @param pInputSym - the input LDSymbol of relocation target symbol
-  /// @param pSection - the section of relocation applying target
-  virtual void partialScanRelocation(Relocation& pReloc,
-                                     Module& pModule,
-                                     const LDSection& pSection) = 0;
-
   // -----  format dependent  ----- //
   virtual ArchiveReader* createArchiveReader(Module&) = 0;
   virtual ObjectReader*  createObjectReader(IRBuilder&) = 0;
@@ -117,7 +95,7 @@ public:
   /// sizeNamePools - compute the size of regular name pools
   /// In ELF executable files, regular name pools are .symtab, .strtab.,
   /// .dynsym, .dynstr, and .hash
-  virtual void sizeNamePools(Module& pModule, bool pIsStaticLink) = 0;
+  virtual void sizeNamePools(Module& pModule) = 0;
 
   /// finalizeSymbol - Linker checks pSymbol.reserved() if it's not zero,
   /// then it will ask backend to finalize the symbol value.

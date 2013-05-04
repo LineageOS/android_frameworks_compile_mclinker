@@ -43,7 +43,8 @@ void PathTest::TearDown()
 // Testcases
 //
 TEST_F( PathTest, should_exist ) {
-  const std::string root = "/etc/hosts";
+  std::string root(TOPDIR);
+  root += "/test/lit.cfg";
   m_pTestee->assign(root);
   EXPECT_TRUE(exists(*m_pTestee));
 
@@ -63,7 +64,6 @@ TEST_F( PathTest, should_not_exist ) {
 }
 
 TEST_F( PathTest, should_is_directory ) {
-//  const std::string root = "/proj/mtk03931/temp/pndk-luba/../";
   const std::string root = "../././..";
   m_pTestee->assign(root);
   EXPECT_TRUE(exists(*m_pTestee));
@@ -122,15 +122,15 @@ TEST_F( PathTest, append_success ) {
   delete m_pTestee;
   m_pTestee = new Path("aa/");
   m_pTestee->append("/aaa");
-  EXPECT_TRUE(m_pTestee->string()=="aa/aaa");
+  EXPECT_TRUE(m_pTestee->native()=="aa/aaa");
   delete m_pTestee;
   m_pTestee = new Path("aa");
   m_pTestee->append("/aaa");
-  EXPECT_TRUE(m_pTestee->string()=="aa/aaa");
+  EXPECT_TRUE(m_pTestee->native()=="aa/aaa");
   delete m_pTestee;
   m_pTestee = new Path("aa");
   m_pTestee->append("aaa");
-  EXPECT_TRUE(m_pTestee->string()=="aa/aaa");
+  EXPECT_TRUE(m_pTestee->native()=="aa/aaa");
 }
 
 TEST_F( PathTest, should_become_generic_string ) {

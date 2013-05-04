@@ -120,8 +120,14 @@ bool EhFrameReader::read<32, true>(Input& pInput, EhFrame& pEhFrame)
     { addCIE, addFDE, addTerm, reject}, // Q1
   };
 
-  // get file offset and address
   LDSection& section = pEhFrame.getSection();
+  if (section.size() == 0x0) {
+    NullFragment* frag = new NullFragment();
+    pEhFrame.addFragment(*frag);
+    return true;
+  }
+
+  // get file offset and address
   uint64_t file_off = pInput.fileOffset() + section.offset();
   MemoryRegion* sect_reg =
                        pInput.memArea()->request(file_off, section.size());
@@ -181,8 +187,6 @@ bool EhFrameReader::addCIE(EhFrame& pEhFrame,
     return false;
   }
 
-  llvm::StringRef augment((const char*)aug_str_front);
-
   // skip the Augumentation String field
   handler = aug_str_back + 1;
 
@@ -200,9 +204,19 @@ bool EhFrameReader::addCIE(EhFrame& pEhFrame,
   }
   ++handler;
 
+  llvm::StringRef augment((const char*)aug_str_front);
+
+  // we discard this CIE if the augumentation string is '\0'
+  if (0 == augment.size()) {
+    EhFrame::CIE* cie = new EhFrame::CIE(pRegion);
+    cie->setFDEEncode(llvm::dwarf::DW_EH_PE_absptr);
+    pEhFrame.addCIE(*cie);
+    return true;
+  }
+
   // the Augmentation String start with 'eh' is a CIE from gcc before 3.0,
   // in LSB Core Spec 3.0RC1. We do not support it.
-  if (augment[0] == 'e' && augment[1] == 'h') {
+  if (augment.size() > 1 && augment[0] == 'e' && augment[1] == 'h') {
     return false;
   }
 

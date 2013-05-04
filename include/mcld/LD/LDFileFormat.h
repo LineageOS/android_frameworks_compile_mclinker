@@ -41,8 +41,10 @@ public:
     Note,
     MetaData,
     Group,
+    LinkOnce,
     StackNote,
-    Ignore
+    Ignore,
+    Exclude
   };
 
 protected:

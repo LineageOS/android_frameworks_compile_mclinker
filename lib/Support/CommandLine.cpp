@@ -7,8 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 #include <mcld/Support/CommandLine.h>
+
 #include <llvm/ADT/StringRef.h>
 #include <llvm/ADT/Twine.h>
+#include <llvm/ADT/StringSwitch.h>
 #include <llvm/Support/ErrorHandling.h>
 
 using namespace llvm;

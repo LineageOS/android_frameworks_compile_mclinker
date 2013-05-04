@@ -18,9 +18,9 @@
 
 #include <vector>
 #include <string>
+#include <map>
 
-#include <llvm/ADT/ilist.h>
-
+#include <mcld/LinkerScript.h>
 #include <mcld/InputTree.h>
 #include <mcld/ADT/HashTable.h>
 #include <mcld/ADT/HashEntry.h>
@@ -30,6 +30,8 @@
 #include <mcld/LD/SectionSymbolSet.h>
 #include <mcld/MC/SymbolCategory.h>
 #include <mcld/MC/MCLDInput.h>
+
+#include <llvm/ADT/ilist.h>
 
 namespace mcld {
 
@@ -61,17 +63,24 @@ public:
   typedef SymbolTable::iterator sym_iterator;
   typedef SymbolTable::const_iterator const_sym_iterator;
 
-public:
-  Module();
+  typedef std::vector<const ResolveInfo*> AliasList;
+  typedef AliasList::iterator alias_iterator;
+  typedef AliasList::const_iterator const_alias_iterator;
 
-  Module(const std::string& pName);
+public:
+  explicit Module(LinkerScript& pScript);
+
+  Module(const std::string& pName, LinkerScript& pScript);
 
   ~Module();
 
-  // -----  name  ----- //
   const std::string& name() const { return m_Name; }
 
   void setName(const std::string& pName) { m_Name = pName; }
+
+  const LinkerScript& getScript() const { return m_Script; }
+
+  LinkerScript&       getScript()       { return m_Script; }
 
   // -----  link-in objects ----- //
   const ObjectList& getObjectList() const { return m_ObjectList; }
@@ -122,9 +131,6 @@ public:
   LDSection*       getSection(const std::string& pName);
   const LDSection* getSection(const std::string& pName) const;
 
-  LDSymbol*       getSectionSymbol(const LDSection* pSection);
-  const LDSymbol* getSectionSymbol(const LDSection* pSection) const;
-
 /// @}
 /// @name Symbol Accessors
 /// @{
@@ -140,6 +146,12 @@ public:
   size_t             sym_size () const { return m_SymbolTable.numOfSymbols();  }
 
   // ----- section symbols ----- //
+  const LDSymbol* getSectionSymbol(const LDSection& pSection) const
+  { return m_SectSymbolSet.get(pSection); }
+
+  LDSymbol* getSectionSymbol(const LDSection& pSection)
+  { return m_SectSymbolSet.get(pSection); }
+
   const SectionSymbolSet& getSectionSymbolSet() const
   { return m_SectSymbolSet; }
   SectionSymbolSet&       getSectionSymbolSet()
@@ -149,8 +161,18 @@ public:
   const NamePool& getNamePool() const { return m_NamePool; }
   NamePool&       getNamePool()       { return m_NamePool; }
 
+  // -----  Aliases  ----- //
+  // create an alias list for pSym, the aliases of pSym
+  // can be added into the list by calling addAlias
+  void CreateAliasList(const ResolveInfo& pSym);
+
+  // add pAlias into the newly created alias list
+  void addAlias(const ResolveInfo& pAlias);
+  AliasList* getAliasList(const ResolveInfo& pSym);
+
 private:
   std::string m_Name;
+  LinkerScript& m_Script;
   ObjectList m_ObjectList;
   LibraryList m_LibraryList;
   InputTree m_MainTree;
@@ -158,6 +180,7 @@ private:
   SymbolTable m_SymbolTable;
   NamePool m_NamePool;
   SectionSymbolSet m_SectSymbolSet;
+  std::vector<AliasList*> m_AliasLists;
 };
 
 } // namespace of mcld

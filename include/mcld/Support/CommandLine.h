@@ -15,6 +15,7 @@
 #include <mcld/MC/ZOption.h>
 
 #include <llvm/ADT/StringRef.h>
+#include <llvm/ADT/Triple.h>
 #include <llvm/Support/CommandLine.h>
 
 #include <string>
@@ -42,6 +43,21 @@ public:
                        size_t pGlobalWidth) const;
 
   void anchor();
+};
+
+//===----------------------------------------------------------------------===//
+// FalseParser
+//===----------------------------------------------------------------------===//
+class FalseParser : public cl::parser<bool>
+{
+public:
+  // parse - Return true on error.
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, bool &Val) {
+    if (cl::parser<bool>::parse(O, ArgName, Arg, Val))
+      return false;
+    Val = false;
+    return false;
+  }
 };
 
 //===----------------------------------------------------------------------===//

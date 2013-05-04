@@ -23,9 +23,11 @@
 #include <mcld/LD/ObjectWriter.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/RelocData.h>
+#include <mcld/LD/Relocator.h>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/DefSymParser.h>
 #include <mcld/Target/TargetLDBackend.h>
 #include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Object/ObjectBuilder.h>
@@ -35,7 +37,6 @@
 
 using namespace llvm;
 using namespace mcld;
-
 ObjectLinker::ObjectLinker(const LinkerConfig& pConfig,
                            TargetLDBackend& pLDBackend)
   : m_Config(pConfig),
@@ -66,6 +67,7 @@ void ObjectLinker::setup(Module& pModule, IRBuilder& pBuilder)
 {
   m_pModule = &pModule;
   m_pBuilder = &pBuilder;
+
   // set up soname
   if (!m_Config.options().soname().empty()) {
     m_pModule->setName(m_Config.options().soname());
@@ -88,9 +90,9 @@ bool ObjectLinker::initFragmentLinker()
   m_pObjectReader  = m_LDBackend.createObjectReader(*m_pBuilder);
   m_pArchiveReader = m_LDBackend.createArchiveReader(*m_pModule);
   m_pDynObjReader  = m_LDBackend.createDynObjReader(*m_pBuilder);
-  m_pGroupReader   = new GroupReader(*m_pModule, *m_pObjectReader,
-                                     *m_pDynObjReader, *m_pArchiveReader);
   m_pBinaryReader  = m_LDBackend.createBinaryReader(*m_pBuilder);
+  m_pGroupReader   = new GroupReader(*m_pModule, *m_pObjectReader,
+                         *m_pDynObjReader, *m_pArchiveReader, *m_pBinaryReader);
   m_pWriter        = m_LDBackend.createWriter();
 
   // initialize Relocator
@@ -262,7 +264,14 @@ bool ObjectLinker::mergeSections()
           if (!(*sect)->hasEhFrame())
             continue; // skip
 
-          if (NULL == builder.MergeSection(**sect)) {
+          LDSection* out_sect = NULL;
+          if (NULL == (out_sect = builder.MergeSection(**sect))) {
+            error(diag::err_cannot_merge_section) << (*sect)->name()
+                                                  << (*obj)->name();
+            return false;
+          }
+
+          if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -273,15 +282,14 @@ bool ObjectLinker::mergeSections()
           if (!(*sect)->hasSectionData())
             continue; // skip
 
-          LDSection* out_sect = builder.MergeSection(**sect);
-          if (NULL != out_sect) {
-            if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
-              error(diag::err_cannot_merge_section) << (*sect)->name()
-                                                    << (*obj)->name();
-              return false;
-            }
+          LDSection* out_sect = NULL;
+          if (NULL == (out_sect = builder.MergeSection(**sect))) {
+            error(diag::err_cannot_merge_section) << (*sect)->name()
+                                                  << (*obj)->name();
+            return false;
           }
-          else {
+
+          if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -321,10 +329,43 @@ bool ObjectLinker::addTargetSymbols()
 
 /// addScriptSymbols - define symbols from the command line option or linker
 /// scripts.
-///   @return if there are some existing symbols with identical name to the
-///   script symbols, return false.
 bool ObjectLinker::addScriptSymbols()
 {
+  const LinkerScript& script = m_pModule->getScript();
+  LinkerScript::DefSymMap::const_entry_iterator it;
+  LinkerScript::DefSymMap::const_entry_iterator ie = script.defSymMap().end();
+  // go through the entire defSymMap
+  for (it = script.defSymMap().begin(); it != ie; ++it) {
+    const llvm::StringRef sym =  it.getEntry()->key();
+    ResolveInfo* old_info = m_pModule->getNamePool().findInfo(sym);
+    // if the symbol does not exist, we can set type to NOTYPE
+    // else we retain its type, same goes for size - 0 or retain old value
+    // and visibility - Default or retain
+    if (old_info != NULL) {
+      if(!m_pBuilder->AddSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
+                             sym,
+                             static_cast<ResolveInfo::Type>(old_info->type()),
+                             ResolveInfo::Define,
+                             ResolveInfo::Absolute,
+                             old_info->size(),
+                             0x0,
+                             FragmentRef::Null(),
+                             old_info->visibility()))
+        return false;
+    }
+    else {
+      if (!m_pBuilder->AddSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
+                             sym,
+                             ResolveInfo::NoType,
+                             ResolveInfo::Define,
+                             ResolveInfo::Absolute,
+                             0x0,
+                             0x0,
+                             FragmentRef::Null(),
+                             ResolveInfo::Default))
+        return false;
+    }
+  }
   return true;
 }
 
@@ -333,6 +374,7 @@ bool ObjectLinker::scanRelocations()
   // apply all relocations of all inputs
   Module::obj_iterator input, inEnd = m_pModule->obj_end();
   for (input = m_pModule->obj_begin(); input != inEnd; ++input) {
+    m_LDBackend.getRelocator()->initializeScan(**input);
     LDContext::sect_iterator rs, rsEnd = (*input)->context()->relocSectEnd();
     for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
       // bypass the reloc section if
@@ -347,11 +389,14 @@ bool ObjectLinker::scanRelocations()
         Relocation* relocation = llvm::cast<Relocation>(reloc);
         // scan relocation
         if (LinkerConfig::Object != m_Config.codeGenType())
-          m_LDBackend.scanRelocation(*relocation, *m_pBuilder, *m_pModule, **rs);
+          m_LDBackend.getRelocator()->scanRelocation(
+                                    *relocation, *m_pBuilder, *m_pModule, **rs);
         else
-          m_LDBackend.partialScanRelocation(*relocation, *m_pModule, **rs);
+          m_LDBackend.getRelocator()->partialScanRelocation(
+                                                 *relocation, *m_pModule, **rs);
       } // for all relocations
     } // for all relocation section
+    m_LDBackend.getRelocator()->finalizeScan(**input);
   } // for all inputs
   return true;
 }
@@ -387,7 +432,9 @@ bool ObjectLinker::prelayout()
   // into output symbol table
   Module::iterator sect, sEnd = m_pModule->end();
   for (sect = m_pModule->begin(); sect != sEnd; ++sect) {
-    m_pModule->getSectionSymbolSet().finalize(**sect, m_pModule->getSymbolTable());
+    m_pModule->getSectionSymbolSet().finalize(**sect,
+        m_pModule->getSymbolTable(),
+        m_Config.codeGenType() == LinkerConfig::Object);
   }
 
   m_LDBackend.preLayout(*m_pModule, *m_pBuilder);
@@ -405,7 +452,9 @@ bool ObjectLinker::prelayout()
   ///
   /// dump all symbols and strings from FragmentLinker and build the format-dependent
   /// hash table.
-  m_LDBackend.sizeNamePools(*m_pModule, m_Config.isCodeStatic());
+  /// @note sizeNamePools replies on LinkerConfig::CodePosition. Must determine
+  /// code position model before calling GNULDBackend::sizeNamePools()
+  m_LDBackend.sizeNamePools(*m_pModule);
 
   return true;
 }
@@ -433,7 +482,26 @@ bool ObjectLinker::postlayout()
 ///   symbol.
 bool ObjectLinker::finalizeSymbolValue()
 {
-  return (m_pLinker->finalizeSymbols() && m_LDBackend.finalizeSymbols());
+  bool finalized = m_pLinker->finalizeSymbols() && m_LDBackend.finalizeSymbols();
+  bool scriptSymsAdded = true;
+  uint64_t symVal;
+  const LinkerScript& script = m_pModule->getScript();
+  LinkerScript::DefSymMap::const_entry_iterator it;
+  LinkerScript::DefSymMap::const_entry_iterator ie = script.defSymMap().end();
+
+  DefSymParser parser(*m_pModule);
+  for (it = script.defSymMap().begin(); it != ie; ++it) {
+    llvm::StringRef symName =  it.getEntry()->key();
+    llvm::StringRef expr =  it.getEntry()->value();
+
+    LDSymbol* symbol = m_pModule->getNamePool().findSymbol(symName);
+    assert(NULL != symbol && "--defsym symbol should be in the name pool");
+    scriptSymsAdded &= parser.parse(expr, symVal);
+    if (!scriptSymsAdded)
+      break;
+    symbol->setValue(symVal);
+  }
+  return finalized && scriptSymsAdded ;
 }
 
 /// relocate - applying relocation entries and create relocation
@@ -451,6 +519,7 @@ bool ObjectLinker::emitOutput(MemoryArea& pOutput)
 {
   return llvm::errc::success == getWriter()->writeObject(*m_pModule, pOutput);
 }
+
 
 /// postProcessing - do modification after all processes
 bool ObjectLinker::postProcessing(MemoryArea& pOutput)

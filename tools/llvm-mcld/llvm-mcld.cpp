@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include <mcld/Module.h>
 #include <mcld/LinkerConfig.h>
+#include <mcld/LinkerScript.h>
 #include <mcld/Target/TargetMachine.h>
 #include <mcld/Support/TargetSelect.h>
 #include <mcld/Support/TargetRegistry.h>
@@ -18,6 +19,7 @@
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/FileSystem.h>
 #include <mcld/Support/raw_ostream.h>
+#include <mcld/Support/SystemUtils.h>
 #include <mcld/Support/ToolOutputFile.h>
 #include <mcld/LD/DiagnosticLineInfo.h>
 #include <mcld/LD/TextDiagnosticPrinter.h>
@@ -28,6 +30,7 @@
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/ADT/Triple.h>
+#include <llvm/ADT/StringSwitch.h>
 #include <llvm/MC/SubtargetFeature.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Debug.h>
@@ -45,7 +48,7 @@
 # include <unistd.h>
 #endif
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__MINGW32__)
 #include <io.h>
 #ifndef STDIN_FILENO
 # define STDIN_FILENO 0
@@ -57,7 +60,6 @@
 # define STDERR_FILENO 2
 #endif
 #endif
-
 
 using namespace llvm;
 
@@ -521,6 +523,12 @@ ArgOMagicAlias("N",
                cl::desc("alias for --omagic"),
                cl::aliasopt(ArgOMagic));
 
+
+static cl::opt<int>
+ArgGPSize("G",
+          cl::desc("Set the maximum size of objects to be optimized using GP"),
+          cl::init(8));
+
 /// @{
 /// @name FIXME: begin of unsupported options
 /// @}
@@ -574,6 +582,7 @@ ArgExportDynamicAlias("E",
 
 static cl::opt<std::string>
 ArgEmulation("m",
+             cl::ZeroOrMore,
              cl::desc("Set GNU linker emulation"),
              cl::value_desc("emulation"));
 
@@ -592,7 +601,8 @@ ArgExcludeLIBS("exclude-libs",
 static cl::opt<std::string>
 ArgBuildID("build-id",
            cl::desc("Request creation of \".note.gnu.build-id\" ELF note section."),
-           cl::value_desc("style"));
+           cl::value_desc("style"),
+           cl::ValueOptional);
 
 static cl::opt<std::string>
 ArgForceUndefined("u",
@@ -648,6 +658,21 @@ ArgAuxiliaryAlias("auxiliary",
                   cl::aliasopt(ArgAuxiliary));
 
 static cl::opt<bool>
+ArgUseGold("use-gold",
+          cl::desc("GCC/collect2 compatibility: uses ld.gold.  Ignored"),
+          cl::init(false));
+
+static cl::opt<bool>
+ArgUseMCLD("use-mcld",
+          cl::desc("GCC/collect2 compatibility: uses ld.mcld.  Ignored"),
+          cl::init(false));
+
+static cl::opt<bool>
+ArgUseLD("use-ld",
+          cl::desc("GCC/collect2 compatibility: uses ld.bfd.  Ignored"),
+          cl::init(false));
+
+static cl::opt<bool>
 ArgEB("EB",
       cl::desc("Link big-endian objects. This affects the default output format."),
       cl::init(false));
@@ -656,6 +681,26 @@ static cl::opt<bool>
 ArgEL("EL",
       cl::desc("Link little-endian objects. This affects the default output format."),
       cl::init(false));
+
+static cl::list<std::string>
+ArgPlugin("plugin",
+          cl::desc("Load a plugin library."),
+          cl::value_desc("plugin"));
+
+static cl::list<std::string>
+ArgPluginOpt("plugin-opt",
+             cl::desc("	Pass an option to the plugin."),
+             cl::value_desc("option"));
+
+static cl::opt<bool>
+ArgSVR4Compatibility("Qy",
+                    cl::desc("This option is ignored for SVR4 compatibility"),
+                    cl::init(false));
+
+static cl::list<std::string>
+ArgY("Y",
+     cl::desc("Add path to the default library search path"),
+     cl::value_desc("default-search-path"));
 
 /// @{
 /// @name FIXME: end of unsupported options
@@ -682,22 +727,19 @@ ArgEnableNewDTags("enable-new-dtags",
                   cl::desc("Enable use of DT_RUNPATH and DT_FLAGS"),
                   cl::init(false));
 
-class FalseParser : public cl::parser<bool> {
-  const char *ArgStr;
-public:
+static cl::opt<bool>
+ArgPrintMap("M",
+            cl::desc("Print a link map to the standard output."),
+            cl::init(false));
 
-  // parse - Return true on error.
-  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, bool &Val) {
-    if (cl::parser<bool>::parse(O, ArgName, Arg, Val))
-      return false;
-    Val = false;
-    return false;
-  }
-};
+static cl::alias
+ArgPrintMapAlias("print-map",
+                 cl::desc("alias for -M"),
+                 cl::aliasopt(ArgPrintMap));
 
 static bool ArgFatalWarnings;
 
-static cl::opt<bool, true, FalseParser>
+static cl::opt<bool, true, cl::FalseParser>
 ArgNoFatalWarnings("no-fatal-warnings",
               cl::location(ArgFatalWarnings),
               cl::desc("do not turn warnings into errors"),
@@ -705,7 +747,7 @@ ArgNoFatalWarnings("no-fatal-warnings",
               cl::ValueDisallowed);
 
 static cl::opt<bool, true>
-ArgFatalWarnings_("fatal-warnings",
+ArgFatalWarningsFlag("fatal-warnings",
               cl::location(ArgFatalWarnings),
               cl::desc("turn all warnings into errors"),
               cl::init(false),
@@ -756,11 +798,13 @@ ArgDefineCommon("d",
 
 static cl::alias
 ArgDefineCommonAlias1("dc",
+                      cl::ZeroOrMore,
                       cl::desc("alias for -d"),
                       cl::aliasopt(ArgDefineCommon));
 
 static cl::alias
 ArgDefineCommonAlias2("dp",
+                      cl::ZeroOrMore,
                       cl::desc("alias for -d"),
                       cl::aliasopt(ArgDefineCommon));
 
@@ -785,6 +829,12 @@ ArgAddressMapList("section-start",
                   cl::desc("Locate a output section at the given absolute address"),
                   cl::value_desc("Set address of section"),
                   cl::Prefix);
+
+static cl::list<std::string>
+ArgDefSymList("defsym",
+              cl::ZeroOrMore,
+              cl::desc("Define a symbol"),
+              cl::value_desc("symbol=expression"));
 
 static cl::opt<unsigned long long>
 ArgBssSegAddr("Tbss",
@@ -897,13 +947,13 @@ static mcld::ToolOutputFile *GetOutputStream(const char* pTargetName,
   case mcld::CGFT_ASMFile:
   case mcld::CGFT_OBJFile:
   case mcld::CGFT_PARTIAL:
-    permission = 0644;
+    permission = mcld::FileHandle::Permission(0x644);
     break;
   case mcld::CGFT_DSOFile:
   case mcld::CGFT_EXEFile:
   case mcld::CGFT_BINARY:
   case mcld::CGFT_NULLFile:
-    permission = 0755;
+    permission = mcld::FileHandle::Permission(0x755);
     break;
   }
 
@@ -922,7 +972,7 @@ static mcld::ToolOutputFile *GetOutputStream(const char* pTargetName,
 /// This function simplifies cross-compiling by reading triple from the program
 /// name. For example, if the program name is `arm-linux-eabi-ld.mcld', we can
 /// get the triple is arm-linux-eabi by the program name.
-static void ParseProgName(const char *progname)
+static std::string ParseProgName(const char *progname)
 {
   static const char *suffixes[] = {
     "ld",
@@ -933,7 +983,7 @@ static void ParseProgName(const char *progname)
 
   for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
     if (ProgName == suffixes[i])
-      return;
+      return std::string();
   }
 
   StringRef ProgNameRef(ProgName);
@@ -951,9 +1001,29 @@ static void ParseProgName(const char *progname)
     std::string IgnoredError;
     if (!llvm::TargetRegistry::lookupTarget(Prefix, IgnoredError))
       continue;
-    TargetTriple = Prefix.str();
-    return;
+    return Prefix.str();
   }
+  return std::string();
+}
+
+static Triple ParseEmulation(const std::string& pEmulation)
+{
+  Triple result = StringSwitch<Triple>(pEmulation)
+    .Case("armelf_linux_eabi", Triple("arm", "", "linux", "gnueabi"))
+    .Case("elf_i386",          Triple("i386", "", "", "gnu"))
+    .Case("elf_x86_64",        Triple("x86_64", "", "", "gnu"))
+    .Case("elf32_x86_64",      Triple("x86_64", "", "", "gnux32"))
+    .Case("elf_i386_fbsd",     Triple("i386", "", "freebsd", "gnu"))
+    .Case("elf_x86_64_fbsd",   Triple("x86_64", "", "freebsd", "gnu"))
+    .Case("elf32ltsmip",       Triple("mipsel", "", "", "gnu"))
+    .Default(Triple());
+
+  if (result.getArch()        == Triple::UnknownArch &&
+      result.getOS()          == Triple::UnknownOS &&
+      result.getEnvironment() == Triple::UnknownEnvironment)
+    mcld::error(mcld::diag::err_invalid_emulation) << pEmulation << "\n";
+
+  return result;
 }
 
 static bool ShouldColorize()
@@ -962,7 +1032,9 @@ static bool ShouldColorize()
    return term && (0 != strcmp(term, "dumb"));
 }
 
-static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
+static bool ProcessLinkerOptionsFromCommand(mcld::LinkerScript& pScript,
+                                            mcld::LinkerConfig& pConfig)
+{
   // -----  Set up General Options  ----- //
   // set up colorize
   switch (ArgColor) {
@@ -1020,14 +1092,14 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   // set up sysroot
   if (!ArgSysRoot.empty()) {
     if (exists(ArgSysRoot) && is_directory(ArgSysRoot))
-      pConfig.options().setSysroot(ArgSysRoot);
+      pScript.setSysroot(ArgSysRoot);
   }
 
   // add all search directories
   cl::list<std::string>::iterator sd;
   cl::list<std::string>::iterator sdEnd = ArgSearchDirList.end();
   for (sd=ArgSearchDirList.begin(); sd!=sdEnd; ++sd) {
-    if (!pConfig.options().directories().insert(*sd)) {
+    if (!pScript.directories().insert(*sd)) {
       // FIXME: need a warning function
       errs() << "WARNING: can not open search directory `-L"
              << *sd
@@ -1056,6 +1128,8 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   pConfig.options().setNewDTags(ArgEnableNewDTags);
   pConfig.options().setHashStyle(ArgHashStyle);
   pConfig.options().setNoStdlib(ArgNoStdlib);
+  pConfig.options().setPrintMap(ArgPrintMap);
+  pConfig.options().setGPSize(ArgGPSize);
 
   if (ArgStripAll)
     pConfig.options().setStripSymbols(mcld::GeneralOptions::StripAllSymbols);
@@ -1074,7 +1148,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
 
     // add wname -> __wrap_wname
     mcld::StringEntry<llvm::StringRef>* to_wrap =
-                    pConfig.scripts().renameMap().insert(*wname, exist);
+                                     pScript.renameMap().insert(*wname, exist);
 
     std::string to_wrap_str = "__wrap_" + *wname;
     to_wrap->setValue(to_wrap_str);
@@ -1085,7 +1159,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
     // add __real_wname -> wname
     std::string from_real_str = "__real_" + *wname;
     mcld::StringEntry<llvm::StringRef>* from_real =
-             pConfig.scripts().renameMap().insert(from_real_str, exist);
+                              pScript.renameMap().insert(from_real_str, exist);
     from_real->setValue(*wname);
     if (exist)
       mcld::warning(mcld::diag::rewrap) << *wname << from_real_str;
@@ -1099,7 +1173,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
 
     // add pname -> pname_portable
     mcld::StringEntry<llvm::StringRef>* to_port =
-                  pConfig.scripts().renameMap().insert(*pname, exist);
+                                     pScript.renameMap().insert(*pname, exist);
 
     std::string to_port_str = *pname + "_portable";
     to_port->setValue(to_port_str);
@@ -1110,7 +1184,7 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
     // add __real_pname -> pname
     std::string from_real_str = "__real_" + *pname;
     mcld::StringEntry<llvm::StringRef>* from_real =
-             pConfig.scripts().renameMap().insert(from_real_str, exist);
+                              pScript.renameMap().insert(from_real_str, exist);
 
     from_real->setValue(*pname);
     if (exist)
@@ -1148,21 +1222,21 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
   if (-1U != ArgTextSegAddr) {
     bool exist = false;
     mcld::StringEntry<uint64_t>* text_mapping =
-      pConfig.scripts().addressMap().insert(".text", exist);
+                                   pScript.addressMap().insert(".text", exist);
     text_mapping->setValue(ArgTextSegAddr);
   }
   // -Tdata
   if (-1U != ArgDataSegAddr) {
     bool exist = false;
     mcld::StringEntry<uint64_t>* data_mapping =
-      pConfig.scripts().addressMap().insert(".data", exist);
+                                   pScript.addressMap().insert(".data", exist);
     data_mapping->setValue(ArgDataSegAddr);
   }
   // -Tbss
   if (-1U != ArgBssSegAddr) {
     bool exist = false;
     mcld::StringEntry<uint64_t>* bss_mapping =
-      pConfig.scripts().addressMap().insert(".bss", exist);
+                                    pScript.addressMap().insert(".bss", exist);
     bss_mapping->setValue(ArgBssSegAddr);
   }
   // --section-start SECTION=ADDRESS
@@ -1176,8 +1250,31 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
     script.substr(pos + 1).getAsInteger(0, address);
     bool exist = false;
     mcld::StringEntry<uint64_t>* addr_mapping =
-      pConfig.scripts().addressMap().insert(script.substr(0, pos), exist);
+                     pScript.addressMap().insert(script.substr(0, pos), exist);
     addr_mapping->setValue(address);
+  }
+
+  // --defsym symbols
+  for (cl::list<std::string>::iterator
+       it = ArgDefSymList.begin(), ie = ArgDefSymList.end();
+       it != ie ; ++it) {
+    llvm::StringRef expression(*it);
+    size_t pos = expression.find_last_of('=');
+    if (pos == expression.size() - 1) {
+      errs() << "defsym option: expression must not end with '='\n";
+      return false;
+    }
+    if (llvm::StringRef::npos == pos) {
+      errs() << "syntax : --defsym symbol=expression\n";
+      return false;
+    }
+    bool exist = false;
+    // FIXME: This will not work with multiple destinations such as
+    // --defsym abc=pqr=expression
+
+    mcld::StringEntry<llvm::StringRef> *defsyms =
+                    pScript.defSymMap().insert(expression.substr(0,pos),exist);
+    defsyms->setValue(expression.substr(pos + 1));
   }
 
   // set up filter/aux filter for shared object
@@ -1193,6 +1290,8 @@ static bool ProcessLinkerOptionsFromCommand(mcld::LinkerConfig& pConfig) {
 
 int main(int argc, char* argv[])
 {
+  sys::PrintStackTraceOnErrorSignal();
+
   LLVMContext &Context = getGlobalContext();
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
@@ -1206,7 +1305,6 @@ int main(int argc, char* argv[])
   mcld::InitializeAllEmulations();
   mcld::InitializeAllDiagnostics();
 
-  ParseProgName(argv[0]);
   cl::ParseCommandLineOptions(argc, argv, "MCLinker\n");
 
 #ifdef ENABLE_UNITTEST
@@ -1219,12 +1317,12 @@ int main(int argc, char* argv[])
   std::auto_ptr<llvm::Module> M;
 
   // Load the module to be linked...
-  mcld::Module LDIRModule;
-
+  mcld::LinkerScript LDScript;
+  mcld::Module LDIRModule(LDScript);
   mcld::LinkerConfig LDConfig;
 
   // Process the linker input from the command line
-  if (!ProcessLinkerOptionsFromCommand(LDConfig)) {
+  if (!ProcessLinkerOptionsFromCommand(LDScript, LDConfig)) {
     errs() << argv[0] << ": failed to process linker options from command line!\n";
     return 1;
   }
@@ -1265,19 +1363,32 @@ int main(int argc, char* argv[])
   // If we are supposed to override the target triple, do so now.
   Triple TheTriple;
   if (!TargetTriple.empty()) {
+    // 1. Use the triple from command.
     TheTriple.setTriple(TargetTriple);
     mod.setTargetTriple(TargetTriple);
-  }
-
-  // User doesn't specify the triple from command.
-  if (TheTriple.getTriple().empty()) {
-    // Try to get one from the input Module.
-    const std::string &TripleStr = mod.getTargetTriple();
-
-    if (TripleStr.empty())
-      TheTriple.setTriple(sys::getDefaultTargetTriple());
-    else
-      TheTriple.setTriple(TripleStr);
+  } else if (!mod.getTargetTriple().empty()) {
+    // 2. Use the triple in the input Module.
+    TheTriple.setTriple(mod.getTargetTriple());
+  } else {
+    std::string ProgNameTriple = ParseProgName(argv[0]);
+    if (!ProgNameTriple.empty()) {
+      // 3. Use the triple from the program name prefix.
+      TheTriple.setTriple(ProgNameTriple);
+      mod.setTargetTriple(ProgNameTriple);
+    } else {
+      // 4. Use the default target triple.
+      TheTriple.setTriple(mcld::sys::getDefaultTargetTriple());
+      if (!ArgEmulation.empty()) {
+        // Process target emulation.
+        Triple EmulationTriple = ParseEmulation(ArgEmulation);
+        if (EmulationTriple.getArch() != Triple::UnknownArch)
+          TheTriple.setArch(EmulationTriple.getArch());
+        if (EmulationTriple.getOS() != Triple::UnknownOS)
+          TheTriple.setOS(EmulationTriple.getOS());
+        if (EmulationTriple.getEnvironment() != Triple::UnknownEnvironment)
+          TheTriple.setEnvironment(EmulationTriple.getEnvironment());
+      }
+    }
   }
 
   // Allocate target machine.  First, check whether the user has explicitly
@@ -1374,6 +1485,9 @@ int main(int argc, char* argv[])
   assert(target_machine.get() && "Could not allocate target machine!");
   mcld::MCLDTargetMachine &TheTargetMachine = *target_machine.get();
 
+  LDConfig.targets().setTargetCPU(MCPU);
+  LDConfig.targets().setTargetFeatureString(FeaturesStr);
+
   TheTargetMachine.getTM().setMCUseLoc(false);
   TheTargetMachine.getTM().setMCUseCFI(false);
 
@@ -1436,4 +1550,3 @@ int main(int argc, char* argv[])
   Out->keep();
   return 0;
 }
-

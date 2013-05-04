@@ -13,6 +13,7 @@
 #include <mcld/LD/EhFrame.h>
 #include <mcld/LD/RelocData.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/ELF.h>
 #include <mcld/Fragment/FragmentRef.h>
 
 using namespace mcld;
@@ -20,13 +21,19 @@ using namespace mcld;
 //===----------------------------------------------------------------------===//
 // Helper Functions
 //===----------------------------------------------------------------------===//
-LDFileFormat::Kind GetELFSectionKind(uint32_t pType, const char* pName)
+LDFileFormat::Kind GetELFSectionKind(uint32_t pType, const char* pName,
+                                     uint32_t pFlag)
 {
+  if (pFlag & mcld::ELF::SHF_EXCLUDE)
+    return LDFileFormat::Exclude;
+
+  if (pFlag & llvm::ELF::SHF_MASKPROC)
+    return LDFileFormat::Target;
+
   // name rules
   llvm::StringRef name(pName);
   if (name.startswith(".debug") ||
       name.startswith(".zdebug") ||
-      name.startswith(".gnu.linkonce.wi.") ||
       name.startswith(".line") ||
       name.startswith(".stab"))
     return LDFileFormat::Debug;
@@ -42,6 +49,8 @@ LDFileFormat::Kind GetELFSectionKind(uint32_t pType, const char* pName)
     return LDFileFormat::GCCExceptTable;
   if (name.startswith(".note.GNU-stack"))
     return LDFileFormat::StackNote;
+  if (name.startswith(".gnu.linkonce"))
+    return LDFileFormat::LinkOnce;
 
   // type rules
   switch(pType) {
@@ -105,6 +114,9 @@ bool ShouldForceLocal(const ResolveInfo& pInfo, const LinkerConfig& pConfig)
 IRBuilder::IRBuilder(Module& pModule, const LinkerConfig& pConfig)
   : m_Module(pModule), m_Config(pConfig), m_InputBuilder(pConfig) {
   m_InputBuilder.setCurrentTree(m_Module.getInputTree());
+
+  // FIXME: where to set up Relocation?
+  Relocation::SetUp(m_Config);
 }
 
 IRBuilder::~IRBuilder()
@@ -154,17 +166,17 @@ Input* IRBuilder::ReadInput(const std::string& pNameSpec)
 
     if (m_InputBuilder.getAttributes().isStatic()) {
       // with --static, we must search an archive.
-      path = m_Config.options().directories().find(pNameSpec, Input::Archive);
+      path = m_Module.getScript().directories().find(pNameSpec, Input::Archive);
     }
     else {
       // otherwise, with --Bdynamic, we can find either an archive or a
       // shared object.
-      path = m_Config.options().directories().find(pNameSpec, Input::DynObj);
+      path = m_Module.getScript().directories().find(pNameSpec, Input::DynObj);
     }
   }
   else {
     // In the system without shared object support, we only look for an archive
-    path = m_Config.options().directories().find(pNameSpec, Input::Archive);
+    path = m_Module.getScript().directories().find(pNameSpec, Input::Archive);
   }
 
   if (NULL == path) {
@@ -299,7 +311,7 @@ LDSection* IRBuilder::CreateELFHeader(Input& pInput,
                                       uint32_t pAlign)
 {
   // Create section header
-  LDFileFormat::Kind kind = GetELFSectionKind(pType, pName.c_str());
+  LDFileFormat::Kind kind = GetELFSectionKind(pType, pName.c_str(), pFlag);
   LDSection* header = LDSection::Create(pName, kind, pType, pFlag);
   header->setAlign(pAlign);
 
@@ -406,7 +418,7 @@ void IRBuilder::AppendRelocation(Relocation& pRelocation, RelocData& pRD)
 uint64_t IRBuilder::AppendEhFrame(Fragment& pFrag, EhFrame& pEhFrame)
 {
   uint64_t size = ObjectBuilder::AppendFragment(pFrag,
-                              pEhFrame.getSectionData(),
+                              *pEhFrame.getSectionData(),
                               pEhFrame.getSection().align());
   pEhFrame.getSection().setSize(pEhFrame.getSection().size() + size);
   return size;
@@ -442,13 +454,14 @@ LDSymbol* IRBuilder::AddSymbol(Input& pInput,
 {
   // rename symbols
   std::string name = pName;
-  if (!m_Config.scripts().renameMap().empty() &&
+  if (!m_Module.getScript().renameMap().empty() &&
       ResolveInfo::Undefined == pDesc) {
     // If the renameMap is not empty, some symbols should be renamed.
     // --wrap and --portable defines the symbol rename map.
-    ScriptOptions::SymbolRenameMap::const_iterator renameSym =
-                                    m_Config.scripts().renameMap().find(pName);
-    if (renameSym != m_Config.scripts().renameMap().end())
+    const LinkerScript& script = m_Module.getScript();
+    LinkerScript::SymbolRenameMap::const_iterator renameSym =
+                                                script.renameMap().find(pName);
+    if (script.renameMap().end() != renameSym)
       name = renameSym.getEntry()->value();
   }
 
