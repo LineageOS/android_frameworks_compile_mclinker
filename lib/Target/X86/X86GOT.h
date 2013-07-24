@@ -12,53 +12,71 @@
 #include <gtest.h>
 #endif
 
-#include "X86PLT.h"
-
 #include <mcld/Target/GOT.h>
-#include <mcld/LD/SectionData.h>
 
-namespace mcld
-{
+namespace mcld {
+
 class LDSection;
+class SectionData;
 
-/** \class X86GOT
- *  \brief X86 Global Offset Table.
+/** \class X86_32GOTEntry
+ *  \brief GOT Entry with size of 4 bytes
+ */
+class X86_32GOTEntry : public GOT::Entry<4>
+{
+public:
+  X86_32GOTEntry(uint64_t pContent, SectionData* pParent)
+   : GOT::Entry<4>(pContent, pParent)
+  {}
+};
+
+/** \class X86_32GOT
+ *  \brief X86_32 Global Offset Table.
  */
 
-class X86GOT : public GOT
+class X86_32GOT : public GOT
 {
-  typedef llvm::DenseMap<const ResolveInfo*, GOTEntry*> SymbolIndexMapType;
-
 public:
-  typedef SectionData::iterator iterator;
-  typedef SectionData::const_iterator const_iterator;
+  X86_32GOT(LDSection& pSection);
 
-public:
-  X86GOT(LDSection& pSection, SectionData& pSectionData);
+  ~X86_32GOT();
 
-  ~X86GOT();
+  void reserve(size_t pNum = 1);
 
-  //Reserve general GOT entries.
-  void reserveEntry(size_t pNum = 1);
-
-  GOTEntry* getEntry(const ResolveInfo& pSymbol, bool& pExist);
-
-  iterator begin();
-
-  const_iterator begin() const;
-
-  iterator end();
-
-  const_iterator end() const;
+  X86_32GOTEntry* consume();
 
 private:
-  /// m_GOTIterator - point to the first valid entry in GOT list
-  iterator m_GOTIterator;
+  X86_32GOTEntry* m_pLast; ///< the last consumed entry
+};
 
-  /// m_fIsVisit - first time visit the function getEntry() or not
-  bool m_fIsVisit;
+/** \class X86_64GOTEntry
+ *  \brief GOT Entry with size of 8 bytes
+ */
+class X86_64GOTEntry : public GOT::Entry<8>
+{
+public:
+  X86_64GOTEntry(uint64_t pContent, SectionData* pParent)
+   : GOT::Entry<8>(pContent, pParent)
+  {}
+};
 
-  SymbolIndexMapType m_GOTMap;
+/** \class X86_64GOT
+ *  \brief X86_64 Global Offset Table.
+ */
+
+class X86_64GOT : public GOT
+{
+public:
+  X86_64GOT(LDSection& pSection);
+
+  ~X86_64GOT();
+
+  void reserve(size_t pNum = 1);
+
+  X86_64GOTEntry* consume();
+
+private:
+  X86_64GOTEntry* m_pLast; ///< the last consumed entry
 };
 
 } // namespace of mcld

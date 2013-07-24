@@ -14,58 +14,49 @@
 
 #include <llvm/ADT/DenseMap.h>
 
-#include <mcld/Target/GOT.h>
-#include <mcld/LD/SectionData.h>
+#include "X86GOT.h"
 
-namespace mcld
-{
+namespace mcld {
+
+class X86PLT;
 class LDSection;
 
 const unsigned int X86GOTPLT0Num = 3;
 
-/** \class X86GOTPLT
- *  \brief X86 .got.plt section.
+/** \class X86_32GOTPLT
+ *  \brief X86_32 .got.plt section.
  */
-class X86GOTPLT : public GOT
+class X86_32GOTPLT : public X86_32GOT
 {
-  typedef llvm::DenseMap<const ResolveInfo*, GOTEntry*> SymbolIndexMapType;
-
 public:
-  typedef SectionData::iterator iterator;
-  typedef SectionData::const_iterator const_iterator;
+  X86_32GOTPLT(LDSection &pSection);
 
-public:
-  X86GOTPLT(LDSection &pSection, SectionData& pSectionData);
+  ~X86_32GOTPLT();
 
-  ~X86GOTPLT();
+  // hasGOT1 - return if this section has any GOT1 entry
+  bool hasGOT1() const;
 
-  iterator begin();
-
-  const_iterator begin() const;
-
-  iterator end();
-
-  const_iterator end() const;
-
-// For GOT0
-public:
   void applyGOT0(uint64_t pAddress);
 
-// For GOTPLT
+  void applyAllGOTPLT(const X86PLT& pPLT);
+};
+
+/** \class X86_64GOTPLT
+ *  \brief X86_64 .got.plt section.
+ */
+class X86_64GOTPLT : public X86_64GOT
+{
 public:
-  void reserveEntry(size_t pNum = 1);
+  X86_64GOTPLT(LDSection &pSection);
 
-  GOTEntry* getEntry(const ResolveInfo& pSymbol, bool& pExist);
+  ~X86_64GOTPLT();
 
-  void applyAllGOTPLT(uint64_t pPLTBase,
-                      unsigned int pPLT0Size,
-                      unsigned int pPLT1Size);
+  // hasGOT1 - return if this section has any GOT1 entry
+  bool hasGOT1() const;
 
-  GOTEntry*& lookupGOTPLTMap(const ResolveInfo& pSymbol);
+  void applyGOT0(uint64_t pAddress);
 
-private:
-  iterator m_GOTPLTIterator;
-  SymbolIndexMapType m_GOTPLTMap;
+  void applyAllGOTPLT(const X86PLT& pPLT);
 };
 
 } // namespace of mcld

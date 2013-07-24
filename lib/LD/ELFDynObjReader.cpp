@@ -6,29 +6,36 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include <mcld/LD/ELFDynObjReader.h>
+
+#include <mcld/LinkerConfig.h>
+#include <mcld/IRBuilder.h>
+#include <mcld/LD/ELFReader.h>
+#include <mcld/MC/MCLDInput.h>
+#include <mcld/Support/MemoryRegion.h>
+#include <mcld/Target/GNULDBackend.h>
+
 #include <llvm/ADT/Twine.h>
 #include <llvm/ADT/OwningPtr.h>
 #include <llvm/Support/ErrorHandling.h>
-
-#include <mcld/LD/ELFDynObjReader.h>
-#include <mcld/LD/ELFReader.h>
-#include <mcld/MC/MCLDInput.h>
-#include <mcld/MC/MCLinker.h>
-#include <mcld/Target/GNULDBackend.h>
-#include <mcld/Support/MemoryRegion.h>
 
 #include <string>
 
 using namespace mcld;
 
-//==========================
+//===----------------------------------------------------------------------===//
 // ELFDynObjReader
-ELFDynObjReader::ELFDynObjReader(GNULDBackend& pBackend, MCLinker& pLinker)
+//===----------------------------------------------------------------------===//
+ELFDynObjReader::ELFDynObjReader(GNULDBackend& pBackend,
+                                 IRBuilder& pBuilder,
+                                 const LinkerConfig& pConfig)
   : DynObjReader(),
     m_pELFReader(0),
-    m_Linker(pLinker) {
-  if (32 == pBackend.bitclass() && pBackend.isLittleEndian())
+    m_Builder(pBuilder) {
+  if (pConfig.targets().is32Bits() && pConfig.targets().isLittleEndian())
     m_pELFReader = new ELFReader<32, true>(pBackend);
+  else if (pConfig.targets().is64Bits() && pConfig.targets().isLittleEndian())
+    m_pELFReader = new ELFReader<64, true>(pBackend);
 }
 
 ELFDynObjReader::~ELFDynObjReader()
@@ -55,14 +62,14 @@ bool ELFDynObjReader::isMyFormat(Input &pInput) const
     result = false;
   else if (!m_pELFReader->isMyMachine(ELF_hdr))
     result = false;
-  else if (MCLDFile::DynObj != m_pELFReader->fileType(ELF_hdr))
+  else if (Input::DynObj != m_pELFReader->fileType(ELF_hdr))
     result = false;
   pInput.memArea()->release(region);
   return result;
 }
 
-/// readDSO
-bool ELFDynObjReader::readDSO(Input& pInput)
+/// readHeader
+bool ELFDynObjReader::readHeader(Input& pInput)
 {
   assert(pInput.hasMemArea());
 
@@ -71,7 +78,7 @@ bool ELFDynObjReader::readDSO(Input& pInput)
                                                    hdr_size);
   uint8_t* ELF_hdr = region->start();
 
-  bool shdr_result = m_pELFReader->readSectionHeaders(pInput, m_Linker, ELF_hdr);
+  bool shdr_result = m_pELFReader->readSectionHeaders(pInput, ELF_hdr);
   pInput.memArea()->release(region);
 
   // read .dynamic to get the correct SONAME
@@ -107,8 +114,8 @@ bool ELFDynObjReader::readSymbols(Input& pInput)
   MemoryRegion* strtab_region = pInput.memArea()->request(
               pInput.fileOffset() + strtab_shdr->offset(), strtab_shdr->size());
   char* strtab = reinterpret_cast<char*>(strtab_region->start());
-  bool result = m_pELFReader->readSymbols(pInput, m_Linker, *symtab_region,
-                                            strtab);
+  bool result = m_pELFReader->readSymbols(pInput, m_Builder,
+                                          *symtab_region, strtab);
   pInput.memArea()->release(symtab_region);
   pInput.memArea()->release(strtab_region);
 

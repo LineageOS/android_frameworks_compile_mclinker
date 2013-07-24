@@ -13,16 +13,18 @@
 #endif
 #include <mcld/LD/MsgHandler.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class MCLDInfo;
+class LinkerConfig;
 class DiagnosticPrinter;
 class DiagnosticLineInfo;
 
-void InitializeDiagnosticEngine(const MCLDInfo& pLDInfo,
-                                DiagnosticLineInfo* pLineInfo,
-                                DiagnosticPrinter* pPrinter);
+void InitializeDiagnosticEngine(const LinkerConfig& pConfig,
+                                DiagnosticPrinter* pPrinter = NULL);
+
+void FinalizeDiagnosticEngine();
+
+bool Diagnose();
 
 DiagnosticEngine& getDiagnosticEngine();
 
@@ -38,6 +40,7 @@ MsgHandler ignore(unsigned int pID);
 
 //===----------------------------------------------------------------------===//
 //  Inline functions
+//===----------------------------------------------------------------------===//
 inline mcld::MsgHandler mcld::unreachable(unsigned int pID)
 {
   return getDiagnosticEngine().report(pID, DiagnosticEngine::Unreachable);

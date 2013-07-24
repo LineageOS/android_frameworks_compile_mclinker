@@ -14,8 +14,7 @@
 #include "mcld/LD/LDReader.h"
 #include <llvm/Support/system_error.h>
 
-namespace mcld
-{
+namespace mcld {
 
 class TargetLDBackend;
 class Input;
@@ -33,7 +32,7 @@ protected:
 public:
   virtual ~DynObjReader() { }
 
-  virtual bool readDSO(Input& pFile) = 0;
+  virtual bool readHeader(Input& pFile) = 0;
 
   virtual bool readSymbols(Input& pFile) = 0;
 

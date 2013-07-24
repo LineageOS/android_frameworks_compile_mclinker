@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_MEMORY_AREA_FACTORY_H
-#define MCLD_MEMORY_AREA_FACTORY_H
+#ifndef MCLD_SUPPORT_MEMORY_AREA_FACTORY_H
+#define MCLD_SUPPORT_MEMORY_AREA_FACTORY_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -20,7 +20,6 @@
 namespace mcld
 {
 
-class RegionFactory;
 /** \class MemoryAreaFactory
  *  \brief MemoryAreaFactory avoids creating duplicated MemoryAreas of the
  *   same file.
@@ -55,19 +54,18 @@ public:
                       FileHandle::OpenMode pMode,
                       FileHandle::Permission pPerm);
 
-  void destruct(MemoryArea* pArea);
-
-protected:
   // Create a MemoryArea with an universal space.
   // The created MemoryArea is not moderated by m_HandleToArea.
-  MemoryArea* create(void* pMemBuffer, size_t pSize);
+  MemoryArea* produce(void* pMemBuffer, size_t pSize);
 
   // Create a MemoryArea by the given file handler
-  MemoryArea* create(int pFD, FileHandle::OpenMode pMode);
+  // The created MemoryArea is not moderated by m_HandleToArea.
+  MemoryArea* produce(int pFD, FileHandle::OpenMode pMode);
+
+  void destruct(MemoryArea* pArea);
 
 private:
   HandleToArea m_HandleToArea;
-  RegionFactory* m_pRegionFactory;
 };
 
 } // namespace of mcld

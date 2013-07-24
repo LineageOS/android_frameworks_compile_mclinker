@@ -12,15 +12,15 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/DenseMap.h>
-#include <mcld/LD/SectionData.h>
-#include <mcld/LD/RelocationFactory.h>
+#include <mcld/LD/RelocData.h>
 
 namespace mcld
 {
 
-class ResolveInfo;
+class LDSymbol;
+class Module;
 class Relocation;
+class RelocationFactory;
 
 /** \class OutputRelocSection
  *  \brief Dynamic relocation section for ARM .rel.dyn and .rel.plt
@@ -28,43 +28,39 @@ class Relocation;
 class OutputRelocSection
 {
 public:
-  OutputRelocSection(LDSection& pSection,
-                     SectionData& pSectionData,
-                     unsigned int pEntrySize);
+  OutputRelocSection(Module& pModule, LDSection& pSection);
 
   ~OutputRelocSection();
 
-  void reserveEntry(RelocationFactory& pRelFactory, size_t pNum=1);
+  void reserveEntry(size_t pNum=1);
 
-  Relocation* getEntry(const ResolveInfo& pSymbol,
-                       bool isForGOT,
-                       bool& pExist);
+  Relocation* consumeEntry();
+
+  /// addSymbolToDynSym - add local symbol to TLS category so that it'll be
+  /// emitted into .dynsym
+  bool addSymbolToDynSym(LDSymbol& pSymbol);
+
+  // ----- observers ----- //
+  bool empty()
+  { return m_pRelocData->empty(); }
+
+  size_t numOfRelocs();
 
 private:
-  typedef llvm::DenseMap<const ResolveInfo*, Relocation*> SymRelMapType;
-
-  typedef SymRelMapType::iterator SymRelMapIterator;
-
-  typedef SectionData::iterator FragmentIterator;
+  typedef RelocData::iterator RelocIterator;
 
 private:
-  /// m_pSection - LDSection of this Section
-  LDSection* m_pSection;
+  Module& m_Module;
 
-  /// m_SectionData - SectionData which contains the dynamic relocations
-  SectionData* m_pSectionData;
-
-  /// m_EntryBytes - size of a relocation entry
-  unsigned int m_EntryBytes;
+  /// m_RelocData - the output RelocData which contains the dynamic
+  /// relocations
+  RelocData* m_pRelocData;
 
   /// m_isVisit - First time visit the function getEntry() or not
   bool m_isVisit;
 
   /// m_ValidEntryIterator - point to the first valid entry
-  FragmentIterator m_ValidEntryIterator;
-
-  /// m_SymRelMap - map the resolved symbol to the Relocation entry
-  SymRelMapType m_SymRelMap;
+  RelocIterator m_ValidEntryIterator;
 };
 
 } // namespace of mcld

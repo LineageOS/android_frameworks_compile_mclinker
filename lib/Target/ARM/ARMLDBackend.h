@@ -18,11 +18,9 @@
 
 namespace mcld {
 
-class MCLDInfo;
-class MCLinker;
-class Output;
+class LinkerConfig;
+class GNUInfo;
 class SectionMap;
-
 
 //===----------------------------------------------------------------------===//
 /// ARMGNULDBackend - linker backend of ARM target of GNU ELF format
@@ -30,8 +28,19 @@ class SectionMap;
 class ARMGNULDBackend : public GNULDBackend
 {
 public:
-  ARMGNULDBackend();
+  // max branch offsets for ARM, THUMB, and THUMB2
+  // @ref gold/arm.cc:99
+  static const int32_t ARM_MAX_FWD_BRANCH_OFFSET = ((((1 << 23) - 1) << 2) + 8);
+  static const int32_t ARM_MAX_BWD_BRANCH_OFFSET = ((-((1 << 23) << 2)) + 8);
+  static const int32_t THM_MAX_FWD_BRANCH_OFFSET = ((1 << 22) -2 + 4);
+  static const int32_t THM_MAX_BWD_BRANCH_OFFSET = (-(1 << 22) + 4);
+  static const int32_t THM2_MAX_FWD_BRANCH_OFFSET = (((1 << 24) - 2) + 4);
+  static const int32_t THM2_MAX_BWD_BRANCH_OFFSET = (-(1 << 24) + 4);
+
+public:
+  ARMGNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo);
   ~ARMGNULDBackend();
+
 public:
   typedef std::vector<llvm::ELF::Elf32_Dyn*> ELF32DynList;
 
@@ -79,20 +88,17 @@ public:
   };
 
 public:
-  /// initTargetSectionMap - initialize target dependent section mapping
-  bool initTargetSectionMap(SectionMap& pSectionMap);
-
   /// initTargetSections - initialize target dependent sections in output.
-  void initTargetSections(MCLinker& pLinker);
+  void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  void initTargetSymbols(IRBuilder& pBuilder, Module& pModule);
 
-  /// initRelocFactory - create and initialize RelocationFactory
-  bool initRelocFactory(const MCLinker& pLinker);
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator();
 
-  /// getRelocFactory
-  RelocationFactory* getRelocFactory();
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
   /// scanRelocation - determine the empty entries are needed or not and create
   /// the empty entries if needed.
@@ -101,45 +107,15 @@ public:
   /// - PLT entry (for .plt section)
   /// - dynamin relocation entries (for .rel.plt and .rel.dyn sections)
   void scanRelocation(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput,
-                      const LDSection& pSection);
-
-  uint32_t machine() const
-  { return llvm::ELF::EM_ARM; }
-
-  /// OSABI - the value of e_ident[EI_OSABI]
-  virtual uint8_t OSABI() const
-  { return llvm::ELF::ELFOSABI_NONE; }
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  virtual uint8_t ABIVersion() const
-  { return 0x0; }
-
-  /// flags - the value of ElfXX_Ehdr::e_flags
-  virtual uint64_t flags() const
-  { return (llvm::ELF::EF_ARM_EABIMASK & 0x05000000); }
-
-  bool isLittleEndian() const
-  { return true; }
-
-  unsigned int bitclass() const
-  { return 32; }
-
-  uint64_t defaultTextSegmentAddr() const
-  { return 0x8000; }
+                      IRBuilder& pBuilder,
+                      Module& pModule,
+                      LDSection& pSection);
 
   /// doPreLayout - Backend can do any needed modification before layout
-  void doPreLayout(const Output& pOutput,
-                   const MCLDInfo& pInfo,
-                   MCLinker& pLinker);
+  void doPreLayout(IRBuilder& pBuilder);
 
   /// doPostLayout -Backend can do any needed modification after layout
-  void doPostLayout(const Output& pOutput,
-                    const MCLDInfo& pInfo,
-                    MCLinker& pLinker);
+  void doPostLayout(Module& pModule, IRBuilder& pBuilder);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -161,16 +137,11 @@ public:
   ///  - backend can maintain its own map<LDSection, table> to get the table
   /// from given LDSection.
   ///
-  /// @param pOutput - the output file
   /// @param pSection - the given LDSection
-  /// @param pInfo - all options in the command line.
-  /// @param pLayout - for comouting the size of fragment
+  /// @param pConfig - all options in the command line.
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
-  uint64_t emitSectionData(const Output& pOutput,
-                           const LDSection& pSection,
-                           const MCLDInfo& pInfo,
-                           const Layout& pLayout,
+  uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
   ARMGOT& getGOT();
@@ -190,34 +161,25 @@ public:
   const OutputRelocSection& getRelPLT() const;
 
   /// getTargetSectionOrder - compute the layout order of ARM target sections
-  unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr,
-                                     const MCLDInfo& pInfo) const;
+  unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeTargetSymbols - finalize the symbol value
-  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  bool finalizeTargetSymbols();
+
+  /// mergeSection - merge target dependent sections
+  bool mergeSection(Module& pModule, LDSection& pSection);
 
   /// readSection - read target dependent sections
-  bool readSection(Input& pInput,
-                   MCLinker& pLinker,
-                   LDSection& pInputSectHdr);
+  bool readSection(Input& pInput, SectionData& pSD);
 
 private:
-  void scanLocalReloc(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+  void scanLocalReloc(Relocation& pReloc, const LDSection& pSection);
 
   void scanGlobalReloc(Relocation& pReloc,
-                       const LDSymbol& pInputSym,
-                       MCLinker& pLinker,
-                       const MCLDInfo& pLDInfo,
-                       const Output& pOutput);
+                       IRBuilder& pBuilder,
+                       const LDSection& pSection);
 
-  void checkValidReloc(Relocation& pReloc,
-                       const MCLDInfo& pLDInfo,
-                       const Output& pOutput) const;
+  void checkValidReloc(Relocation& pReloc) const;
 
   /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
   /// @param pSym - A resolved copy symbol that defined in BSS section
@@ -226,28 +188,42 @@ private:
   /// defineSymbolforCopyReloc - allocate a space in BSS section and
   /// and force define the copy of pSym to BSS section
   /// @return the output LDSymbol of the copy symbol
-  LDSymbol& defineSymbolforCopyReloc(MCLinker& pLinker,
+  LDSymbol& defineSymbolforCopyReloc(IRBuilder& pLinker,
                                      const ResolveInfo& pSym);
 
-  /// updateAddend - update addend value of the relocation if the
-  /// the target symbol is a section symbol. Addend is the offset
-  /// in the section. This value should be updated after section
-  /// merged.
-  void updateAddend(Relocation& pReloc,
-                    const LDSymbol& pInputSym,
-                    const Layout& pLayout) const;
+  void defineGOTSymbol(IRBuilder& pBuilder);
 
-  void createARMGOT(MCLinker& pLinker, const Output& pOutput);
+  /// maxBranchOffset
+  /// FIXME: if we can handle arm attributes, we may refine this!
+  uint64_t maxBranchOffset() { return THM_MAX_FWD_BRANCH_OFFSET; }
 
-  /// createARMPLTandRelPLT - create PLT and RELPLT sections.
-  /// Because in ELF sh_info in .rel.plt is the shndx of .plt, these two
-  /// sections should be create together.
-  void createARMPLTandRelPLT(MCLinker& pLinker, const Output& pOutput);
+  /// mayRelax - Backends should override this function if they need relaxation
+  bool mayRelax() { return true; }
 
-  void createARMRelDyn(MCLinker& pLinker, const Output& pOutput);
+  /// doRelax - Backend can orevride this function to add its relaxation
+  /// implementation. Return true if the output (e.g., .text) is "relaxed"
+  /// (i.e. layout is changed), and set pFinished to true if everything is fit,
+  /// otherwise set it to false.
+  bool doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished);
+
+  /// initTargetStubs
+  bool initTargetStubs();
+
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  size_t getRelEntrySize()
+  { return 8; }
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  size_t getRelaEntrySize()
+  { assert(0 && "ARM backend with Rela type relocation\n"); return 12; }
+
+  /// doCreateProgramHdrs - backend can implement this function to create the
+  /// target-dependent segments
+  virtual void doCreateProgramHdrs(Module& pModule);
 
 private:
-  RelocationFactory* m_pRelocFactory;
+  Relocator* m_pRelocator;
+
   ARMGOT* m_pGOT;
   ARMPLT* m_pPLT;
   /// m_RelDyn - dynamic relocation table of .rel.dyn
@@ -257,6 +233,8 @@ private:
 
   ARMELFDynamic* m_pDynamic;
   LDSymbol* m_pGOTSymbol;
+  LDSymbol* m_pEXIDXStart;
+  LDSymbol* m_pEXIDXEnd;
 
   //     variable name           :  ELF
   LDSection* m_pEXIDX;           // .ARM.exidx
@@ -266,24 +244,6 @@ private:
 //  LDSection* m_pDebugOverlay;    // .ARM.debug_overlay
 //  LDSection* m_pOverlayTable;    // .ARM.overlay_table
 };
-
-//===----------------------------------------------------------------------===//
-/// ARMMachOLDBackend - linker backend of ARM target of MachO format
-///
-/**
-class ARMMachOLDBackend : public DarwinARMLDBackend
-{
-public:
-  ARMMachOLDBackend();
-  ~ARMMachOLDBackend();
-
-private:
-  MCMachOTargetArchiveReader *createTargetArchiveReader() const;
-  MCMachOTargetObjectReader *createTargetObjectReader() const;
-  MCMachOTargetObjectWriter *createTargetObjectWriter() const;
-
-};
-**/
 } // namespace of mcld
 
 #endif

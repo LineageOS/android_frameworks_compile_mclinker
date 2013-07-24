@@ -6,136 +6,147 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_EXCEPTION_HANDLING_FRAME_H
-#define MCLD_EXCEPTION_HANDLING_FRAME_H
+#ifndef MCLD_LD_EH_FRAME_H
+#define MCLD_LD_EH_FRAME_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
+
+#include <mcld/Config/Config.h>
+#include <mcld/Fragment/RegionFragment.h>
+#include <mcld/Support/Allocators.h>
+
 #include <vector>
 
-#include <mcld/ADT/TypeTraits.h>
-#include <mcld/LD/CIE.h>
-#include <mcld/LD/FDE.h>
-#include <mcld/LD/RegionFragment.h>
-#include <mcld/Support/GCFactory.h>
+namespace mcld {
 
-namespace mcld
-{
-
-class Input;
-class Layout;
+class LDSection;
 class SectionData;
-class TargetLDBackend;
 
 /** \class EhFrame
  *  \brief EhFrame represents .eh_frame section
- *  EhFrame is responsible to parse the input eh_frame sections and create
- *  the corresponding CIE and FDE entries.
  */
 class EhFrame
 {
-public:
-  typedef ConstTraits<unsigned char>::pointer ConstAddress;
-  typedef std::vector<CIE*> CIEListType;
-  typedef std::vector<FDE*> FDEListType;
-  typedef CIEListType::iterator cie_iterator;
-  typedef CIEListType::const_iterator const_cie_iterator;
-  typedef FDEListType::iterator fde_iterator;
-  typedef FDEListType::const_iterator const_fde_iterator;
+private:
+  friend class Chunk<EhFrame, MCLD_SECTIONS_PER_INPUT>;
 
-public:
   EhFrame();
+  explicit EhFrame(LDSection& pSection);
+
   ~EhFrame();
 
-  /// readEhFrame - read an .eh_frame section and create the corresponding
-  /// CIEs and FDEs
-  /// @param pSD - the SectionData of this input eh_frame
-  /// @param pSection - the input eh_frame
-  /// @param pArea - the memory area which pSection is within.
-  /// @ return - size of this eh_frame section, 0 if we do not recognize
-  /// this eh_frame or this is an empty section
-  uint64_t readEhFrame(Layout& pLayout,
-                       const TargetLDBackend& pBackend,
-                       SectionData& pSD,
-                       const Input& pInput,
-                       LDSection& pSection,
-                       MemoryArea& pArea);
+  EhFrame(const EhFrame&);            // DO NOT IMPLEMENT
+  EhFrame& operator=(const EhFrame&); // DO NOT IMPLEMENT
 
-  // ----- observers ----- //
-  cie_iterator cie_begin()
-  { return m_CIEs.begin(); }
+public:
+  /** \class CIE
+   *  \brief Common Information Entry.
+   *  The CIE structure refers to LSB Core Spec 4.1, chap.10.6. Exception Frames.
+   */
+  class CIE : public RegionFragment
+  {
+  public:
+    CIE(MemoryRegion& pRegion);
 
-  const_cie_iterator cie_begin() const
-  { return m_CIEs.begin(); }
+    void setFDEEncode(uint8_t pEncode) { m_FDEEncode = pEncode; }
+    uint8_t getFDEEncode() const { return m_FDEEncode; }
 
-  cie_iterator cie_end()
-  { return m_CIEs.end(); }
+  private:
+    uint8_t m_FDEEncode;
+  };
 
-  const_cie_iterator cie_end() const
-  { return m_CIEs.end(); }
+  /** \class FDE
+   *  \brief Frame Description Entry
+   *  The FDE structure refers to LSB Core Spec 4.1, chap.10.6. Exception Frames.
+   */
+  class FDE : public RegionFragment
+  {
+  public:
+    FDE(MemoryRegion& pRegion,
+        const CIE& pCIE,
+        uint32_t pDataStart);
 
-  fde_iterator fde_begin()
-  { return m_FDEs.begin(); }
+    const CIE& getCIE() const { return m_CIE; }
 
-  const_fde_iterator fde_begin() const
-  { return m_FDEs.begin(); }
+    uint32_t getDataStart() const { return m_DataStart; }
 
-  fde_iterator fde_end()
-  { return m_FDEs.end(); }
+  private:
+    const CIE& m_CIE;
+    uint32_t m_DataStart;
+  };
 
-  const_fde_iterator fde_end() const
-  { return m_FDEs.end(); }
+  typedef std::vector<CIE*> CIEList;
 
-  /// getFDECount - the number of FDE entries
-  size_t getFDECount()
-  { return m_FDEs.size(); }
+  // cie_iterator and const_cie_iterator must be a kind of random access iterator
+  typedef CIEList::iterator cie_iterator;
+  typedef CIEList::const_iterator const_cie_iterator;
 
-  size_t getFDECount() const
-  { return m_FDEs.size(); }
+  typedef std::vector<FDE*> FDEList;
 
-  /// canRecognizeAllEhFrame - return if we are able to parse all input
-  /// eh_frame sections
-  /// @return false - if there is any input .eh_frame section that
-  /// we are not able to recognize
-  bool canRecognizeAllEhFrame()
-  { return m_fCanRecognizeAll; }
+  // fde_iterator and const_fde_iterator must be a kind of random access iterator
+  typedef FDEList::iterator fde_iterator;
+  typedef FDEList::const_iterator const_fde_iterator;
 
-  bool canRecognizeAllEhFrame() const
-  { return m_fCanRecognizeAll; }
+public:
+  static EhFrame* Create(LDSection& pSection);
+
+  static void Destroy(EhFrame*& pSection);
+
+  static void Clear();
+
+  /// merge - move all data from pOther to this object.
+  EhFrame& merge(EhFrame& pOther);
+
+  const LDSection& getSection() const;
+  LDSection&       getSection();
+
+  const SectionData& getSectionData() const { return *m_pSectionData; }
+  SectionData&       getSectionData()       { return *m_pSectionData; }
+
+  // -----  fragment  ----- //
+  /// addFragment - when we start treating CIEs and FDEs as regular fragments,
+  /// we call this function instead of addCIE() and addFDE().
+  void addFragment(RegionFragment& pFrag);
+
+  /// addCIE - add a CIE entry in EhFrame
+  void addCIE(CIE& pCIE);
+
+  /// addFDE - add a FDE entry in EhFrame
+  void addFDE(FDE& pFDE);
+
+  // -----  CIE  ----- //
+  const_cie_iterator cie_begin() const { return m_CIEs.begin(); }
+  cie_iterator       cie_begin()       { return m_CIEs.begin(); }
+  const_cie_iterator cie_end  () const { return m_CIEs.end(); }
+  cie_iterator       cie_end  ()       { return m_CIEs.end(); }
+
+  const CIE& cie_front() const { return *m_CIEs.front(); }
+  CIE&       cie_front()       { return *m_CIEs.front(); }
+  const CIE& cie_back () const { return *m_CIEs.back(); }
+  CIE&       cie_back ()       { return *m_CIEs.back(); }
+
+  size_t numOfCIEs() const { return m_CIEs.size(); }
+
+  // -----  FDE  ----- //
+  const_fde_iterator fde_begin() const { return m_FDEs.begin(); }
+  fde_iterator       fde_begin()       { return m_FDEs.begin(); }
+  const_fde_iterator fde_end  () const { return m_FDEs.end(); }
+  fde_iterator       fde_end  ()       { return m_FDEs.end(); }
+
+  const FDE& fde_front() const { return *m_FDEs.front(); }
+  FDE&       fde_front()       { return *m_FDEs.front(); }
+  const FDE& fde_back () const { return *m_FDEs.back(); }
+  FDE&       fde_back ()       { return *m_FDEs.back(); }
+
+  size_t numOfFDEs() const { return m_FDEs.size(); }
 
 private:
-  typedef std::vector<Fragment*> FragListType;
+  LDSection* m_pSection;
+  SectionData* m_pSectionData;
 
-private:
-  /// addCIE - parse and create a CIE entry
-  /// @return false - cannot recognize this CIE
-  bool addCIE(MemoryRegion& pFrag,
-              const TargetLDBackend& pBackend,
-              FragListType& pFragList);
-
-  /// addFDE - parse and create an FDE entry
-  /// @return false - cannot recognize this FDE
-  bool addFDE(MemoryRegion& pFrag,
-              const TargetLDBackend& pBackend,
-              FragListType& pFragList);
-
-  /// readVal - read a 32 bit data from pAddr, swap it if needed
-  uint32_t readVal(ConstAddress pAddr, bool pIsTargetLittleEndian);
-
-  /// skipLEB128 - skip the first LEB128 encoded value from *pp, update *pp
-  /// to the next character.
-  /// @return - false if we ran off the end of the string.
-  /// @ref - GNU gold 1.11, ehframe.h, Eh_frame::skip_leb128.
-  bool skipLEB128(ConstAddress* pp, ConstAddress pend);
-
-  /// deleteFragments - release the MemoryRegion and delete Fragments in pList
-  void deleteFragments(FragListType& pList, MemoryArea& pArea);
-
-private:
-  CIEListType m_CIEs;
-  FDEListType m_FDEs;
-
-  bool m_fCanRecognizeAll;
+  CIEList m_CIEs;
+  FDEList m_FDEs;
 };
 
 } // namespace of mcld

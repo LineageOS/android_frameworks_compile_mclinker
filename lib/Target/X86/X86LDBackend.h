@@ -19,6 +19,9 @@
 
 namespace mcld {
 
+class LinkerConfig;
+class GNUInfo;
+
 //===----------------------------------------------------------------------===//
 /// X86GNULDBackend - linker backend of X86 target of GNU ELF format
 ///
@@ -68,40 +71,24 @@ public:
     PLTandRel    = 9
   };
 
-  X86GNULDBackend();
+public:
+  X86GNULDBackend(const LinkerConfig& pConfig,
+		  GNUInfo* pInfo,
+		  Relocation::Type pCopyRel);
 
   ~X86GNULDBackend();
 
-  RelocationFactory* getRelocFactory();
-
   uint32_t machine() const;
-
-  bool isLittleEndian() const
-  { return true; }
-
-  X86GOT& getGOT();
-
-  const X86GOT& getGOT() const;
-
-  X86GOTPLT& getGOTPLT();
-
-  const X86GOTPLT& getGOTPLT() const;
 
   X86PLT& getPLT();
 
   const X86PLT& getPLT() const;
 
-  unsigned int bitclass() const;
-
   /// preLayout - Backend can do any needed modification before layout
-  void doPreLayout(const Output& pOutput,
-                   const MCLDInfo& pInfo,
-                   MCLinker& pLinker);
+  void doPreLayout(IRBuilder& pBuilder);
 
   /// postLayout -Backend can do any needed modification after layout
-  void doPostLayout(const Output& pOutput,
-                    const MCLDInfo& pInfo,
-                    MCLinker& pLinker);
+  void doPostLayout(Module& pModule, IRBuilder& pBuilder);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -122,45 +109,22 @@ public:
   ///  - backend can maintain its own map<LDSection, table> to get the table
   /// from given LDSection.
   ///
-  /// @param pOutput - the output file
   /// @param pSection - the given LDSection
-  /// @param pInfo - all options in the command line.
   /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
-  uint64_t emitSectionData(const Output& pOutput,
-                           const LDSection& pSection,
-                           const MCLDInfo& pInfo,
-                           const Layout& pLayout,
+  uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
-  /// OSABI - the value of e_ident[EI_OSABI]
-  /// FIXME
-  uint8_t OSABI() const
-  { return llvm::ELF::ELFOSABI_NONE; }
+  /// initRelocator - create and initialize Relocator.
+  virtual bool initRelocator() = 0;
 
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  /// FIXME
-  uint8_t ABIVersion() const
-  { return 0x0; }
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
-  /// flags - the value of ElfXX_Ehdr::e_flags
-  /// FIXME
-  uint64_t flags() const
-  { return 0x0; }
+  virtual void initTargetSections(Module& pModule, ObjectBuilder& pBuilder) = 0;
 
-  uint64_t defaultTextSegmentAddr() const
-  { return 0x08048000; }
-
-  /// initTargetSectionMap - initialize target dependent section mapping
-  bool initTargetSectionMap(SectionMap& pSectionMap);
-
-  // initRelocFactory - create and initialize RelocationFactory
-  bool initRelocFactory(const MCLinker& pLinker);
-
-  void initTargetSections(MCLinker& pLinker);
-
-  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  void initTargetSymbols(IRBuilder& pBuilder, Module& pModule);
 
   /// scanRelocation - determine the empty entries are needed or not and create
   /// the empty entries if needed.
@@ -169,11 +133,9 @@ public:
   /// - PLT entry (for .plt section)
   /// - dynamin relocation entries (for .rel.plt and .rel.dyn sections)
   void scanRelocation(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput,
-                      const LDSection& pSection);
+                      IRBuilder& pBuilder,
+                      Module& pModule,
+                      LDSection& pSection);
 
   OutputRelocSection& getRelDyn();
 
@@ -184,26 +146,27 @@ public:
   const OutputRelocSection& getRelPLT() const;
 
   /// getTargetSectionOrder - compute the layout order of X86 target sections
-  unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr,
-                                     const MCLDInfo& pInfo) const;
+  unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeTargetSymbols - finalize the symbol value
-  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  bool finalizeTargetSymbols();
+
+  /// getPointerRel - get pointer relocation type. 
+  Relocation::Type getPointerRel()
+  { return m_PointerRel; }
 
 private:
-  void scanLocalReloc(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+  virtual void scanLocalReloc(Relocation& pReloc,
+			      IRBuilder& pBuilder,
+			      Module& pModule,
+			      LDSection& pSection) = 0;
 
-  void scanGlobalReloc(Relocation& pReloc,
-                       const LDSymbol& pInputSym,
-                       MCLinker& pLinker,
-                       const MCLDInfo& pLDInfo,
-                       const Output& pOutput);
+  virtual void scanGlobalReloc(Relocation& pReloc,
+			       IRBuilder& pBuilder,
+			       Module& pModule,
+			       LDSection& pSection) = 0;
 
+protected:
   /// addCopyReloc - add a copy relocation into .rel.dyn for pSym
   /// @param pSym - A resolved copy symbol that defined in BSS section
   void addCopyReloc(ResolveInfo& pSym);
@@ -211,23 +174,38 @@ private:
   /// defineSymbolforCopyReloc - allocate a space in BSS section and
   /// and force define the copy of pSym to BSS section
   /// @return the output LDSymbol of the copy symbol
-  LDSymbol& defineSymbolforCopyReloc(MCLinker& pLinker,
+  LDSymbol& defineSymbolforCopyReloc(IRBuilder& pLinker,
                                      const ResolveInfo& pSym);
 
-  void updateAddend(Relocation& pReloc,
-                    const LDSymbol& pInputSym,
-                    const Layout& pLayout) const;
+  void defineGOTSymbol(IRBuilder& pBuilder, Fragment&);
 
-  void createX86GOT(MCLinker& pLinker, const Output& pOutput);
-  void createX86GOTPLT(MCLinker& pLinker, const Output& pOutput);
-  void createX86PLTandRelPLT(MCLinker& pLinker, const Output& pOutput);
-  void createX86RelDyn(MCLinker& pLinker, const Output& pOutput);
+protected:
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  size_t getRelEntrySize()
+  { return m_RelEntrySize; }
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  size_t getRelaEntrySize()
+  { return m_RelaEntrySize; }
 
 private:
-  RelocationFactory* m_pRelocFactory;
-  X86GOT* m_pGOT;
+  /// doCreateProgramHdrs - backend can implement this function to create the
+  /// target-dependent segments
+  void doCreateProgramHdrs(Module& pModule);
+
+  virtual void setGOTSectionSize(IRBuilder& pBuilder) = 0;
+
+  virtual uint64_t emitGOTSectionData(MemoryRegion& pRegion) const = 0;
+
+  virtual uint64_t emitGOTPLTSectionData(MemoryRegion& pRegion,
+					 const ELFFileFormat* FileFormat) const = 0;
+
+  virtual void setRelDynSize() = 0;
+  virtual void setRelPLTSize() = 0;
+
+protected:
+  Relocator* m_pRelocator;
   X86PLT* m_pPLT;
-  X86GOTPLT* m_pGOTPLT;
   /// m_RelDyn - dynamic relocation table of .rel.dyn
   OutputRelocSection* m_pRelDyn;
   /// m_RelPLT - dynamic relocation table of .rel.plt
@@ -235,25 +213,119 @@ private:
 
   X86ELFDynamic* m_pDynamic;
   LDSymbol* m_pGOTSymbol;
+
+  size_t m_RelEntrySize;
+  size_t m_RelaEntrySize;
+
+  Relocation::Type m_CopyRel;
+  Relocation::Type m_PointerRel;
 };
 
+//
 //===----------------------------------------------------------------------===//
-/// X86MachOLDBackend - linker backend of X86 target of MachO format
+/// X86_32GNULDBackend - linker backend of X86-32 target of GNU ELF format
 ///
-/**
-class X86MachOLDBackend : public DarwinX86LDBackend
+class X86_32GNULDBackend : public X86GNULDBackend
 {
 public:
-  X86MachOLDBackend();
-  ~X86MachOLDBackend();
+  X86_32GNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo);
+
+  ~X86_32GNULDBackend();
+
+  void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
+
+  X86_32GOT& getGOT();
+
+  const X86_32GOT& getGOT() const;
+
+  X86_32GOTPLT& getGOTPLT();
+
+  const X86_32GOTPLT& getGOTPLT() const;
+
+  X86_32GOTEntry& getTLSModuleID();
 
 private:
-  MCMachOTargetArchiveReader *createTargetArchiveReader() const;
-  MCMachOTargetObjectReader *createTargetObjectReader() const;
-  MCMachOTargetObjectWriter *createTargetObjectWriter() const;
+  void scanLocalReloc(Relocation& pReloc,
+                      IRBuilder& pBuilder,
+                      Module& pModule,
+                      LDSection& pSection);
 
+  void scanGlobalReloc(Relocation& pReloc,
+                       IRBuilder& pBuilder,
+                       Module& pModule,
+                       LDSection& pSection);
+
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator();
+
+  /// -----  tls optimization  ----- ///
+  /// convert R_386_TLS_IE to R_386_TLS_LE
+  void convertTLSIEtoLE(Relocation& pReloc, LDSection& pSection);
+
+  void setGOTSectionSize(IRBuilder& pBuilder);
+
+  uint64_t emitGOTSectionData(MemoryRegion& pRegion) const;
+
+  uint64_t emitGOTPLTSectionData(MemoryRegion& pRegion,
+				 const ELFFileFormat* FileFormat) const;
+
+  void setRelDynSize();
+  void setRelPLTSize();
+
+private:
+  X86_32GOT* m_pGOT;
+  X86_32GOTPLT* m_pGOTPLT;
 };
-**/
+
+//
+//===----------------------------------------------------------------------===//
+/// X86_64GNULDBackend - linker backend of X86-64 target of GNU ELF format
+///
+class X86_64GNULDBackend : public X86GNULDBackend
+{
+public:
+  X86_64GNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo);
+
+  ~X86_64GNULDBackend();
+
+  void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
+
+  X86_64GOT& getGOT();
+
+  const X86_64GOT& getGOT() const;
+
+  X86_64GOTPLT& getGOTPLT();
+
+  const X86_64GOTPLT& getGOTPLT() const;
+
+private:
+  void scanLocalReloc(Relocation& pReloc,
+                      IRBuilder& pBuilder,
+                      Module& pModule,
+                      LDSection& pSection);
+
+  void scanGlobalReloc(Relocation& pReloc,
+                       IRBuilder& pBuilder,
+                       Module& pModule,
+                       LDSection& pSection);
+
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator();
+
+  void setGOTSectionSize(IRBuilder& pBuilder);
+
+  uint64_t emitGOTSectionData(MemoryRegion& pRegion) const;
+
+  uint64_t emitGOTPLTSectionData(MemoryRegion& pRegion,
+				 const ELFFileFormat* FileFormat) const;
+
+  void setRelDynSize();
+  void setRelPLTSize();
+
+private:
+  X86_64GOT* m_pGOT;
+  X86_64GOTPLT* m_pGOTPLT;
+};
 } // namespace of mcld
 
 #endif

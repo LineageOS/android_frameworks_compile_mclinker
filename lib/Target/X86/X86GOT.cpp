@@ -8,90 +8,72 @@
 //===----------------------------------------------------------------------===//
 #include "X86GOT.h"
 
-#include <new>
-
-#include <llvm/Support/Casting.h>
-
 #include <mcld/LD/LDFileFormat.h>
 #include <mcld/LD/SectionData.h>
-#include <mcld/Support/MsgHandling.h>
 
-namespace {
-  const size_t X86GOTEntrySize = 4;
-}
+#include <llvm/Support/Casting.h>
 
 using namespace mcld;
 
 //===----------------------------------------------------------------------===//
-// X86GOT
+// X86_32GOT
 //===----------------------------------------------------------------------===//
-X86GOT::X86GOT(LDSection& pSection, SectionData& pSectionData)
-             : GOT(pSection, pSectionData, X86GOTEntrySize),
-               m_GOTIterator(), m_fIsVisit(false)
+X86_32GOT::X86_32GOT(LDSection& pSection)
+  : GOT(pSection), m_pLast(NULL)
 {
 }
 
-X86GOT::~X86GOT()
+X86_32GOT::~X86_32GOT()
 {
 }
 
-void X86GOT::reserveEntry(size_t pNum)
+void X86_32GOT::reserve(size_t pNum)
 {
-  GOTEntry* Entry = 0;
-
   for (size_t i = 0; i < pNum; i++) {
-    Entry = new (std::nothrow) GOTEntry(0, X86GOTEntrySize,
-                                        &m_SectionData);
-
-    if (!Entry)
-      fatal(diag::fail_allocate_memory_got);
-
-    m_Section.setSize(m_Section.size() + X86GOTEntrySize);
+    new X86_32GOTEntry(0, m_SectionData);
   }
 }
 
-
-GOTEntry* X86GOT::getEntry(const ResolveInfo& pInfo, bool& pExist)
+X86_32GOTEntry* X86_32GOT::consume()
 {
-  // first time visit this function, set m_GOTIterator
-  if(!m_fIsVisit) {
-    assert( !m_SectionData.getFragmentList().empty() &&
-             "DynRelSection contains no entries.");
-    m_GOTIterator = m_SectionData.getFragmentList().begin();
-    m_fIsVisit = true;
+  if (NULL == m_pLast) {
+    assert(!empty() && "Consume empty GOT entry!");
+    m_pLast = llvm::cast<X86_32GOTEntry>(&m_SectionData->front());
+    return m_pLast;
   }
 
+  m_pLast = llvm::cast<X86_32GOTEntry>(m_pLast->getNextNode());
+  return m_pLast;
+}
 
-  GOTEntry *&Entry = m_GOTMap[&pInfo];
-  pExist = 1;
+//===----------------------------------------------------------------------===//
+// X86_64GOT
+//===----------------------------------------------------------------------===//
+X86_64GOT::X86_64GOT(LDSection& pSection)
+  : GOT(pSection), m_pLast(NULL)
+{
+}
 
-  if (!Entry) {
-    pExist = 0;
-    assert(m_GOTIterator != m_SectionData.getFragmentList().end()
-             && "The number of GOT Entries and ResolveInfo doesn't match!");
-    Entry = llvm::cast<GOTEntry>(&(*m_GOTIterator));
-    ++m_GOTIterator;
+X86_64GOT::~X86_64GOT()
+{
+}
+
+void X86_64GOT::reserve(size_t pNum)
+{
+  for (size_t i = 0; i < pNum; i++) {
+    new X86_64GOTEntry(0, m_SectionData);
   }
-  return Entry;
 }
 
-X86GOT::iterator X86GOT::begin()
+X86_64GOTEntry* X86_64GOT::consume()
 {
-  return m_SectionData.getFragmentList().begin();
-}
+  if (NULL == m_pLast) {
+    assert(!empty() && "Consume empty GOT entry!");
+    m_pLast = llvm::cast<X86_64GOTEntry>(&m_SectionData->front());
+    return m_pLast;
+  }
 
-X86GOT::const_iterator X86GOT::begin() const
-{
-  return m_SectionData.getFragmentList().begin();
-}
-
-X86GOT::iterator X86GOT::end()
-{
-  return m_SectionData.getFragmentList().end();
-}
-
-X86GOT::const_iterator X86GOT::end() const
-{
-  return m_SectionData.getFragmentList().end();
+  m_pLast = llvm::cast<X86_64GOTEntry>(m_pLast->getNextNode());
+  return m_pLast;
 }
 

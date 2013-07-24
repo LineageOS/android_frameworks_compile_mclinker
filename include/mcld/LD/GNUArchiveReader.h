@@ -15,12 +15,12 @@
 #include <mcld/LD/ArchiveReader.h>
 #include <mcld/LD/Archive.h>
 
-namespace mcld
-{
-class MemoryAreaFactory;
-class MCLDInfo;
+namespace mcld {
+
+class Module;
 class Input;
 class ELFObjectReader;
+class MemoryAreaFactory;
 class Archive;
 
 /** \class GNUArchiveReader
@@ -29,9 +29,7 @@ class Archive;
 class GNUArchiveReader : public ArchiveReader
 {
 public:
-  explicit GNUArchiveReader(MCLDInfo& pLDInfo,
-                            MemoryAreaFactory& pMemAreaFactory,
-                            ELFObjectReader& pELFObjectReader);
+  GNUArchiveReader(Module& pModule, ELFObjectReader& pELFObjectReader);
 
   ~GNUArchiveReader();
 
@@ -60,10 +58,12 @@ private:
   /// @param pArchiveFile  - the archive that contains the needed object
   /// @param pFileOffset   - file offset of the member header in the archive
   /// @param pNestedOffset - used when we find a nested archive
+  /// @param pMemberSize   - the file size of this member
   Input* readMemberHeader(Archive& pArchiveRoot,
                           Input& pArchiveFile,
                           uint32_t pFileOffset,
-                          uint32_t& pNestedOffset);
+                          uint32_t& pNestedOffset,
+                          size_t& pMemberSize);
 
   /// readSymbolTable - read the archive symbol map (armap)
   bool readSymbolTable(Archive& pArchive);
@@ -76,9 +76,18 @@ private:
   enum Archive::Symbol::Status
   shouldIncludeSymbol(const llvm::StringRef& pSymName) const;
 
+  /// includeMember - include the object member in the given file offset, and
+  /// return the size of the object
+  /// @param pArchiveRoot - the archive root
+  /// @param pFileOffset  - file offset of the member header in the archive
+  size_t includeMember(Archive& pArchiveRoot, uint32_t pFileOffset);
+
+  /// includeAllMembers - include all object members. This is called if
+  /// --whole-archive is the attribute for this archive file.
+  bool includeAllMembers(Archive& pArchive);
+
 private:
-  MCLDInfo& m_LDInfo;
-  MemoryAreaFactory& m_MemAreaFactory;
+  Module& m_Module;
   ELFObjectReader& m_ELFObjectReader;
 };
 

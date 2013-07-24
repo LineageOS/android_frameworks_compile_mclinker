@@ -12,44 +12,42 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/ilist.h>
-
 #include <mcld/LD/LDSection.h>
-#include <mcld/LD/TargetFragment.h>
+#include <mcld/LD/SectionData.h>
+#include <mcld/Fragment/TargetFragment.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class SectionData;
+class LDSection;
 class ResolveInfo;
 
-/** \class PLTEntry
+/** \class PLTEntryDefaultBase
+ *  \brief PLTEntryDefaultBase provides the default interface for PLE Entry
  */
-class PLTEntry : public TargetFragment
+class PLTEntryBase : public TargetFragment
 {
 public:
-  PLTEntry(size_t pSize, SectionData* pParent);
-  virtual ~PLTEntry();
+  PLTEntryBase(SectionData& pParent)
+    : TargetFragment(Fragment::Target, &pParent), m_pValue(NULL)
+  {}
 
-  size_t getEntrySize() const
-  { return m_EntrySize; }
+  virtual ~PLTEntryBase()
+  {
+    delete m_pValue;
+  }
 
-  void setContent(unsigned char* pContent)
-  { m_pContent = pContent; }
+  void setValue(unsigned char* pValue)
+  { m_pValue = pValue; }
 
-  const unsigned char* getContent() const
-  { return m_pContent; }
+  const unsigned char* getValue() const
+  { return m_pValue; }
 
   //Used by llvm::cast<>.
   static bool classof(const Fragment *O)
   { return true; }
 
-  size_t getSize() const
-  { return m_EntrySize; }
-
 protected:
-  size_t m_EntrySize;
-  unsigned char* m_pContent;
+  unsigned char* m_pValue;
 };
 
 /** \class PLT
@@ -58,28 +56,48 @@ protected:
 class PLT
 {
 public:
-  PLT(LDSection& pSection, SectionData& pSectionData);
-  virtual ~PLT();
+  typedef SectionData::iterator iterator;
+  typedef SectionData::const_iterator const_iterator;
 
-  const LDSection& getSection() const
-  { return m_Section; }
+  template<size_t SIZE, typename EntryBase = PLTEntryBase>
+  class Entry : public EntryBase
+  {
+  public:
+    enum { EntrySize = SIZE };
 
-  const SectionData& getSectionData() const
-  { return m_SectionData; }
+  public:
+    Entry(SectionData& pParent)
+      : EntryBase(pParent)
+    {}
+
+    virtual ~Entry() {}
+
+    size_t size() const
+    { return EntrySize; }
+  };
 
 public:
+  PLT(LDSection& pSection);
+
+  virtual ~PLT();
+
   /// reserveEntry - reseve the number of pNum of empty entries
   /// The empty entris are reserved for layout to adjust the fragment offset.
   virtual void reserveEntry(size_t pNum = 1) = 0;
 
-  /// getPLTEntry - get an empty entry or an exitsted filled entry with pSymbol.
-  /// @param pSymbol - the target symbol
-  /// @param pExist - ture if the a filled entry with pSymbol existed, otherwise false.
-  virtual PLTEntry* getPLTEntry(const ResolveInfo& pSymbol, bool& pExist) = 0;
+  // finalizeSectionSize - set LDSection size
+  virtual void finalizeSectionSize() = 0;
+
+  uint64_t addr() const { return m_Section.addr(); }
+
+  const_iterator begin() const { return m_SectionData->begin(); }
+  iterator       begin()       { return m_SectionData->begin(); }
+  const_iterator end  () const { return m_SectionData->end();   }
+  iterator       end  ()       { return m_SectionData->end();   }
 
 protected:
   LDSection& m_Section;
-  SectionData& m_SectionData;
+  SectionData* m_SectionData;
 };
 
 } // namespace of mcld

@@ -15,78 +15,82 @@
 #include <llvm/ADT/DenseMap.h>
 
 #include <mcld/Target/GOT.h>
-#include <mcld/LD/SectionData.h>
 
-namespace mcld
-{
+namespace mcld {
+
 class LDSection;
 class MemoryRegion;
 
+/** \class ARMGOTEntry
+ *  \brief GOT Entry with size of 4 bytes
+ */
+class ARMGOTEntry : public GOT::Entry<4>
+{
+public:
+  ARMGOTEntry(uint64_t pContent, SectionData* pParent)
+   : GOT::Entry<4>(pContent, pParent)
+  {}
+};
+
 /** \class ARMGOT
  *  \brief ARM Global Offset Table.
+ *
+ *  ARM GOT integrates traditional .got.plt and .got sections into one.
+ *  Traditional .got.plt is placed in the front part of GOT (PLTGOT), and
+ *  traditional .got is placed in the rear part of GOT (GOT).
+ *
+ *  ARM .got
+ *            +--------------+
+ *            |    GOT0      |
+ *            +--------------+
+ *            |    GOTPLT    |
+ *            +--------------+
+ *            |    GOT       |
+ *            +--------------+
+ *
  */
 class ARMGOT : public GOT
 {
-  typedef llvm::DenseMap<const ResolveInfo*, GOTEntry*> SymbolIndexMapType;
-
 public:
-  typedef SectionData::iterator iterator;
-  typedef SectionData::const_iterator const_iterator;
-
-  enum {
-    ARMGOT0Num = 3
-  };
-
-public:
-  ARMGOT(LDSection &pSection, SectionData& pSectionData);
+  ARMGOT(LDSection &pSection);
 
   ~ARMGOT();
 
-  iterator begin();
+  void reserve(size_t pNum = 1);
 
-  const_iterator begin() const;
+  void reserveGOTPLT();
 
-  iterator end();
+  void reserveGOT();
 
-  const_iterator end() const;
+  ARMGOTEntry* consume();
+
+  ARMGOTEntry* consumeGOT();
+
+  ARMGOTEntry* consumeGOTPLT();
 
   uint64_t emit(MemoryRegion& pRegion);
-// For GOT0
-public:
+
   void applyGOT0(uint64_t pAddress);
 
-// For normal GOT
-public:
-  // Reserve normal GOT entries.
-  void reserveEntry(size_t pNum = 1);
+  void applyGOTPLT(uint64_t pPLTBase);
 
-  GOTEntry* getEntry(const ResolveInfo& pSymbol, bool& pExist);
-
-// For GOTPLT
-public:
-  void reserveGOTPLTEntry();
-
-  void applyAllGOTPLT(uint64_t pPLTBase);
-
-  GOTEntry*& lookupGOTPLTMap(const ResolveInfo& pSymbol);
-
-  iterator getNextGOTPLTEntry();
-
-  iterator getGOTPLTBegin();
-
-  const iterator getGOTPLTEnd();
+  bool hasGOT1() const;
 
 private:
-  // For normal GOT entries
-  iterator m_NormalGOTIterator;
-  SymbolIndexMapType m_NormalGOTMap;
+  struct Part {
+  public:
+    Part() : front(NULL), last_used(NULL) { }
 
-  // For GOTPLT entries
-  iterator m_GOTPLTIterator;
-  SymbolIndexMapType m_GOTPLTMap;
+  public:
+    ARMGOTEntry* front;
+    ARMGOTEntry* last_used;
+  };
 
-  iterator m_GOTPLTBegin;
-  iterator m_GOTPLTEnd;
+private:
+  Part m_GOTPLT;
+  Part m_GOT;
+
+  ARMGOTEntry* m_pLast; ///< the last consumed entry
 };
 
 } // namespace of mcld

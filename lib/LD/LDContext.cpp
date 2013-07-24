@@ -13,14 +13,16 @@
 
 using namespace mcld;
 
-//==========================
-// LDReader
-LDContext::LDContext()
+//===----------------------------------------------------------------------===//
+// LDContext
+//===----------------------------------------------------------------------===//
+LDContext& LDContext::appendSection(LDSection& pSection)
 {
-}
-
-LDContext::~LDContext()
-{
+  if (LDFileFormat::Relocation == pSection.kind())
+    m_RelocSections.push_back(&pSection);
+  pSection.setIndex(m_SectionTable.size());
+  m_SectionTable.push_back(&pSection);
+  return *this;
 }
 
 LDSection* LDContext::getSection(unsigned int pIdx)

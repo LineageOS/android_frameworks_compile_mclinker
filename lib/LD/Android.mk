@@ -5,11 +5,10 @@ LOCAL_PATH:= $(call my-dir)
 # =====================================================
 
 mcld_ld_SRC_FILES := \
-  AlignFragment.cpp \
   Archive.cpp \
   ArchiveReader.cpp \
   BranchIsland.cpp  \
-  CIE.cpp \
+  BranchIslandFactory.cpp  \
   DWARFLineInfo.cpp \
   Diagnostic.cpp  \
   DiagnosticEngine.cpp  \
@@ -17,37 +16,31 @@ mcld_ld_SRC_FILES := \
   DiagnosticLineInfo.cpp  \
   DiagnosticPrinter.cpp \
   DynObjReader.cpp  \
-  DynObjWriter.cpp  \
+  ELFBinaryReader.cpp  \
   ELFSegment.cpp  \
   ELFSegmentFactory.cpp \
   EhFrame.cpp \
   EhFrameHdr.cpp  \
-  ExecWriter.cpp  \
-  FDE.cpp \
-  FillFragment.cpp \
-  Fragment.cpp \
-  FragmentRef.cpp \
-  Layout.cpp  \
+  EhFrameReader.cpp  \
+  GroupReader.cpp \
   LDContext.cpp \
   LDFileFormat.cpp  \
   LDReader.cpp  \
   LDSection.cpp \
-  LDSectionFactory.cpp  \
   LDSymbol.cpp  \
-  LDWriter.cpp  \
   MsgHandler.cpp  \
   NamePool.cpp  \
   ObjectWriter.cpp  \
-  RegionFragment.cpp \
-  Relocation.cpp  \
+  RelocData.cpp  \
   RelocationFactory.cpp \
+  Relocator.cpp \
   ResolveInfo.cpp \
-  ResolveInfoFactory.cpp  \
   Resolver.cpp  \
   SectionData.cpp \
-  SectionMap.cpp  \
-  SectionMerger.cpp \
+  SectionRules.cpp \
+  SectionSymbolSet.cpp \
   StaticResolver.cpp  \
+  StubFactory.cpp  \
   TextDiagnosticPrinter.cpp
 
 # For the host
@@ -83,14 +76,12 @@ mcld_ld_variant_SRC_FILES := \
   GNUArchiveReader.cpp  \
   ELFDynObjFileFormat.cpp \
   ELFDynObjReader.cpp \
-  ELFDynObjWriter.cpp \
   ELFExecFileFormat.cpp \
-  ELFExecWriter.cpp \
   ELFFileFormat.cpp \
   ELFObjectReader.cpp \
   ELFObjectWriter.cpp \
   ELFReader.cpp \
-  ELFWriter.cpp
+  ELFReaderIf.cpp
 
 # For the host
 # =====================================================

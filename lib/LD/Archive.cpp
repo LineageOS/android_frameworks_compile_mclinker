@@ -7,8 +7,13 @@
 //
 //===----------------------------------------------------------------------===//
 #include <mcld/LD/Archive.h>
-#include <mcld/MC/InputFactory.h>
+#include <mcld/MC/InputBuilder.h>
+#include <mcld/MC/MCLDInput.h>
+#include <mcld/MC/AttributeSet.h>
+#include <mcld/MC/ContextFactory.h>
 #include <llvm/ADT/StringRef.h>
+#include <mcld/Support/MemoryAreaFactory.h>
+#include <mcld/Support/MsgHandling.h>
 
 using namespace mcld;
 
@@ -22,12 +27,14 @@ const char   Archive::STRTAB_NAME[]      = "//              ";
 const char   Archive::PAD[]              = "\n";
 const char   Archive::MEMBER_MAGIC[]     = "`\n";
 
-Archive::Archive(Input& pInputFile, InputFactory& pInputFactory)
+Archive::Archive(Input& pInputFile, InputBuilder& pBuilder)
  : m_ArchiveFile(pInputFile),
    m_pInputTree(NULL),
-   m_SymbolFactory(32)
+   m_SymbolFactory(32),
+   m_Builder(pBuilder)
 {
-  m_pInputTree = new InputTree(pInputFactory);
+  // FIXME: move creation of input tree out of Archive.
+  m_pInputTree = new InputTree();
 }
 
 Archive::~Archive()
@@ -122,7 +129,10 @@ bool Archive::addArchiveMember(const llvm::StringRef& pName,
   ArchiveMemberEntryType* entry = m_ArchiveMemberMap.insert(pName, exist);
   if (!exist) {
     ArchiveMember& ar = entry->value();
-    ar.file = *pLastPos;
+    if (pLastPos == m_pInputTree->root())
+      ar.file = &m_ArchiveFile;
+    else
+      ar.file = *pLastPos;
     ar.lastPos = pLastPos;
     ar.move = pMove;
   }
@@ -225,5 +235,43 @@ std::string& Archive::getStrTable()
 const std::string& Archive::getStrTable() const
 {
   return m_StrTab;
+}
+
+/// hasStrTable()
+bool Archive::hasStrTable() const
+{
+  return (m_StrTab.size() > 0);
+}
+
+/// getMemberFile - get the member file in an archive member
+/// @param pArchiveFile - Input reference of the archive member
+/// @param pIsThinAR    - denote the archive menber is a Thin Archive or not
+/// @param pName        - the name of the member file we want to get
+/// @param pPath        - the path of the member file
+/// @param pFileOffset  - the file offset of the member file in a regular AR
+/// FIXME: maybe we should not construct input file here
+Input* Archive::getMemberFile(Input& pArchiveFile,
+                              bool isThinAR,
+                              const std::string& pName,
+                              const sys::fs::Path& pPath,
+                              off_t pFileOffset)
+{
+  Input* member = NULL;
+  if (!isThinAR) {
+    member = m_Builder.createInput(pName, pPath, Input::Unknown, pFileOffset);
+    assert(member != NULL);
+    member->setMemArea(pArchiveFile.memArea());
+    m_Builder.setContext(*member);
+  }
+  else {
+    member = m_Builder.createInput(pName, pPath, Input::Unknown);
+    assert(member != NULL);
+    if (!m_Builder.setMemory(*member, FileHandle::ReadOnly)) {
+      error(diag::err_cannot_open_input) << member->name() << member->path();
+      return NULL;
+    }
+    m_Builder.setContext(*member);
+  }
+  return member;
 }
 

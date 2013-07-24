@@ -1,19 +1,16 @@
 LOCAL_PATH:= $(call my-dir)
 
 mcld_mc_SRC_FILES := \
-  AttributeFactory.cpp  \
+  Attribute.cpp  \
+  AttributeSet.cpp  \
+  CommandAction.cpp  \
   ContextFactory.cpp  \
+  FileAction.cpp  \
+  InputAction.cpp  \
+  InputBuilder.cpp  \
   InputFactory.cpp  \
-  InputTree.cpp \
-  MCLDAttribute.cpp \
   MCLDDirectory.cpp \
-  MCLDDriver.cpp  \
-  MCLDFile.cpp  \
-  MCLDInfo.cpp  \
   MCLDInput.cpp \
-  MCLDOptions.cpp \
-  MCLDOutput.cpp  \
-  MCLinker.cpp  \
   SearchDirs.cpp  \
   SymbolCategory.cpp  \
   ZOption.cpp

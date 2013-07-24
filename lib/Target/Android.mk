@@ -2,12 +2,13 @@ LOCAL_PATH:= $(call my-dir)
 
 mcld_target_SRC_FILES := \
   ELFDynamic.cpp  \
-  ELFSectLinker.cpp \
+  ELFEmulation.cpp  \
+  ELFMCLinker.cpp  \
+  GNUInfo.cpp \
   GNULDBackend.cpp  \
   GOT.cpp \
   OutputRelocSection.cpp  \
   PLT.cpp \
-  Stub.cpp  \
   Target.cpp  \
   TargetLDBackend.cpp
 

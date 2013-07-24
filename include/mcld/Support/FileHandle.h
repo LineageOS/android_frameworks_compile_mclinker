@@ -13,10 +13,11 @@
 #endif
 #include <mcld/Support/Path.h>
 #include <mcld/ADT/Flags.h>
+
+#include <sys/stat.h>
 #include <errno.h>
 
-namespace mcld
-{
+namespace mcld {
 
 /** \class FileHandle
  *  \brief FileHandle class provides an interface for reading from and writing
@@ -34,6 +35,7 @@ public:
     BadBit     = 1L << 0, // error due to the inappropriate operation
     EOFBit     = 1L << 1, // reached End-Of-File
     FailBit    = 1L << 2, // internal logic fail
+    DeputedBit = 1L << 3, // the file descriptor is delegated
     IOStateEnd = 1L << 16
   };
 
@@ -53,15 +55,16 @@ public:
 
   enum PermissionEnum
   {
-    ReadOwner   = 0x0400,
-    WriteOwner  = 0x0200,
-    ExeOwner    = 0x0100,
-    ReadGroup   = 0x0040,
-    WriteGroup  = 0x0020,
-    ExeGroup    = 0x0010,
-    ReadOther   = 0x0004,
-    WriteOther  = 0x0002,
-    ExeOther    = 0x0001
+    ReadOwner   = S_IRUSR,
+    WriteOwner  = S_IWUSR,
+    ExeOwner    = S_IXUSR,
+    ReadGroup   = S_IRGRP,
+    WriteGroup  = S_IWGRP,
+    ExeGroup    = S_IXGRP,
+    ReadOther   = S_IROTH,
+    WriteOther  = S_IWOTH,
+    ExeOther    = S_IXOTH,
+    System      = 0xFFFFFFFF
   };
 
   typedef Flags<PermissionEnum> Permission;
@@ -71,12 +74,12 @@ public:
 
   ~FileHandle();
 
-  bool open(const sys::fs::Path& pPath,
-            OpenMode pMode);
-
+  /// open - open the file.
+  /// @return if we meet any trouble during opening the file, return false.
+  ///         use rdstate() to see what happens.
   bool open(const sys::fs::Path& pPath,
             OpenMode pMode,
-            Permission pPerm);
+            Permission pPerm = System);
 
   bool delegate(int pFD, OpenMode pMode = Unknown);
 
@@ -118,14 +121,15 @@ public:
 
   bool isFailed() const;
 
+  bool isOwned() const;
+
   bool isReadable() const;
 
   bool isWritable() const;
 
   bool isReadWrite() const;
 
-  int error() const
-  { return errno; }
+  int error() const { return errno; }
 
 private:
   sys::fs::Path m_Path;

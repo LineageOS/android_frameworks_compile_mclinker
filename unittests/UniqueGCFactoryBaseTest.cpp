@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 #include <mcld/MC/ContextFactory.h>
 #include <mcld/Support/MemoryAreaFactory.h>
-#include <mcld/Support/MsgHandling.h>
 #include <mcld/Support/TargetSelect.h>
 #include <mcld/Support/Path.h>
 #include "UniqueGCFactoryBaseTest.h"
@@ -20,18 +19,13 @@ using namespace mcldtest;
 // Constructor can do set-up work for all test here.
 UniqueGCFactoryBaseTest::UniqueGCFactoryBaseTest()
 {
-  InitializeAllDiagnostics();
-
-  m_pLDInfo = new MCLDInfo("arm-none-linux-gnueabi", 10, 10);
-  m_pLineInfo = new DiagnosticLineInfo();
-  mcld::InitializeDiagnosticEngine(*m_pLDInfo, m_pLineInfo, NULL);
+  m_pConfig = new LinkerConfig("arm-none-linux-gnueabi");
 }
 
 // Destructor can do clean-up work that doesn't throw exceptions here.
 UniqueGCFactoryBaseTest::~UniqueGCFactoryBaseTest()
 {
-  delete m_pLDInfo;
-  delete m_pLineInfo;
+  delete m_pConfig;
 }
 
 // SetUp() will be called immediately before each test.
@@ -51,7 +45,7 @@ TEST_F( UniqueGCFactoryBaseTest, number_constructor ) {
 	ContextFactory *contextFactory = new ContextFactory(10); 
 	contextFactory->produce("/");
 	contextFactory->produce("ab/c");
-	ASSERT_EQ( 2, contextFactory->size());
+	ASSERT_TRUE( 2 == contextFactory->size());
 	delete contextFactory;
 }
 
@@ -59,7 +53,7 @@ TEST_F( UniqueGCFactoryBaseTest, unique_produce ) {
 	ContextFactory *contextFactory = new ContextFactory(10); 
 	LDContext* context1 = contextFactory->produce("/");
 	contextFactory->produce("ab/c");
-	ASSERT_EQ( 2, contextFactory->size());
+	ASSERT_TRUE( 2 == contextFactory->size());
 	LDContext* context2 = contextFactory->produce("/");
 	ASSERT_EQ( context1, context2 );
 	delete contextFactory;
@@ -69,7 +63,7 @@ TEST_F( UniqueGCFactoryBaseTest, unique_produce2 ) {
 	ContextFactory *contextFactory = new ContextFactory(10); 
 	LDContext* context1 = contextFactory->produce("abc/def");
 	contextFactory->produce("ab/c");
-	ASSERT_EQ( 2, contextFactory->size());
+	ASSERT_TRUE( 2 == contextFactory->size());
 	LDContext* context2 = contextFactory->produce("ttt/../abc/def");
 	ASSERT_EQ( context1, context2 );
 	delete contextFactory;
@@ -90,7 +84,7 @@ TEST_F( UniqueGCFactoryBaseTest, iterator )
 	
 	ASSERT_EQ(area1, area3);
 	ASSERT_FALSE( memFactory->empty());
-	ASSERT_EQ( 2, memFactory->size());
+	ASSERT_TRUE( 2 == memFactory->size());
 	MemoryAreaFactory::iterator aIter = memFactory->begin();
 	ASSERT_EQ( area1, &(*aIter));
 	++aIter;

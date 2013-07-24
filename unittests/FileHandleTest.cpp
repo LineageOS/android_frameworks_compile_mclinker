@@ -41,23 +41,22 @@ void FileHandleTest::TearDown()
 
 //===----------------------------------------------------------------------===//
 // Testcases
-#include <iostream>
-using namespace std;
-
+//===----------------------------------------------------------------------===//
 TEST_F(FileHandleTest, open_close) {
   mcld::sys::fs::Path path(TOPDIR);
   path.append("unittests/test.txt");
   ASSERT_TRUE(m_pTestee->open(path, FileHandle::ReadOnly));
   ASSERT_TRUE(m_pTestee->isOpened());
   ASSERT_TRUE(m_pTestee->isGood());
+  ASSERT_TRUE(m_pTestee->isOwned());
 
-  ASSERT_EQ(27, m_pTestee->size());
+  ASSERT_TRUE(27 == m_pTestee->size());
 
   ASSERT_TRUE(m_pTestee->close());
   ASSERT_FALSE(m_pTestee->isOpened());
   ASSERT_TRUE(m_pTestee->isGood());
 
-  ASSERT_EQ(0, m_pTestee->size());
+  ASSERT_TRUE(0 == m_pTestee->size());
 }
 
 TEST_F(FileHandleTest, delegate_close) {
@@ -69,19 +68,19 @@ TEST_F(FileHandleTest, delegate_close) {
   ASSERT_TRUE(m_pTestee->delegate(fd, FileHandle::ReadOnly));
   ASSERT_TRUE(m_pTestee->isOpened());
   ASSERT_TRUE(m_pTestee->isGood());
+  ASSERT_FALSE(m_pTestee->isOwned());
 
-  ASSERT_EQ(27, m_pTestee->size());
+  ASSERT_TRUE(27 == m_pTestee->size());
 
   ASSERT_TRUE(m_pTestee->close());
   ASSERT_FALSE(m_pTestee->isOpened());
   ASSERT_TRUE(m_pTestee->isGood());
+  ASSERT_TRUE(m_pTestee->isOwned());
 
-  ASSERT_EQ(0, m_pTestee->size());
+  ASSERT_TRUE(0 == m_pTestee->size());
 
   int close_result = ::close(fd);
-  int close_err = errno;
-  ASSERT_EQ(-1, close_result);
-  ASSERT_EQ(EBADF, close_err);
+  ASSERT_EQ(0, close_result);
 }
 
 TEST_F(FileHandleTest, fail_close) {
@@ -91,7 +90,7 @@ TEST_F(FileHandleTest, fail_close) {
   ASSERT_TRUE(m_pTestee->isOpened());
   ASSERT_TRUE(m_pTestee->isGood());
 
-  ASSERT_EQ(27, m_pTestee->size());
+  ASSERT_TRUE(27 == m_pTestee->size());
 
   int close_result = ::close(m_pTestee->handler());
   ASSERT_EQ(0, close_result);

@@ -15,8 +15,7 @@
 #include <llvm/Support/DataTypes.h>
 #include <llvm/ADT/StringRef.h>
 
-namespace mcld
-{
+namespace mcld {
 
 class LDSymbol;
 
@@ -27,18 +26,18 @@ class LDSymbol;
  *  - Desc - Defined, Reference, Common or Indirect
  *  - Binding - Global, Local, Weak
  *  - IsDyn - appear in dynamic objects or regular objects
- *  - Type - what the symbol points to
+ *  - Type - what the symbol refers to
  *  - Size  - the size of the symbol point to
  *  - Value - the pointer to another LDSymbol
- *  In order to save the memory and speed up the performance, MCLinker uses
+ *  In order to save the memory and speed up the performance, FragmentLinker uses
  *  a bit field to store all attributes.
  *
  *  The maximum string length is (2^16 - 1)
  */
 class ResolveInfo
 {
-friend class ResolveInfoFactory;
-friend class MCLinker;
+friend class FragmentLinker;
+friend class IRBuilder;
 public:
   typedef uint64_t SizeType;
 
@@ -94,6 +93,13 @@ public:
   typedef llvm::StringRef key_type;
 
 public:
+  // -----  factory method  ----- //
+  static ResolveInfo* Create(const key_type& pKey);
+
+  static void Destroy(ResolveInfo*& pInfo);
+
+  static ResolveInfo* Null();
+
   // -----  modifiers  ----- //
   /// setRegular - set the source of the file is a regular object
   void setRegular();
@@ -138,6 +144,8 @@ public:
 
 
   // -----  observers  ----- //
+  bool isNull() const;
+
   bool isSymbol() const;
 
   bool isString() const;
@@ -271,7 +279,7 @@ private:
    * |length of m_Name|reserved|Symbol|Type |ELF visibility|Local|Com|Def|Dyn|Weak|
    */
   uint32_t m_BitField;
-  char m_Name[0];
+  char m_Name[];
 };
 
 } // namespace of mcld

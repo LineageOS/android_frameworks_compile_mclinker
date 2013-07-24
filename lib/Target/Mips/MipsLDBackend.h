@@ -8,15 +8,17 @@
 //===----------------------------------------------------------------------===//
 #ifndef MIPS_LDBACKEND_H
 #define MIPS_LDBACKEND_H
-#include "mcld/Target/GNULDBackend.h"
+#include <mcld/Target/GNULDBackend.h>
 #include "MipsELFDynamic.h"
 #include "MipsGOT.h"
 
 namespace mcld {
 
-class MCLinker;
+class LinkerConfig;
 class OutputRelocSection;
 class SectionMap;
+class MemoryArea;
+class MipsGNUInfo;
 
 //===----------------------------------------------------------------------===//
 /// MipsGNULDBackend - linker backend of Mips target of GNU ELF format
@@ -32,64 +34,35 @@ public:
   };
 
 public:
-  MipsGNULDBackend();
+  MipsGNULDBackend(const LinkerConfig& pConfig, MipsGNUInfo* pInfo);
   ~MipsGNULDBackend();
 
 public:
-  /// initTargetSectionMap - initialize target dependent section mapping.
-  bool initTargetSectionMap(SectionMap& pSectionMap);
-
   /// initTargetSections - initialize target dependent sections in output
-  void initTargetSections(MCLinker& pLinker);
+  void initTargetSections(Module& pModule, ObjectBuilder& pBuilder);
 
   /// initTargetSymbols - initialize target dependent symbols in output.
-  void initTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  void initTargetSymbols(IRBuilder& pBuilder, Module& pModule);
 
-  /// initRelocFactory - create and initialize RelocationFactory.
-  bool initRelocFactory(const MCLinker& pLinker);
+  /// initRelocator - create and initialize Relocator.
+  bool initRelocator();
 
-  /// getRelocFactory - return relocation factory.
-  RelocationFactory* getRelocFactory();
+  /// getRelocator - return relocator.
+  Relocator* getRelocator();
 
   /// scanRelocation - determine the empty entries are needed or not and
   /// create the empty entries if needed.
   /// For Mips, the GOT, GP, and dynamic relocation entries are check to create.
   void scanRelocation(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput,
-                      const LDSection& pSection);
-
-  uint32_t machine() const;
-
-  /// OSABI - the value of e_ident[EI_OSABI]
-  uint8_t OSABI() const;
-
-  /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  uint8_t ABIVersion() const;
-
-  /// flags - the value of ElfXX_Ehdr::e_flags
-  uint64_t flags() const;
-
-  bool isLittleEndian() const;
-
-  unsigned int bitclass() const;
-
-  uint64_t defaultTextSegmentAddr() const;
-
-  /// abiPageSize - the abi page size of the target machine
-  uint64_t abiPageSize(const MCLDInfo& pInfo) const;
+                      IRBuilder& pBuilder,
+                      Module& pModule,
+                      LDSection& pSection);
 
   /// preLayout - Backend can do any needed modification before layout
-  void doPreLayout(const Output& pOutput,
-                   const MCLDInfo& pInfo,
-                   MCLinker& pLinker);
+  void doPreLayout(IRBuilder& pBuilder);
 
-  /// postLayout -Backend can do any needed modification after layout
-  void doPostLayout(const Output& pOutput,
-                    const MCLDInfo& pInfo,
-                    MCLinker& pLinker);
+  /// postLayout - Backend can do any needed modification after layout
+  void doPostLayout(Module& pModule, IRBuilder& pBuilder);
 
   /// dynamic - the dynamic section of the target machine.
   /// Use co-variant return type to return its own dynamic section.
@@ -110,23 +83,17 @@ public:
   ///  - backend can maintain its own map<LDSection, table> to get the table
   /// from given LDSection.
   ///
-  /// @param pOutput - the output file
   /// @param pSection - the given LDSection
-  /// @param pInfo - all options in the command line.
-  /// @param pLayout - for comouting the size of fragment
   /// @param pRegion - the region to write out data
   /// @return the size of the table in the file.
-  uint64_t emitSectionData(const Output& pOutput,
-                           const LDSection& pSection,
-                           const MCLDInfo& pInfo,
-                           const Layout& pLayout,
+  uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
+  void sizeNamePools(Module& pModule, bool pIsStaticLink);
+
   /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
-  virtual void emitDynNamePools(Output& pOutput,
-                                SymbolCategory& pSymbols,
-                                const Layout& pLayout,
-                                const MCLDInfo& pLDInfo);
+  void emitDynNamePools(Module& pModule, MemoryArea& pOut);
+
 
   MipsGOT& getGOT();
   const MipsGOT& getGOT() const;
@@ -135,43 +102,47 @@ public:
   const OutputRelocSection& getRelDyn() const;
 
   /// getTargetSectionOrder - compute the layout order of ARM target sections
-  unsigned int getTargetSectionOrder(const Output& pOutput,
-                                     const LDSection& pSectHdr,
-                                     const MCLDInfo& pInfo) const;
+  unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
 
   /// finalizeSymbol - finalize the symbol value
-  bool finalizeTargetSymbols(MCLinker& pLinker, const Output& pOutput);
+  bool finalizeTargetSymbols();
 
   /// allocateCommonSymbols - allocate common symbols in the corresponding
   /// sections.
-  bool allocateCommonSymbols(const MCLDInfo& pLDInfo, MCLinker& pLinker) const;
+  bool allocateCommonSymbols(Module& pModule);
 
 private:
   void scanLocalReloc(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                      IRBuilder& pBuilder,
+                      const LDSection& pSection);
 
   void scanGlobalReloc(Relocation& pReloc,
-                      const LDSymbol& pInputSym,
-                      MCLinker& pLinker,
-                      const MCLDInfo& pLDInfo,
-                      const Output& pOutput);
+                       IRBuilder& pBuilder,
+                       const LDSection& pSection);
 
-  void createGOT(MCLinker& pLinker, const Output& pOutput);
-  void createRelDyn(MCLinker& pLinker, const Output& pOutput);
+  void defineGOTSymbol(IRBuilder& pBuilder);
 
-  /// updateAddend - update addend value of the relocation if the
-  /// the target symbol is a section symbol. Addend is the offset
-  /// in the section. This value should be updated after section
-  /// merged.
-  void updateAddend(Relocation& pReloc,
-                    const LDSymbol& pInputSym,
-                    const Layout& pLayout) const;
+  /// emitSymbol32 - emit an ELF32 symbol, override parent's function
+  void emitSymbol32(llvm::ELF::Elf32_Sym& pSym32,
+                    LDSymbol& pSymbol,
+                    char* pStrtab,
+                    size_t pStrtabsize,
+                    size_t pSymtabIdx);
+
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  size_t getRelEntrySize()
+  { return 8; }
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  size_t getRelaEntrySize()
+  { return 12; }
+
+  /// doCreateProgramHdrs - backend can implement this function to create the
+  /// target-dependent segments
+  void doCreateProgramHdrs(Module& pModule);
 
 private:
-  RelocationFactory* m_pRelocFactory;
+  Relocator* m_pRelocator;
 
   MipsGOT* m_pGOT;                      // .got
   OutputRelocSection* m_pRelDyn;        // .rel.dyn
@@ -185,14 +156,7 @@ private:
 private:
   /// isGlobalGOTSymbol - return true if the symbol is the global GOT entry.
   bool isGlobalGOTSymbol(const LDSymbol& pSymbol) const;
-  /// emitDynamicSymbol - emit dynamic symbol.
-  void emitDynamicSymbol(llvm::ELF::Elf32_Sym& sym32,
-                         Output& pOutput,
-                         LDSymbol& pSymbol,
-                         const Layout& pLayout,
-                         char* strtab,
-                         size_t strtabsize,
-                         size_t symtabIdx);
+
 };
 
 } // namespace of mcld

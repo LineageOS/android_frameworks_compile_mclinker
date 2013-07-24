@@ -11,9 +11,10 @@
 #include "mcld/ADT/TypeTraits.h"
 
 #include <cstddef>
+#include <cassert>
+#include <iterator>
 
-namespace mcld
-{
+namespace mcld {
 
 class NodeBase
 {
@@ -39,7 +40,7 @@ namespace proxy
 
 } // namespace of template proxy
 
-struct TreeIteratorBase
+class TreeIteratorBase
 {
 public:
   enum Direct {

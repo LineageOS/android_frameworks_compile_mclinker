@@ -31,8 +31,9 @@ DiagnosticLineInfo* createX86DiagLineInfo(const mcld::Target& pTarget,
 
 //==========================
 // InitializeX86Diagnostic
-extern "C" void LLVMInitializeX86DiagnosticLineInfo() {
+extern "C" void MCLDInitializeX86DiagnosticLineInfo() {
   // Register the linker frontend
-  mcld::TargetRegistry::RegisterDiagnosticLineInfo(TheX86Target, createX86DiagLineInfo);
+  mcld::TargetRegistry::RegisterDiagnosticLineInfo(TheX86_32Target, createX86DiagLineInfo);
+  mcld::TargetRegistry::RegisterDiagnosticLineInfo(TheX86_64Target, createX86DiagLineInfo);
 }
 

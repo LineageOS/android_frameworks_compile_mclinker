@@ -8,29 +8,20 @@
 //===----------------------------------------------------------------------===//
 #ifndef MIPS_TARGET_MACHINE_H
 #define MIPS_TARGET_MACHINE_H
-#include "mcld/Target/TargetMachine.h"
+
 #include "Mips.h"
+#include <mcld/Target/TargetMachine.h>
 
-namespace mcld
+namespace mcld {
+
+class MipsBaseTargetMachine : public MCLDTargetMachine
 {
-
-class MipsBaseTargetMachine : public LLVMTargetMachine
-{
-protected:
-  MCLDInfo *m_pLDInfo;
-
 public:
   MipsBaseTargetMachine(llvm::TargetMachine &pTM,
                         const mcld::Target &pTarget,
                         const std::string &pTriple);
 
   virtual ~MipsBaseTargetMachine();
-
-  mcld::MCLDInfo& getLDInfo()
-  { return *m_pLDInfo; }
-
-  const mcld::MCLDInfo& getLDInfo() const
-  { return *m_pLDInfo; }
 };
 
 } // namespace of mcld

@@ -8,15 +8,15 @@
 //===----------------------------------------------------------------------===//
 #include "FragmentRefTest.h"
 
-#include <mcld/LD/FragmentRef.h>
-#include <mcld/LD/RegionFragment.h>
+#include <mcld/Fragment/FragmentRef.h>
+#include <mcld/Fragment/RegionFragment.h>
 #include <mcld/Support/MemoryAreaFactory.h>
 #include <mcld/Support/FileHandle.h>
+#include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/Path.h>
 
 using namespace mcld;
 using namespace mcld::sys::fs;
-using namespace mcld::sys::fs::detail;
 using namespace mcldtest;
 
 // Constructor can do set-up work for all test here.
@@ -50,20 +50,19 @@ TEST_F( FragmentRefTest, ) {
 
   MemoryRegion* region = area->request(0, 4096);
   RegionFragment *frag = new RegionFragment(*region);
-  FragmentRef *ref = new FragmentRef(*frag);
+  FragmentRef *ref = FragmentRef::Create(*frag, 0x0);
 
   ASSERT_EQ('H', region->getBuffer()[0]);
-  ASSERT_EQ(4096, region->size());
+  ASSERT_TRUE(4096 == region->size());
   ASSERT_EQ('H', frag->getRegion().getBuffer()[0]);
-  ASSERT_EQ(4096, frag->getRegion().size());
+  ASSERT_TRUE(4096 == frag->getRegion().size());
   ASSERT_EQ(frag, ref->frag());
   ASSERT_EQ('H', static_cast<RegionFragment*>(ref->frag())->getRegion().getBuffer()[0]);
-  ASSERT_EQ(4096, static_cast<RegionFragment*>(ref->frag())->getRegion().size());
+  ASSERT_TRUE(4096 == static_cast<RegionFragment*>(ref->frag())->getRegion().size());
   ASSERT_EQ('H', ref->deref()[0]);
 
   ASSERT_TRUE(RegionFragment::classof(frag));
 
-  delete ref;
   delete frag;
   delete areaFactory;
 }

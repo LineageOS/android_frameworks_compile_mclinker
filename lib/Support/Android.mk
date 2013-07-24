@@ -17,6 +17,8 @@ mcld_support_SRC_FILES := \
   Space.cpp \
   SystemUtils.cpp \
   TargetRegistry.cpp  \
+  ToolOutputFile.cpp  \
+  raw_mem_ostream.cpp \
   raw_ostream.cpp
 
 # For the host

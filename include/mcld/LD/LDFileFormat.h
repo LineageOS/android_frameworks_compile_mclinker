@@ -15,11 +15,10 @@
 #include <cstdio>
 #include <cassert>
 
-namespace mcld
-{
+namespace mcld {
 
-class MCLinker;
 class LDSection;
+class ObjectBuilder;
 
 /** \class LDFileFormat
  *  \brief LDFileFormat describes the common file formats.
@@ -42,6 +41,8 @@ public:
     Note,
     MetaData,
     Group,
+    StackNote,
+    Ignore
   };
 
 protected:
@@ -50,16 +51,11 @@ protected:
 public:
   virtual ~LDFileFormat();
 
-  /// initStdSections - initialize all standard sections.
-  void initStdSections(MCLinker& pLinker);
-
-  /// initObjectFormat - different format, such as ELF and MachO, should
-  /// implement this
-  virtual void initObjectFormat(MCLinker& pLinker) = 0;
-
-  /// initObjectType - different types, such as shared object, executable
-  /// files, should implement this
-  virtual void initObjectType(MCLinker& pLinker) = 0;
+  /// initStdSections - initialize all standard section headers.
+  /// @param [in] pBuilder The ObjectBuilder to create section headers
+  /// @param [in] pBitClass The bitclass of target backend.
+  virtual void initStdSections(ObjectBuilder& pBuilder,
+                               unsigned int pBitClass) = 0;
 
   // -----  access functions  ----- //
   LDSection& getText() {

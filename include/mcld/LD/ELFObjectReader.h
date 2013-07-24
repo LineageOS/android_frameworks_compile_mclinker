@@ -13,15 +13,17 @@
 #endif
 
 #include <mcld/LD/ObjectReader.h>
-#include <llvm/Support/system_error.h>
+#include <mcld/ADT/Flags.h>
 
-namespace mcld
-{
+namespace mcld {
 
+class Module;
 class Input;
-class MCLinker;
+class IRBuilder;
 class GNULDBackend;
 class ELFReaderIF;
+class EhFrameReader;
+class LinkerConfig;
 
 /** \lclass ELFObjectReader
  *  \brief ELFObjectReader reads target-independent parts of ELF object file
@@ -29,7 +31,17 @@ class ELFReaderIF;
 class ELFObjectReader : public ObjectReader
 {
 public:
-  ELFObjectReader(GNULDBackend& pBackend, MCLinker& pLinker);
+  enum ReadFlagType {
+    ParseEhFrame    = 0x1, ///< parse .eh_frame section if the bit is set.
+    NumOfReadFlags  = 1
+  };
+
+  typedef Flags<ReadFlagType> ReadFlag;
+
+public:
+  ELFObjectReader(GNULDBackend& pBackend,
+                  IRBuilder& pBuilder,
+                  const LinkerConfig& pConfig);
 
   ~ELFObjectReader();
 
@@ -37,7 +49,7 @@ public:
   bool isMyFormat(Input &pFile) const;
 
   // -----  readers  ----- //
-  bool readObject(Input& pFile);
+  bool readHeader(Input& pFile);
 
   virtual bool readSections(Input& pFile);
 
@@ -50,7 +62,11 @@ public:
 
 private:
   ELFReaderIF* m_pELFReader;
-  MCLinker& m_Linker;
+  EhFrameReader* m_pEhFrameReader;
+  IRBuilder& m_Builder;
+  ReadFlag m_ReadFlag;
+  GNULDBackend& m_Backend;
+  const LinkerConfig& m_Config;
 };
 
 } // namespace of mcld

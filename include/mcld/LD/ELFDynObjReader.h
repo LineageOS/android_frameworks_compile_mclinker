@@ -14,11 +14,11 @@
 #include <mcld/LD/DynObjReader.h>
 #include <llvm/Support/system_error.h>
 
-namespace mcld
-{
+namespace mcld {
 
 class Input;
-class MCLinker;
+class LinkerConfig;
+class IRBuilder;
 class GNULDBackend;
 class ELFReaderIF;
 
@@ -29,20 +29,22 @@ class ELFReaderIF;
 class ELFDynObjReader : public DynObjReader
 {
 public:
-  ELFDynObjReader(GNULDBackend& pBackend, MCLinker& pLinker);
+  ELFDynObjReader(GNULDBackend& pBackend,
+                  IRBuilder& pBuilder,
+                  const LinkerConfig& pConfig);
   ~ELFDynObjReader();
 
   // -----  observers  ----- //
   bool isMyFormat(Input &pFile) const;
 
   // -----  readers  ----- //
-  bool readDSO(Input& pFile);
+  bool readHeader(Input& pFile);
 
   bool readSymbols(Input& pInput);
 
 private:
   ELFReaderIF *m_pELFReader;
-  MCLinker& m_Linker;
+  IRBuilder& m_Builder;
 };
 
 } // namespace of mcld

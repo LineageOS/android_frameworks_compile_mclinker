@@ -11,48 +11,32 @@
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
+#include <mcld/Config/Config.h>
 #include <mcld/Support/GCFactory.h>
-#include <mcld/LD/Relocation.h>
+#include <mcld/Fragment/Relocation.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class LDSymbol;
-class ResolveInfo;
 class FragmentRef;
-class Layout;
-class GOT;
-class TargetLDBackend;
-class MCLDInfo;
+class LinkerConfig;
 
 /** \class RelocationFactory
  *  \brief RelocationFactory provides the interface for generating target
  *  relocation
  *
  */
-class RelocationFactory : public GCFactory<Relocation, 0>
+class RelocationFactory : public GCFactory<Relocation, MCLD_RELOCATIONS_PER_INPUT>
 {
 public:
   typedef Relocation::Type Type;
   typedef Relocation::Address Address;
   typedef Relocation::DWord DWord;
-
-  enum Result {
-    OK,
-    BadReloc,
-    Overflow,
-    Unsupport,
-    Unknown
-  };
+  typedef Relocation::SWord SWord;
 
 public:
-  explicit RelocationFactory(size_t pNum);
+  explicit RelocationFactory();
 
-  virtual ~RelocationFactory();
-
-  /// apply - general apply function
-  virtual Result applyRelocation(Relocation& pRelocation,
-                                 const MCLDInfo& pLDInfo) = 0;
+  void setConfig(const LinkerConfig& pConfig);
 
   // ----- production ----- //
   /// produce - produce a relocation entry
@@ -69,20 +53,8 @@ public:
 
   void destroy(Relocation* pRelocation);
 
-  void setLayout(const Layout& pLayout);
-
-  // ------ observers -----//
-  const Layout& getLayout() const;
-
-  virtual TargetLDBackend& getTarget() = 0;
-
-  virtual const TargetLDBackend& getTarget() const = 0;
-
-  virtual const char* getName(Type pType) const = 0;
-
 private:
-  const Layout* m_pLayout;
-
+  const LinkerConfig* m_pConfig;
 };
 
 } // namespace of mcld

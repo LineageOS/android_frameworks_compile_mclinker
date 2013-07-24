@@ -1,9 +1,8 @@
 LOCAL_PATH:= $(call my-dir)
 
 mcld_codegen_SRC_FILES := \
-  LLVMTargetMachine.cpp \
-  SectLinker.cpp  \
-  SectLinkerOption.cpp
+  MCLDTargetMachine.cpp \
+  MCLinker.cpp
 
 # For the host
 # =====================================================

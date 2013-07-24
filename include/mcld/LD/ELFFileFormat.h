@@ -14,11 +14,9 @@
 #include <mcld/LD/LDFileFormat.h>
 #include <mcld/LD/LDSection.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class GNULDBackend;
-class MCLinker;
+class ObjectBuilder;
 
 /** \class ELFFileFormat
  *  \brief ELFFileFormat describes the common file formats in ELF.
@@ -32,14 +30,16 @@ class MCLinker;
  */
 class ELFFileFormat : public LDFileFormat
 {
+private:
+  /// initObjectFormat - initialize sections that are dependent on object
+  /// formats. (executable, shared objects or relocatable objects).
+  virtual void
+  initObjectFormat(ObjectBuilder& pBuilder, unsigned int pBitClass) = 0;
+
 public:
-  ELFFileFormat(GNULDBackend& pBackend);
+  ELFFileFormat();
 
-  virtual ~ELFFileFormat();
-
-  virtual void initObjectFormat(MCLinker& pLinker);
-
-  virtual void initObjectType(MCLinker& pLinker) = 0;
+  void initStdSections(ObjectBuilder& pBuilder, unsigned int pBitClass);
 
   // -----  capacity  ----- //
   /// @ref Special Sections, Ch. 4.17, System V ABI, 4th edition.
@@ -173,6 +173,15 @@ public:
 
   bool hasStack() const
   { return (NULL != f_pStack) && (0 != f_pStack->size()); }
+
+  bool hasStackNote() const
+  { return (NULL != f_pStackNote); }
+
+  bool hasDataRelRoLocal() const
+  { return (NULL != f_pDataRelRoLocal) && (0 != f_pDataRelRoLocal->size()); }
+
+  bool hasGNUHashTab() const
+  { return (NULL != f_pGNUHashTab) && (0 != f_pGNUHashTab->size()); }
 
   // -----  access functions  ----- //
   /// @ref Special Sections, Ch. 4.17, System V ABI, 4th edition.
@@ -607,9 +616,38 @@ public:
     assert(NULL != f_pStack);
     return *f_pStack;
   }
-protected:
-  GNULDBackend& f_Backend;
 
+  LDSection& getStackNote() {
+    assert(NULL != f_pStackNote);
+    return *f_pStackNote;
+  }
+
+  const LDSection& getStackNote() const {
+    assert(NULL != f_pStackNote);
+    return *f_pStackNote;
+  }
+
+  LDSection& getDataRelRoLocal() {
+    assert(NULL != f_pDataRelRoLocal);
+    return *f_pDataRelRoLocal;
+  }
+
+  const LDSection& getDataRelRoLocal() const {
+    assert(NULL != f_pDataRelRoLocal);
+    return *f_pDataRelRoLocal;
+  }
+
+  LDSection& getGNUHashTab() {
+    assert(NULL != f_pGNUHashTab);
+    return *f_pGNUHashTab;
+  }
+
+  const LDSection& getGNUHashTab() const {
+    assert(NULL != f_pGNUHashTab);
+    return *f_pGNUHashTab;
+  }
+
+protected:
   //         variable name         :  ELF
   /// @ref Special Sections, Ch. 4.17, System V ABI, 4th edition.
   LDSection* f_pNULLSection;
@@ -661,6 +699,9 @@ protected:
 
   /// practical
   LDSection* f_pStack;             // .stack
+  LDSection* f_pStackNote;         // .note.GNU-stack
+  LDSection* f_pDataRelRoLocal;    // .data.rel.ro.local
+  LDSection* f_pGNUHashTab;        // .gnu.hash
 };
 
 } // namespace of mcld

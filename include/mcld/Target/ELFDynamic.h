@@ -17,12 +17,11 @@
 #include <vector>
 #include <cstring>
 
-namespace mcld
-{
+namespace mcld {
 
-class GNULDBackend;
 class ELFFileFormat;
-class MCLDInfo;
+class GNULDBackend;
+class LinkerConfig;
 class MemoryRegion;
 
 namespace elf_dynamic {
@@ -37,7 +36,7 @@ protected:
   EntryIF();
 
 public:
-  virtual ~EntryIF(); 
+  virtual ~EntryIF();
 
   virtual EntryIF* clone() const = 0;
   virtual size_t size() const = 0;
@@ -87,7 +86,44 @@ public:
 
 private:
   Pair m_Pair;
-}; 
+};
+
+template<>
+class Entry<64, true> : public EntryIF
+{
+public:
+  typedef llvm::ELF::Elf64_Dyn  Pair;
+  typedef llvm::ELF::Elf64_Sym  Symbol;
+  typedef llvm::ELF::Elf64_Rel  Rel;
+  typedef llvm::ELF::Elf64_Rela Rela;
+
+public:
+  inline Entry();
+
+  inline ~Entry();
+
+  Entry* clone() const
+  { return new Entry(); }
+
+  size_t size() const
+  { return sizeof(Pair); }
+
+  size_t symbolSize() const
+  { return sizeof(Symbol); }
+
+  size_t relSize() const
+  { return sizeof(Rel); }
+
+  size_t relaSize() const
+  { return sizeof(Rela); }
+
+  inline void setValue(uint64_t pTag, uint64_t pValue);
+
+  inline size_t emit(uint8_t* pAddress) const;
+
+private:
+  Pair m_Pair;
+};
 
 #include "ELFDynamic.tcc"
 
@@ -105,7 +141,7 @@ public:
   typedef EntryListType::const_iterator const_iterator;
 
 public:
-  ELFDynamic(const GNULDBackend& pParent);
+  ELFDynamic(const GNULDBackend& pBackend, const LinkerConfig& pConfig);
 
   virtual ~ELFDynamic();
 
@@ -116,29 +152,21 @@ public:
   size_t numOfBytes() const;
 
   /// reserveEntries - reserve entries
-  void reserveEntries(const MCLDInfo& pInfo,
-                      const ELFFileFormat& pFormat);
+  void reserveEntries(const ELFFileFormat& pFormat);
 
   /// reserveNeedEntry - reserve on DT_NEED entry.
   void reserveNeedEntry();
-  
+
   /// applyEntries - apply entries
-  void applyEntries(const MCLDInfo& pInfo,
-                    const ELFFileFormat& pFormat);
+  void applyEntries(const ELFFileFormat& pFormat);
 
   void applySoname(uint64_t pStrTabIdx);
 
-  iterator needBegin()
-  { return m_NeedList.begin(); }
+  const_iterator needBegin() const { return m_NeedList.begin(); }
+  iterator       needBegin()       { return m_NeedList.begin(); }
 
-  iterator needEnd()
-  { return m_NeedList.end(); }
-
-  const_iterator needBegin() const
-  { return m_NeedList.begin(); }
-
-  const_iterator needEnd() const
-  { return m_NeedList.end(); }
+  const_iterator needEnd() const { return m_NeedList.end(); }
+  iterator       needEnd()       { return m_NeedList.end(); }
 
   /// emit
   void emit(const LDSection& pSection, MemoryRegion& pRegion) const;
@@ -161,6 +189,8 @@ private:
   EntryListType m_EntryList;
   EntryListType m_NeedList;
   elf_dynamic::EntryIF* m_pEntryFactory;
+  const GNULDBackend& m_Backend;
+  const LinkerConfig& m_Config;
 
   // The entry reserved and the entry being applied are not must matched.
   // For better performance, we use a simple counter and apply entry one-by-one

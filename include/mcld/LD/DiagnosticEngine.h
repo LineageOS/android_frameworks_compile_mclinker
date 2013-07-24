@@ -18,7 +18,7 @@
 namespace mcld {
 
 class Input;
-class MCLDInfo;
+class LinkerConfig;
 class MsgHandler;
 class DiagnosticPrinter;
 class DiagnosticLineInfo;
@@ -61,17 +61,15 @@ public:
 
   ~DiagnosticEngine();
 
-  void reset(const MCLDInfo& pLDInfo);
+  void reset(const LinkerConfig& pConfig);
 
   void setLineInfo(DiagnosticLineInfo& pLineInfo);
 
   void setPrinter(DiagnosticPrinter& pPrinter, bool pShouldOwnPrinter = true);
 
-  DiagnosticPrinter* getPrinter()
-  { return m_pPrinter; }
+  const DiagnosticPrinter* getPrinter() const { return m_pPrinter; }
+  DiagnosticPrinter*       getPrinter()       { return m_pPrinter; }
 
-  const DiagnosticPrinter* getPrinter() const
-  { return m_pPrinter; }
 
   DiagnosticPrinter* takePrinter() {
     m_OwnPrinter = false;
@@ -95,7 +93,7 @@ private:
   enum {
     /// MaxArguments - The maximum number of arguments we can hold. We currently
     /// only support up to 10 arguments (%0-%9).
-    MaxArguments = 10,
+    MaxArguments = 10
   };
 
   struct State
@@ -139,7 +137,7 @@ private:
   }
 
 private:
-  const MCLDInfo* m_pLDInfo;
+  const LinkerConfig* m_pConfig;
   DiagnosticLineInfo* m_pLineInfo;
   DiagnosticPrinter* m_pPrinter;
   DiagnosticInfos* m_pInfoMap;

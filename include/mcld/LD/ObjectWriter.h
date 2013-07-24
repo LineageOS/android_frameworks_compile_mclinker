@@ -13,11 +13,10 @@
 #endif
 #include <llvm/Support/system_error.h>
 
-namespace mcld
-{
+namespace mcld {
 
-class Output;
-class GNULDBackend;
+class Module;
+class MemoryArea;
 
 /** \class ObjectWriter
  *  \brief ObjectWriter provides a common interface for object file writers.
@@ -25,12 +24,12 @@ class GNULDBackend;
 class ObjectWriter
 {
 protected:
-  ObjectWriter(GNULDBackend& pBackend);
+  ObjectWriter();
 
 public:
   virtual ~ObjectWriter();
 
-  virtual llvm::error_code writeObject(Output& pOutput) = 0;
+  virtual llvm::error_code writeObject(Module& pModule, MemoryArea& pOutput) = 0;
 };
 
 } // namespace of mcld

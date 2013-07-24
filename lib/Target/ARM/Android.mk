@@ -3,13 +3,18 @@ LOCAL_PATH:= $(call my-dir)
 mcld_arm_target_SRC_FILES := \
   ARMDiagnostic.cpp \
   ARMELFDynamic.cpp \
-  ARMELFSectLinker.cpp  \
+  ARMELFMCLinker.cpp \
+  ARMEmulation.cpp \
   ARMGOT.cpp  \
   ARMLDBackend.cpp  \
+  ARMMCLinker.cpp  \
   ARMPLT.cpp  \
-  ARMRelocationFactory.cpp  \
-  ARMSectLinker.cpp \
-  ARMTargetMachine.cpp
+  ARMRelocator.cpp  \
+  ARMTargetMachine.cpp \
+  ARMToARMStub.cpp \
+  ARMToTHMStub.cpp \
+  THMToARMStub.cpp \
+  THMToTHMStub.cpp
 
 # For the host
 # =====================================================

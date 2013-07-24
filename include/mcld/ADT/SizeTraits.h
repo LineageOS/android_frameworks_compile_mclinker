@@ -13,6 +13,7 @@
 #endif
 
 #include <llvm/Support/DataTypes.h>
+#include <llvm/Support/ELF.h>
 
 namespace mcld
 {
@@ -40,6 +41,50 @@ public:
   typedef int64_t  SWord;
 };
 
+// FIXME: move this to mcld internal ELF header file?
+template<size_t SIZE>
+class ELFSizeTraits;
+
+template<>
+class ELFSizeTraits<32>
+{
+public:
+  typedef llvm::ELF::Elf32_Addr  Addr; // Program address
+  typedef llvm::ELF::Elf32_Off   Off;  // File offset
+  typedef llvm::ELF::Elf32_Half  Half;
+  typedef llvm::ELF::Elf32_Word  Word;
+  typedef llvm::ELF::Elf32_Sword Sword;
+
+  typedef llvm::ELF::Elf32_Ehdr  Ehdr;
+  typedef llvm::ELF::Elf32_Shdr  Shdr;
+  typedef llvm::ELF::Elf32_Sym   Sym;
+  typedef llvm::ELF::Elf32_Rel   Rel;
+  typedef llvm::ELF::Elf32_Rela  Rela;
+  typedef llvm::ELF::Elf32_Phdr  Phdr;
+  typedef llvm::ELF::Elf32_Dyn   Dyn;
+};
+
+template<>
+class ELFSizeTraits<64>
+{
+public:
+  typedef llvm::ELF::Elf64_Addr   Addr;
+  typedef llvm::ELF::Elf64_Off    Off;
+  typedef llvm::ELF::Elf64_Half   Half;
+  typedef llvm::ELF::Elf64_Word   Word;
+  typedef llvm::ELF::Elf64_Sword  Sword;
+  typedef llvm::ELF::Elf64_Xword  Xword;
+  typedef llvm::ELF::Elf64_Sxword Sxword;
+
+  typedef llvm::ELF::Elf64_Ehdr   Ehdr;
+  typedef llvm::ELF::Elf64_Shdr   Shdr;
+  typedef llvm::ELF::Elf64_Sym    Sym;
+  typedef llvm::ELF::Elf64_Rel    Rel;
+  typedef llvm::ELF::Elf64_Rela   Rela;
+  typedef llvm::ELF::Elf64_Phdr   Phdr;
+  typedef llvm::ELF::Elf64_Dyn    Dyn;
+};
+
 /// alignAddress - helper function to align an address with given alignment
 /// constraint
 ///
@@ -65,6 +110,16 @@ inline uint64_t Align<64>(uint64_t pAddress)
 {
   return (pAddress + 0x3F) & (~0x3F);
 }
+
+#ifdef bswap16
+#undef bswap16
+#endif
+#ifdef bswap32
+#undef bswap32
+#endif
+#ifdef bswap64
+#undef bswap64
+#endif
 
 /// bswap16 - byte swap 16-bit version
 /// @ref binary utilities - elfcpp_swap

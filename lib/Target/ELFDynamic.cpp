@@ -11,14 +11,16 @@
 #include <mcld/Target/ELFDynamic.h>
 #include <mcld/Target/GNULDBackend.h>
 #include <mcld/LD/ELFFileFormat.h>
-#include <mcld/MC/MCLDInfo.h>
+#include <mcld/LinkerConfig.h>
 #include <mcld/Support/MemoryRegion.h>
+#include <mcld/Support/MsgHandling.h>
 
 using namespace mcld;
 using namespace elf_dynamic;
 
 //===----------------------------------------------------------------------===//
 // elf_dynamic::EntryIF
+//===----------------------------------------------------------------------===//
 EntryIF::EntryIF()
 {
 }
@@ -29,12 +31,21 @@ EntryIF::~EntryIF()
 
 //===----------------------------------------------------------------------===//
 // ELFDynamic
-ELFDynamic::ELFDynamic(const GNULDBackend& pParent)
-  : m_pEntryFactory(NULL), m_Idx(0) {
-  if (32 == pParent.bitclass() && pParent.isLittleEndian()) {
-    m_pEntryFactory = new Entry<32, true>();
+//===----------------------------------------------------------------------===//
+ELFDynamic::ELFDynamic(const GNULDBackend& pParent,
+                       const LinkerConfig& pConfig)
+  : m_pEntryFactory(NULL), m_Backend(pParent), m_Config(pConfig), m_Idx(0) {
+  // FIXME: support big-endian machine.
+  if (m_Config.targets().is32Bits()) {
+    if (m_Config.targets().isLittleEndian())
+      m_pEntryFactory = new Entry<32, true>();
+  } else if (m_Config.targets().is64Bits()) {
+    if (m_Config.targets().isLittleEndian())
+      m_pEntryFactory = new Entry<64, true>();
+  } else {
+    fatal(diag::unsupported_bitclass) << m_Config.targets().triple().str()
+                                      << m_Config.targets().bitclass();
   }
-  // FIXME: support big-endian and 64-bit machine.
 }
 
 
@@ -74,7 +85,7 @@ size_t ELFDynamic::entrySize() const
 void ELFDynamic::reserveOne(uint64_t pTag)
 {
   assert(NULL != m_pEntryFactory);
-  m_EntryList.push_back(new elf_dynamic::Entry<32, true>());
+  m_EntryList.push_back(m_pEntryFactory->clone());
 }
 
 void ELFDynamic::applyOne(uint64_t pTag, uint64_t pValue)
@@ -85,13 +96,12 @@ void ELFDynamic::applyOne(uint64_t pTag, uint64_t pValue)
 }
 
 /// reserveEntries - reserve entries
-void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
-                                const ELFFileFormat& pFormat)
+void ELFDynamic::reserveEntries(const ELFFileFormat& pFormat)
 {
-  if (pLDInfo.output().type() == Output::DynObj) {
+  if (LinkerConfig::DynObj == m_Config.codeGenType()) {
     reserveOne(llvm::ELF::DT_SONAME); // DT_SONAME
 
-    if (pLDInfo.options().Bsymbolic())
+    if (m_Config.options().Bsymbolic())
       reserveOne(llvm::ELF::DT_SYMBOLIC); // DT_SYMBOLIC
   }
 
@@ -113,6 +123,10 @@ void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
 
   if (pFormat.hasHashTab())
     reserveOne(llvm::ELF::DT_HASH); // DT_HASH
+
+  // FIXME: use llvm enum constant
+  if (pFormat.hasGNUHashTab())
+    reserveOne(0x6ffffef5); // DT_GNU_HASH
 
   if (pFormat.hasDynSymTab()) {
     reserveOne(llvm::ELF::DT_SYMTAB); // DT_SYMTAB
@@ -146,24 +160,37 @@ void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
     reserveOne(llvm::ELF::DT_RELAENT); // DT_RELAENT
   }
 
-  if (pLDInfo.options().hasOrigin() ||
-      pLDInfo.options().Bsymbolic() ||
-      pLDInfo.options().hasNow()) {
-    // TODO: add checks for DF_TEXTREL and DF_STATIC_TLS
-    reserveOne(llvm::ELF::DT_FLAGS); // DT_FLAGS
-  }
+  uint64_t dt_flags = 0x0;
+  if (m_Config.options().hasOrigin())
+    dt_flags |= llvm::ELF::DF_ORIGIN;
+  if (m_Config.options().Bsymbolic())
+    dt_flags |= llvm::ELF::DF_SYMBOLIC;
+  if (m_Config.options().hasNow())
+    dt_flags |= llvm::ELF::DF_BIND_NOW;
+  if (m_Backend.hasTextRel())
+    dt_flags |= llvm::ELF::DF_TEXTREL;
+  if (m_Backend.hasStaticTLS() &&
+      (LinkerConfig::DynObj == m_Config.codeGenType()))
+    dt_flags |= llvm::ELF::DF_STATIC_TLS;
 
-  if (pLDInfo.options().hasNow()          ||
-      pLDInfo.options().hasLoadFltr()     ||
-      pLDInfo.options().hasOrigin()       ||
-      pLDInfo.options().hasInterPose()    ||
-      pLDInfo.options().hasNoDefaultLib() ||
-      pLDInfo.options().hasNoDump()       ||
-      pLDInfo.options().Bgroup()          ||
-      ((pLDInfo.output().type() == Output::DynObj) &&
-       (pLDInfo.options().hasNoDelete()  ||
-        pLDInfo.options().hasInitFirst() ||
-        pLDInfo.options().hasNoDLOpen()))) {
+  if ((m_Config.options().hasNewDTags() && 0x0 != dt_flags) ||
+      0 != (dt_flags & llvm::ELF::DF_STATIC_TLS))
+    reserveOne(llvm::ELF::DT_FLAGS); // DT_FLAGS
+
+  if (m_Backend.hasTextRel())
+    reserveOne(llvm::ELF::DT_TEXTREL); // DT_TEXTREL
+
+  if (m_Config.options().hasNow()          ||
+      m_Config.options().hasLoadFltr()     ||
+      m_Config.options().hasOrigin()       ||
+      m_Config.options().hasInterPose()    ||
+      m_Config.options().hasNoDefaultLib() ||
+      m_Config.options().hasNoDump()       ||
+      m_Config.options().Bgroup()          ||
+      ((LinkerConfig::DynObj == m_Config.codeGenType()) &&
+       (m_Config.options().hasNoDelete()  ||
+        m_Config.options().hasInitFirst() ||
+        m_Config.options().hasNoDLOpen()))) {
     reserveOne(llvm::ELF::DT_FLAGS_1); // DT_FLAGS_1
   }
 
@@ -171,11 +198,10 @@ void ELFDynamic::reserveEntries(const MCLDInfo& pLDInfo,
 }
 
 /// applyEntries - apply entries
-void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
-                              const ELFFileFormat& pFormat)
+void ELFDynamic::applyEntries(const ELFFileFormat& pFormat)
 {
-  if (pInfo.output().type() == Output::DynObj &&
-      pInfo.options().Bsymbolic()) {
+  if (LinkerConfig::DynObj == m_Config.codeGenType() &&
+      m_Config.options().Bsymbolic()) {
       applyOne(llvm::ELF::DT_SYMBOLIC, 0x0); // DT_SYMBOLIC
   }
 
@@ -204,6 +230,10 @@ void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
   if (pFormat.hasHashTab())
     applyOne(llvm::ELF::DT_HASH, pFormat.getHashTab().addr()); // DT_HASH
 
+  // FIXME: use llvm enum constant
+  if (pFormat.hasGNUHashTab())
+    applyOne(0x6ffffef5, pFormat.getGNUHashTab().addr()); // DT_GNU_HASH
+
   if (pFormat.hasDynSymTab()) {
     applyOne(llvm::ELF::DT_SYMTAB, pFormat.getDynSymTab().addr()); // DT_SYMTAB
     applyOne(llvm::ELF::DT_SYMENT, symbolSize()); // DT_SYMENT
@@ -216,14 +246,15 @@ void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
 
   applyTargetEntries(pFormat); // DT_PLTGOT
 
-  if (pFormat.hasRelPlt())
-    applyOne(llvm::ELF::DT_PLTREL, llvm::ELF::DT_REL); // DT_PLTREL
-  else if (pFormat.hasRelaPlt())
-    applyOne(llvm::ELF::DT_PLTREL, llvm::ELF::DT_RELA); // DT_PLTREL
-
   if (pFormat.hasRelPlt()) {
+    applyOne(llvm::ELF::DT_PLTREL, llvm::ELF::DT_REL); // DT_PLTREL
     applyOne(llvm::ELF::DT_JMPREL, pFormat.getRelPlt().addr()); // DT_JMPREL
     applyOne(llvm::ELF::DT_PLTRELSZ, pFormat.getRelPlt().size()); // DT_PLTRELSZ
+  }
+  else if (pFormat.hasRelaPlt()) {
+    applyOne(llvm::ELF::DT_PLTREL, llvm::ELF::DT_RELA); // DT_PLTREL
+    applyOne(llvm::ELF::DT_JMPREL, pFormat.getRelaPlt().addr()); // DT_JMPREL
+    applyOne(llvm::ELF::DT_PLTRELSZ, pFormat.getRelaPlt().size()); // DT_PLTRELSZ
   }
 
   if (pFormat.hasRelDyn()) {
@@ -238,39 +269,52 @@ void ELFDynamic::applyEntries(const MCLDInfo& pInfo,
     applyOne(llvm::ELF::DT_RELAENT, m_pEntryFactory->relaSize()); // DT_RELAENT
   }
 
-  uint64_t dt_flags = 0x0;
-  if (pInfo.options().hasOrigin())
-    dt_flags |= llvm::ELF::DF_ORIGIN;
-  if (pInfo.options().Bsymbolic())
-    dt_flags |= llvm::ELF::DF_SYMBOLIC;
-  if (pInfo.options().hasNow())
-    dt_flags |= llvm::ELF::DF_BIND_NOW;
-  // TODO: add checks for DF_TEXTREL and DF_STATIC_TLS
-  if (0x0 != dt_flags) {
-    applyOne(llvm::ELF::DT_FLAGS, dt_flags); // DT_FLAGS
+  if (m_Backend.hasTextRel()) {
+    applyOne(llvm::ELF::DT_TEXTREL, 0x0); // DT_TEXTREL
+
+    if (m_Config.options().warnSharedTextrel() &&
+        LinkerConfig::DynObj == m_Config.codeGenType())
+      mcld::warning(mcld::diag::warn_shared_textrel);
   }
 
+  uint64_t dt_flags = 0x0;
+  if (m_Config.options().hasOrigin())
+    dt_flags |= llvm::ELF::DF_ORIGIN;
+  if (m_Config.options().Bsymbolic())
+    dt_flags |= llvm::ELF::DF_SYMBOLIC;
+  if (m_Config.options().hasNow())
+    dt_flags |= llvm::ELF::DF_BIND_NOW;
+  if (m_Backend.hasTextRel())
+    dt_flags |= llvm::ELF::DF_TEXTREL;
+  if (m_Backend.hasStaticTLS() &&
+      (LinkerConfig::DynObj == m_Config.codeGenType()))
+    dt_flags |= llvm::ELF::DF_STATIC_TLS;
+
+  if ((m_Config.options().hasNewDTags() && 0x0 != dt_flags) ||
+      0 != (dt_flags & llvm::ELF::DF_STATIC_TLS))
+    applyOne(llvm::ELF::DT_FLAGS, dt_flags); // DT_FLAGS
+
   uint64_t dt_flags_1 = 0x0;
-  if (pInfo.options().hasNow())
+  if (m_Config.options().hasNow())
     dt_flags_1 |= llvm::ELF::DF_1_NOW;
-  if (pInfo.options().hasLoadFltr())
+  if (m_Config.options().hasLoadFltr())
     dt_flags_1 |= llvm::ELF::DF_1_LOADFLTR;
-  if (pInfo.options().hasOrigin())
+  if (m_Config.options().hasOrigin())
     dt_flags_1 |= llvm::ELF::DF_1_ORIGIN;
-  if (pInfo.options().hasInterPose())
+  if (m_Config.options().hasInterPose())
     dt_flags_1 |= llvm::ELF::DF_1_INTERPOSE;
-  if (pInfo.options().hasNoDefaultLib())
+  if (m_Config.options().hasNoDefaultLib())
     dt_flags_1 |= llvm::ELF::DF_1_NODEFLIB;
-  if (pInfo.options().hasNoDump())
+  if (m_Config.options().hasNoDump())
     dt_flags_1 |= llvm::ELF::DF_1_NODUMP;
-  if (pInfo.options().Bgroup())
+  if (m_Config.options().Bgroup())
     dt_flags_1 |= llvm::ELF::DF_1_GROUP;
-  if (pInfo.output().type() == Output::DynObj) {
-    if (pInfo.options().hasNoDelete())
+  if (LinkerConfig::DynObj == m_Config.codeGenType()) {
+    if (m_Config.options().hasNoDelete())
       dt_flags_1 |= llvm::ELF::DF_1_NODELETE;
-    if (pInfo.options().hasInitFirst())
+    if (m_Config.options().hasInitFirst())
       dt_flags_1 |= llvm::ELF::DF_1_INITFIRST;
-    if (pInfo.options().hasNoDLOpen())
+    if (m_Config.options().hasNoDLOpen())
       dt_flags_1 |= llvm::ELF::DF_1_NOOPEN;
   }
   if (0x0 != dt_flags_1)

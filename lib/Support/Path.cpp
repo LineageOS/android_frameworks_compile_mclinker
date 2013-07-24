@@ -6,6 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include "mcld/Config/Config.h"
 #include "mcld/Support/FileSystem.h"
 #include "mcld/Support/Path.h"
 #include <llvm/ADT/StringRef.h>
@@ -146,6 +147,16 @@ Path Path::parent_path() const
   if (end_pos != StringType::npos)
     return Path(m_PathName.substr(0, end_pos));
   return Path();
+}
+
+Path Path::filename() const
+{
+  size_t pos = m_PathName.find_last_of(separator);
+  if (pos != StringType::npos) {
+    ++pos;
+    return Path(m_PathName.substr(pos));
+  }
+  return Path(*this);
 }
 
 Path Path::stem() const

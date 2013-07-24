@@ -6,81 +6,86 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include <llvm/Support/ELF.h>
 #include <mcld/LD/ELFDynObjFileFormat.h>
-#include <mcld/LD/LDFileFormat.h>
 #include <mcld/LD/LDSection.h>
-#include <mcld/MC/MCLinker.h>
-#include <mcld/Target/GNULDBackend.h>
+#include <mcld/Object/ObjectBuilder.h>
+
+#include <llvm/Support/ELF.h>
 
 using namespace mcld;
 
-void ELFDynObjFileFormat::initObjectType(MCLinker& pLinker)
+void ELFDynObjFileFormat::initObjectFormat(ObjectBuilder& pBuilder,
+                                           unsigned int pBitClass)
 {
-  f_pDynSymTab    = &pLinker.getOrCreateOutputSectHdr(".dynsym",
+  f_pDynSymTab    = pBuilder.CreateSection(".dynsym",
                                            LDFileFormat::NamePool,
                                            llvm::ELF::SHT_DYNSYM,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pDynStrTab    = &pLinker.getOrCreateOutputSectHdr(".dynstr",
+                                           pBitClass / 8);
+  f_pDynStrTab    = pBuilder.CreateSection(".dynstr",
                                            LDFileFormat::NamePool,
                                            llvm::ELF::SHT_STRTAB,
                                            llvm::ELF::SHF_ALLOC,
                                            0x1);
-  f_pInterp       = &pLinker.getOrCreateOutputSectHdr(".interp",
+  f_pInterp       = pBuilder.CreateSection(".interp",
                                            LDFileFormat::Note,
                                            llvm::ELF::SHT_PROGBITS,
                                            llvm::ELF::SHF_ALLOC,
                                            0x1);
-  f_pHashTab      = &pLinker.getOrCreateOutputSectHdr(".hash",
+  f_pHashTab      = pBuilder.CreateSection(".hash",
                                            LDFileFormat::NamePool,
                                            llvm::ELF::SHT_HASH,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pDynamic      = &pLinker.getOrCreateOutputSectHdr(".dynamic",
+                                           pBitClass / 8);
+  f_pDynamic      = pBuilder.CreateSection(".dynamic",
                                            LDFileFormat::NamePool,
                                            llvm::ELF::SHT_DYNAMIC,
                                            llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
-                                           f_Backend.bitclass() / 8);
-  f_pRelaDyn      = &pLinker.getOrCreateOutputSectHdr(".rela.dyn",
+                                           pBitClass / 8);
+  f_pRelaDyn      = pBuilder.CreateSection(".rela.dyn",
                                            LDFileFormat::Relocation,
                                            llvm::ELF::SHT_RELA,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pRelaPlt      = &pLinker.getOrCreateOutputSectHdr(".rela.plt",
+                                           pBitClass / 8);
+  f_pRelaPlt      = pBuilder.CreateSection(".rela.plt",
                                            LDFileFormat::Relocation,
                                            llvm::ELF::SHT_RELA,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pRelDyn      = &pLinker.getOrCreateOutputSectHdr(".rel.dyn",
+                                           pBitClass / 8);
+  f_pRelDyn       = pBuilder.CreateSection(".rel.dyn",
                                            LDFileFormat::Relocation,
                                            llvm::ELF::SHT_REL,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pRelPlt      = &pLinker.getOrCreateOutputSectHdr(".rel.plt",
+                                           pBitClass / 8);
+  f_pRelPlt       = pBuilder.CreateSection(".rel.plt",
                                            LDFileFormat::Relocation,
                                            llvm::ELF::SHT_REL,
                                            llvm::ELF::SHF_ALLOC,
-                                           f_Backend.bitclass() / 8);
-  f_pGOT          = &pLinker.getOrCreateOutputSectHdr(".got",
+                                           pBitClass / 8);
+  f_pGOT          = pBuilder.CreateSection(".got",
                                            LDFileFormat::Target,
                                            llvm::ELF::SHT_PROGBITS,
                                            llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
-                                           f_Backend.bitclass() / 8);
-  f_pPLT          = &pLinker.getOrCreateOutputSectHdr(".plt",
+                                           pBitClass / 8);
+  f_pPLT          = pBuilder.CreateSection(".plt",
                                            LDFileFormat::Target,
                                            llvm::ELF::SHT_PROGBITS,
                                            llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_EXECINSTR,
-                                           f_Backend.bitclass() / 8);
-  f_pGOTPLT       = &pLinker.getOrCreateOutputSectHdr(".got.plt",
+                                           pBitClass / 8);
+  f_pGOTPLT       = pBuilder.CreateSection(".got.plt",
                                            LDFileFormat::Target,
                                            llvm::ELF::SHT_PROGBITS,
                                            llvm::ELF::SHF_ALLOC | llvm::ELF::SHF_WRITE,
-                                           f_Backend.bitclass() / 8);
-  f_pEhFrameHdr     = &pLinker.getOrCreateOutputSectHdr(".eh_frame_hdr",
-                                              LDFileFormat::EhFrameHdr,
-                                              llvm::ELF::SHT_PROGBITS,
-                                              llvm::ELF::SHF_ALLOC,
-                                              0x4);
+                                           pBitClass / 8);
+  f_pEhFrameHdr   = pBuilder.CreateSection(".eh_frame_hdr",
+                                           LDFileFormat::EhFrameHdr,
+                                           llvm::ELF::SHT_PROGBITS,
+                                           llvm::ELF::SHF_ALLOC,
+                                           0x4);
+  f_pGNUHashTab   = pBuilder.CreateSection(".gnu.hash",
+                                           LDFileFormat::NamePool,
+                                           llvm::ELF::SHT_GNU_HASH,
+                                           llvm::ELF::SHF_ALLOC,
+                                           pBitClass / 8);
 }
 

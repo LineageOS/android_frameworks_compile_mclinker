@@ -10,6 +10,7 @@
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <algorithm>
+#include <cassert>
 
 using namespace mcld;
 
@@ -24,30 +25,34 @@ SymbolCategory::Category::categorize(const ResolveInfo& pInfo)
     return Category::Local;
   if (ResolveInfo::Common == pInfo.desc())
     return Category::Common;
-  if (ResolveInfo::Weak == pInfo.binding())
-    return Category::Weak;
-  return Category::Global;
+  if (ResolveInfo::Default   == pInfo.visibility() ||
+      ResolveInfo::Protected == pInfo.visibility())
+    return Category::Dynamic;
+  return Category::Regular;
 }
 
 //===----------------------------------------------------------------------===//
 // SymbolCategory
 SymbolCategory::SymbolCategory()
 {
-  m_pFile   = new Category(Category::File);
-  m_pLocal  = new Category(Category::Local);
-  m_pCommon = new Category(Category::Common);
-  m_pWeak   = new Category(Category::Weak);
-  m_pGlobal = new Category(Category::Global);
+  m_pFile     = new Category(Category::File);
+  m_pLocal    = new Category(Category::Local);
+  m_pLocalDyn = new Category(Category::LocalDyn);
+  m_pCommon   = new Category(Category::Common);
+  m_pDynamic  = new Category(Category::Dynamic);
+  m_pRegular  = new Category(Category::Regular);
 
-  m_pFile->next   = m_pLocal;
-  m_pLocal->next  = m_pCommon;
-  m_pCommon->next = m_pWeak;
-  m_pWeak->next   = m_pGlobal;
+  m_pFile->next     = m_pLocal;
+  m_pLocal->next    = m_pLocalDyn;
+  m_pLocalDyn->next = m_pCommon;
+  m_pCommon->next   = m_pDynamic;
+  m_pDynamic->next  = m_pRegular;
 
-  m_pGlobal->prev = m_pWeak;
-  m_pWeak->prev   = m_pCommon;
-  m_pCommon->prev = m_pLocal;
-  m_pLocal->prev   = m_pFile;
+  m_pRegular->prev  = m_pDynamic;
+  m_pDynamic->prev  = m_pCommon;
+  m_pCommon->prev   = m_pLocalDyn;
+  m_pLocalDyn->prev = m_pLocal;
+  m_pLocal->prev    = m_pFile;
 }
 
 SymbolCategory::~SymbolCategory()
@@ -60,18 +65,14 @@ SymbolCategory::~SymbolCategory()
   }
 }
 
-SymbolCategory& SymbolCategory::add(LDSymbol& pSymbol)
+SymbolCategory& SymbolCategory::add(LDSymbol& pSymbol, Category::Type pTarget)
 {
+  Category* current = m_pRegular;
   m_OutputSymbols.push_back(&pSymbol);
-
-  assert(NULL != pSymbol.resolveInfo());
-  Category::Type target = Category::categorize(*pSymbol.resolveInfo());
-
-  Category* current = m_pGlobal;
 
   // use non-stable bubble sort to arrange the order of symbols.
   while (NULL != current) {
-    if (current->type == target) {
+    if (current->type == pTarget) {
       current->end++;
       break;
     }
@@ -88,21 +89,19 @@ SymbolCategory& SymbolCategory::add(LDSymbol& pSymbol)
   return *this;
 }
 
-SymbolCategory& SymbolCategory::forceLocal(LDSymbol& pSymbol)
+SymbolCategory& SymbolCategory::add(LDSymbol& pSymbol)
 {
-  m_OutputSymbols.insert(localEnd(), &pSymbol);
-  m_pLocal->end++;
-  m_pCommon->begin++;
-  m_pCommon->end++;
-  m_pWeak->begin++;
-  m_pWeak->end++;
-  m_pGlobal->begin++;
-  m_pGlobal->end++;
-
-  return *this;
+  assert(NULL != pSymbol.resolveInfo());
+  return add(pSymbol, Category::categorize(*pSymbol.resolveInfo()));
 }
 
-SymbolCategory& SymbolCategory::arrange(LDSymbol& pSymbol, const ResolveInfo& pSourceInfo)
+SymbolCategory& SymbolCategory::forceLocal(LDSymbol& pSymbol)
+{
+  return add(pSymbol, Category::Local);
+}
+
+SymbolCategory& SymbolCategory::arrange(LDSymbol& pSymbol,
+                                        const ResolveInfo& pSourceInfo)
 {
   assert(NULL != pSymbol.resolveInfo());
   Category::Type source = Category::categorize(pSourceInfo);
@@ -183,23 +182,47 @@ SymbolCategory& SymbolCategory::arrange(LDSymbol& pSymbol, const ResolveInfo& pS
 
 SymbolCategory& SymbolCategory::changeCommonsToGlobal()
 {
-  if (emptyCommons())
-    return *this;
+  // Change Common to Dynamic/Regular
+  while (!emptyCommons()) {
+    size_t pos = m_pCommon->end - 1;
+    switch (Category::categorize(*(m_OutputSymbols[pos]->resolveInfo()))) {
+    case Category::Dynamic:
+      m_pCommon->end--;
+      m_pDynamic->begin--;
+      break;
+    case Category::Regular:
+      std::swap(m_OutputSymbols[pos], m_OutputSymbols[m_pDynamic->end - 1]);
+      m_pCommon->end--;
+      m_pDynamic->begin--;
+      m_pDynamic->end--;
+      m_pRegular->begin--;
+      break;
+    default:
+      assert(0);
+      break;
+    }
+  }
+  return *this;
+}
 
-  size_t com_rear = m_pCommon->end - 1;
-  size_t com_front = m_pCommon->begin;
-  size_t weak_rear = m_pWeak->end - 1;
-  size_t weak_size = m_pWeak->end - m_pWeak->begin;
-  for (size_t sym = com_rear; sym >= com_front; --sym) {
-    std::swap(m_OutputSymbols[weak_rear], m_OutputSymbols[sym]);
-    --weak_rear;
+SymbolCategory& SymbolCategory::changeLocalToDynamic(const LDSymbol& pSymbol)
+{
+  // find the position of pSymbol from local category
+  size_t pos = m_pLocal->begin;
+  while (pos != m_pLocal->end) {
+    if (m_OutputSymbols[pos] == &pSymbol)
+      break;
+    ++pos;
   }
 
-  m_pWeak->begin = m_pCommon->begin;
-  m_pWeak->end = m_pCommon->begin + weak_size;
-  m_pGlobal->begin = m_pWeak->end;
-  m_pCommon->begin = m_pCommon->end = m_pWeak->begin;
+  // if symbol is not in Local, then do nothing
+  if (m_pLocal->end == pos)
+    return *this;
 
+  // bubble sort downward to LocalDyn
+  std::swap(m_OutputSymbols[pos], m_OutputSymbols[m_pLocal->end - 1]);
+  m_pLocal->end--;
+  m_pLocalDyn->begin--;
   return *this;
 }
 
@@ -208,9 +231,19 @@ size_t SymbolCategory::numOfSymbols() const
   return m_OutputSymbols.size();
 }
 
+size_t SymbolCategory::numOfFiles() const
+{
+  return m_pFile->size();
+}
+
 size_t SymbolCategory::numOfLocals() const
 {
-  return (m_pFile->size() + m_pLocal->size());
+  return m_pLocal->size();
+}
+
+size_t SymbolCategory::numOfLocalDyns() const
+{
+  return m_pLocalDyn->size();
 }
 
 size_t SymbolCategory::numOfCommons() const
@@ -218,21 +251,34 @@ size_t SymbolCategory::numOfCommons() const
   return m_pCommon->size();
 }
 
+size_t SymbolCategory::numOfDynamics() const
+{
+  return m_pDynamic->size();
+}
+
 size_t SymbolCategory::numOfRegulars() const
 {
-  return (m_pWeak->size() + m_pGlobal->size());
+  return m_pRegular->size();
 }
 
 bool SymbolCategory::empty() const
 {
-  return (emptyLocals() &&
-          emptyCommons() &&
-          emptyRegulars());
+  return m_OutputSymbols.empty();
+}
+
+bool SymbolCategory::emptyFiles() const
+{
+  return m_pFile->empty();
 }
 
 bool SymbolCategory::emptyLocals() const
 {
-  return (m_pFile->empty() && m_pLocal->empty());
+  return m_pLocal->empty();
+}
+
+bool SymbolCategory::emptyLocalDyns() const
+{
+  return m_pLocalDyn->empty();
 }
 
 bool SymbolCategory::emptyCommons() const
@@ -240,9 +286,14 @@ bool SymbolCategory::emptyCommons() const
   return m_pCommon->empty();
 }
 
+bool SymbolCategory::emptyDynamics() const
+{
+  return m_pDynamic->empty();
+}
+
 bool SymbolCategory::emptyRegulars() const
 {
-  return (m_pWeak->empty() && m_pGlobal->empty());
+  return m_pRegular->empty();
 }
 
 SymbolCategory::iterator SymbolCategory::begin()
@@ -265,53 +316,123 @@ SymbolCategory::const_iterator SymbolCategory::end() const
   return m_OutputSymbols.end();
 }
 
-SymbolCategory::iterator SymbolCategory::localBegin()
+SymbolCategory::iterator SymbolCategory::fileBegin()
 {
   return m_OutputSymbols.begin();
 }
 
+SymbolCategory::iterator SymbolCategory::fileEnd()
+{
+  iterator iter = fileBegin();
+  iter += m_pFile->size();
+  return iter;
+}
+
+SymbolCategory::const_iterator SymbolCategory::fileBegin() const
+{
+  return m_OutputSymbols.begin();
+}
+
+SymbolCategory::const_iterator SymbolCategory::fileEnd() const
+{
+  const_iterator iter = fileBegin();
+  iter += m_pFile->size();
+  return iter;
+}
+
+SymbolCategory::iterator SymbolCategory::localBegin()
+{
+  return fileEnd();
+}
+
 SymbolCategory::iterator SymbolCategory::localEnd()
 {
-  iterator iter = m_OutputSymbols.begin();
-  iter += m_pFile->size();
+  iterator iter = localBegin();
   iter += m_pLocal->size();
   return iter;
 }
 
 SymbolCategory::const_iterator SymbolCategory::localBegin() const
 {
-  return m_OutputSymbols.begin();
+  return fileEnd();
 }
 
 SymbolCategory::const_iterator SymbolCategory::localEnd() const
 {
-  const_iterator iter = m_OutputSymbols.begin();
-  iter += m_pFile->size();
+  const_iterator iter = localBegin();
   iter += m_pLocal->size();
+  return iter;
+}
+
+SymbolCategory::iterator SymbolCategory::localDynBegin()
+{
+  return localEnd();
+}
+
+SymbolCategory::iterator SymbolCategory::localDynEnd()
+{
+  iterator iter = localDynBegin();
+  iter += m_pLocalDyn->size();
+  return iter;
+}
+
+SymbolCategory::const_iterator SymbolCategory::localDynBegin() const
+{
+  return localEnd();
+}
+
+SymbolCategory::const_iterator SymbolCategory::localDynEnd() const
+{
+  const_iterator iter = localDynBegin();
+  iter += m_pLocalDyn->size();
   return iter;
 }
 
 SymbolCategory::iterator SymbolCategory::commonBegin()
 {
-  return localEnd();
+  return localDynEnd();
 }
 
 SymbolCategory::iterator SymbolCategory::commonEnd()
 {
-  iterator iter = localEnd();
+  iterator iter = commonBegin();
   iter += m_pCommon->size();
   return iter;
 }
 
 SymbolCategory::const_iterator SymbolCategory::commonBegin() const
 {
-  return localEnd();
+  return localDynEnd();
 }
 
 SymbolCategory::const_iterator SymbolCategory::commonEnd() const
 {
-  const_iterator iter = localEnd();
+  const_iterator iter = commonBegin();
   iter += m_pCommon->size();
+  return iter;
+}
+
+SymbolCategory::iterator SymbolCategory::dynamicBegin()
+{
+  return commonEnd();
+}
+
+SymbolCategory::iterator SymbolCategory::dynamicEnd()
+{
+  iterator iter = dynamicBegin();
+  iter += m_pDynamic->size();
+  return iter;
+}
+
+SymbolCategory::const_iterator SymbolCategory::dynamicBegin() const
+{
+  return commonEnd();
+}
+
+SymbolCategory::const_iterator SymbolCategory::dynamicEnd() const
+{
+  const_iterator iter = dynamicBegin();
+  iter += m_pDynamic->size();
   return iter;
 }
 
