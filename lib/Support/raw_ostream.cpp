@@ -6,14 +6,18 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include "mcld/Config/Config.h"
+#include <mcld/Config/Config.h>
 #include <mcld/Support/raw_ostream.h>
 
 #if defined(HAVE_UNISTD_H)
 # include <unistd.h>
 #endif
 
-#if defined(_MSC_VER)
+#if defined(__CYGWIN__)
+#include <io.h>
+#endif
+
+#if defined(_MSC_VER) || defined(__MINGW32__)
 #include <io.h>
 #ifndef STDIN_FILENO
 # define STDIN_FILENO 0
@@ -94,9 +98,7 @@ bool mcld::raw_fd_ostream::is_displayed() const
 //===----------------------------------------------------------------------===//
 mcld::raw_fd_ostream& mcld::outs() {
   // Set buffer settings to model stdout behavior.
-  // Delete the file descriptor when the program exists, forcing error
-  // detection. If you don't want this behavior, don't use outs().
-  static mcld::raw_fd_ostream S(STDOUT_FILENO, true);
+  static mcld::raw_fd_ostream S(STDOUT_FILENO, false);
   return S;
 }
 

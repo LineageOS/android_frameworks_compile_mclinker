@@ -8,9 +8,9 @@ mcld_core_SRC_FILES := \
   IRBuilder.cpp \
   InputTree.cpp \
   LinkerConfig.cpp  \
+  LinkerScript.cpp  \
   Linker.cpp \
   Module.cpp \
-  ScriptOptions.cpp \
   TargetOptions.cpp
 
 # For the host

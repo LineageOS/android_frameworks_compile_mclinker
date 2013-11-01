@@ -125,7 +125,7 @@ static void addPassesToHandleExceptions(llvm::TargetMachine *TM,
   case llvm::ExceptionHandling::DwarfCFI:
   case llvm::ExceptionHandling::ARM:
   case llvm::ExceptionHandling::Win64:
-    PM.add(createDwarfEHPass(TM));
+    PM.add(createDwarfEHPass(TM->getTargetLowering()));
     break;
   case llvm::ExceptionHandling::None:
     PM.add(createLowerInvokePass(TM->getTargetLowering()));
@@ -365,8 +365,8 @@ bool mcld::MCLDTargetMachine::addLinkerPasses(PassManagerBase &pPM,
   // set up output's SOName
   if (pConfig.options().soname().empty()) {
     // if the output is a shared object, and the option -soname was not
-    // enable, set soname as the output file name.
-    pModule.setName(pOutput.handler()->path().native());
+    // enable, set soname as the output file name. soname must be UTF-8 string.
+    pModule.setName(pOutput.handler()->path().filename().native());
   }
   else {
     pModule.setName(pConfig.options().soname());

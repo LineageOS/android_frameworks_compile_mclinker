@@ -9,6 +9,7 @@
 #include <mcld/Support/Space.h>
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/SystemUtils.h>
 #include <cstdlib>
 #include <unistd.h>
 
@@ -16,7 +17,8 @@ using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // constant data
-static const off_t PageSize = getpagesize();
+//===----------------------------------------------------------------------===//
+static const int PageSize = mcld::sys::GetPageSize();
 
 //===----------------------------------------------------------------------===//
 // Non-member functions
@@ -38,6 +40,9 @@ inline static off_t page_boundary(off_t pFileOffset)
 
 inline static Space::Type policy(off_t pOffset, size_t pLength)
 {
+#if defined(MCLD_ON_WIN32)
+  return Space::ALLOCATED_ARRAY;
+#endif
   const size_t threshold = (PageSize*3)/4; // 3/4 page size in Linux
   if (pLength < threshold)
     return Space::ALLOCATED_ARRAY;
@@ -75,7 +80,7 @@ Space* Space::Create(FileHandle& pHandler, size_t pStart, size_t pSize)
   Type type;
   void* memory = NULL;
   Space* result = NULL;
-  size_t start = 0, size = 0, total_offset;
+  size_t start = 0, size = 0, total_offset = 0;
   switch(type = policy(pStart, pSize)) {
     case ALLOCATED_ARRAY: {
       // adjust total_offset, start and size
@@ -86,8 +91,10 @@ Space* Space::Create(FileHandle& pHandler, size_t pStart, size_t pSize)
           size = pSize;
           pHandler.truncate(total_offset);
         }
-        else if (pHandler.size() > start)
+        else if (pHandler.size() > start) {
+          // not writable -> shrink the size
           size = pHandler.size() - start;
+        }
         else {
           // create a space out of a read-only file.
           fatal(diag::err_cannot_read_small_file) << pHandler.path()
@@ -95,8 +102,10 @@ Space* Space::Create(FileHandle& pHandler, size_t pStart, size_t pSize)
                                                   << start << size;
         }
       }
-      else
+      else {
+        // within the space.
         size = pSize;
+      }
 
       // malloc
       memory = (void*)malloc(size);

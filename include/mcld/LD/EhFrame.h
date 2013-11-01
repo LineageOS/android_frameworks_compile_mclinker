@@ -14,6 +14,7 @@
 
 #include <mcld/Config/Config.h>
 #include <mcld/Fragment/RegionFragment.h>
+#include <mcld/Fragment/NullFragment.h>
 #include <mcld/Support/Allocators.h>
 
 #include <vector>
@@ -101,13 +102,15 @@ public:
   const LDSection& getSection() const;
   LDSection&       getSection();
 
-  const SectionData& getSectionData() const { return *m_pSectionData; }
-  SectionData&       getSectionData()       { return *m_pSectionData; }
+  const SectionData* getSectionData() const { return m_pSectionData; }
+  SectionData*       getSectionData()       { return m_pSectionData; }
 
   // -----  fragment  ----- //
   /// addFragment - when we start treating CIEs and FDEs as regular fragments,
   /// we call this function instead of addCIE() and addFDE().
   void addFragment(RegionFragment& pFrag);
+
+  void addFragment(NullFragment& pFrag);
 
   /// addCIE - add a CIE entry in EhFrame
   void addCIE(CIE& pCIE);

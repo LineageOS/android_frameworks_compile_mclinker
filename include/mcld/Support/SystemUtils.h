@@ -14,6 +14,7 @@
 
 #include <llvm/Support/DataTypes.h>
 #include <mcld/Config/Config.h>
+#include <string>
 
 namespace mcld {
 namespace sys {
@@ -25,6 +26,16 @@ typedef off_t Offset;
  *  \brief system error message
  */
 char *strerror(int pErrnum);
+
+std::string getDefaultTargetTriple();
+
+int GetPageSize();
+
+/// GetRandomNum - generate a random number.
+long GetRandomNum();
+
+/// SetRandomSeed - set the initial seed value for future calls to random().
+void SetRandomSeed(unsigned pSeed);
 
 } // namespace of sys
 } // namespace of mcld

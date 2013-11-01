@@ -26,12 +26,7 @@ class MipsGNUInfo;
 class MipsGNULDBackend : public GNULDBackend
 {
 public:
-  enum ReservedEntryType {
-    None          = 0,  // no reserved entry
-    ReserveRel    = 1,  // reserve a dynamic relocation entry
-    ReserveGot    = 2,  // reserve a GOT entry
-    ReserveGpDisp = 8   // reserve _gp_disp symbol
-  };
+  typedef std::vector<LDSymbol*> SymbolListType;
 
 public:
   MipsGNULDBackend(const LinkerConfig& pConfig, MipsGNUInfo* pInfo);
@@ -49,14 +44,6 @@ public:
 
   /// getRelocator - return relocator.
   Relocator* getRelocator();
-
-  /// scanRelocation - determine the empty entries are needed or not and
-  /// create the empty entries if needed.
-  /// For Mips, the GOT, GP, and dynamic relocation entries are check to create.
-  void scanRelocation(Relocation& pReloc,
-                      IRBuilder& pBuilder,
-                      Module& pModule,
-                      LDSection& pSection);
 
   /// preLayout - Backend can do any needed modification before layout
   void doPreLayout(IRBuilder& pBuilder);
@@ -89,17 +76,26 @@ public:
   uint64_t emitSectionData(const LDSection& pSection,
                            MemoryRegion& pRegion) const;
 
-  void sizeNamePools(Module& pModule, bool pIsStaticLink);
+  /// hasEntryInStrTab - symbol has an entry in a .strtab
+  bool hasEntryInStrTab(const LDSymbol& pSym) const;
 
-  /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
-  void emitDynNamePools(Module& pModule, MemoryArea& pOut);
-
+  /// orderSymbolTable - order symbol table before emitting
+  void orderSymbolTable(Module& pModule);
 
   MipsGOT& getGOT();
   const MipsGOT& getGOT() const;
 
   OutputRelocSection& getRelDyn();
   const OutputRelocSection& getRelDyn() const;
+
+  LDSymbol*             getGOTSymbo()            { return m_pGOTSymbol;    }
+  const LDSymbol*       getGOTSymbo() const      { return m_pGOTSymbol;    }
+
+  LDSymbol*             getGpDispSymbol()        { return m_pGpDispSymbol; }
+  const LDSymbol*       getGpDispSymbol() const  { return m_pGpDispSymbol; }
+
+  SymbolListType&       getGlobalGOTSyms()       { return m_GlobalGOTSyms; }
+  const SymbolListType& getGlobalGOTSyms() const { return m_GlobalGOTSyms; }
 
   /// getTargetSectionOrder - compute the layout order of ARM target sections
   unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const;
@@ -112,14 +108,6 @@ public:
   bool allocateCommonSymbols(Module& pModule);
 
 private:
-  void scanLocalReloc(Relocation& pReloc,
-                      IRBuilder& pBuilder,
-                      const LDSection& pSection);
-
-  void scanGlobalReloc(Relocation& pReloc,
-                       IRBuilder& pBuilder,
-                       const LDSection& pSection);
-
   void defineGOTSymbol(IRBuilder& pBuilder);
 
   /// emitSymbol32 - emit an ELF32 symbol, override parent's function
@@ -151,12 +139,7 @@ private:
   LDSymbol* m_pGOTSymbol;
   LDSymbol* m_pGpDispSymbol;
 
-  std::vector<LDSymbol*> m_GlobalGOTSyms;
-
-private:
-  /// isGlobalGOTSymbol - return true if the symbol is the global GOT entry.
-  bool isGlobalGOTSymbol(const LDSymbol& pSymbol) const;
-
+  SymbolListType m_GlobalGOTSyms;
 };
 
 } // namespace of mcld

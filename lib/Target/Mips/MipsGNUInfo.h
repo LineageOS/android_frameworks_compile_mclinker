@@ -46,6 +46,10 @@ public:
            E_MIPS_ABI_O32;
   }
 
+  const char* entry() const { return "__start"; }
+
+  const char* dyld() const { return "/lib/ld.so.1"; }
+
   uint64_t abiPageSize() const { return 0x10000; }
 };
 

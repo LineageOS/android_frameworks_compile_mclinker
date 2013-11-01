@@ -37,21 +37,27 @@
 #include <mcld/LD/StubFactory.h>
 #include <mcld/Object/ObjectBuilder.h>
 
-using namespace mcld;
+namespace {
 
 //===--------------------------------------------------------------------===//
 // non-member functions
 //===----------------------------------------------------------------------===//
+static const std::string simple_c_identifier_allowed_chars =
+  "0123456789"
+  "ABCDEFGHIJKLMNOPWRSTUVWXYZ"
+  "abcdefghijklmnopqrstuvwxyz"
+  "_";
 
 /// isCIdentifier - return if the pName is a valid C identifier
 static bool isCIdentifier(const std::string& pName)
 {
-  std::string ident = "0123456789"
-                      "ABCDEFGHIJKLMNOPWRSTUVWXYZ"
-                      "abcdefghijklmnopqrstuvwxyz"
-                      "_";
-  return (pName.find_first_not_of(ident) > pName.length());
+  return (pName.find_first_not_of(simple_c_identifier_allowed_chars)
+              == std::string::npos);
 }
+
+} // anonymous namespace
+
+using namespace mcld;
 
 //===----------------------------------------------------------------------===//
 // GNULDBackend
@@ -122,11 +128,11 @@ size_t GNULDBackend::sectionStartOffset() const
   }
 }
 
-uint64_t GNULDBackend::segmentStartAddr() const
+uint64_t GNULDBackend::getSegmentStartAddr(const LinkerScript& pScript) const
 {
-  ScriptOptions::AddressMap::const_iterator mapping =
-    config().scripts().addressMap().find(".text");
-  if (mapping != config().scripts().addressMap().end())
+  LinkerScript::AddressMap::const_iterator mapping =
+    pScript.addressMap().find(".text");
+  if (pScript.addressMap().end() != mapping)
     return mapping.getEntry()->value();
   else if (config().isCodeIndep())
     return 0x0;
@@ -222,7 +228,7 @@ bool GNULDBackend::initStandardSymbols(IRBuilder& pBuilder,
     } // end of switch
 
     if (isCIdentifier(section->name())) {
-      llvm::StringRef start_name = llvm::StringRef("__start_" + section->name());
+      std::string start_name = "__start_" + section->name();
       FragmentRef* start_fragref = FragmentRef::Create(
                                        section->getSectionData()->front(), 0x0);
       pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
@@ -235,7 +241,7 @@ bool GNULDBackend::initStandardSymbols(IRBuilder& pBuilder,
                                                     start_fragref, // FragRef
                                                     ResolveInfo::Default);
 
-      llvm::StringRef stop_name = llvm::StringRef("__stop_" + section->name());
+      std::string stop_name = "__stop_" + section->name();
       FragmentRef* stop_fragref = FragmentRef::Create(
                            section->getSectionData()->front(), section->size());
       pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
@@ -712,43 +718,22 @@ const ELFFileFormat* GNULDBackend::getOutputFormat() const
   }
 }
 
-void GNULDBackend::partialScanRelocation(Relocation& pReloc,
-                                         Module& pModule,
-                                         const LDSection& pSection)
-{
-  // if we meet a section symbol
-  if (pReloc.symInfo()->type() == ResolveInfo::Section) {
-    LDSymbol* input_sym = pReloc.symInfo()->outSymbol();
-
-    // 1. update the relocation target offset
-    assert(input_sym->hasFragRef());
-    uint64_t offset = input_sym->fragRef()->getOutputOffset();
-    pReloc.target() += offset;
-
-    // 2. get output section symbol
-    // get the output LDSection which the symbol defined in
-    const LDSection& out_sect =
-                      input_sym->fragRef()->frag()->getParent()->getSection();
-    ResolveInfo* sym_info = pModule.getSectionSymbolSet().get(out_sect)->resolveInfo();
-    // set relocation target symbol to the output section symbol's resolveInfo
-    pReloc.setSymInfo(sym_info);
-  }
-}
-
 /// sizeNamePools - compute the size of regular name pools
 /// In ELF executable files, regular name pools are .symtab, .strtab,
 /// .dynsym, .dynstr, .hash and .shstrtab.
-void GNULDBackend::sizeNamePools(Module& pModule, bool pIsStaticLink)
+void GNULDBackend::sizeNamePools(Module& pModule)
 {
+  assert(LinkerConfig::Unset != config().codePosition());
+
   // number of entries in symbol tables starts from 1 to hold the special entry
   // at index 0 (STN_UNDEF). See ELF Spec Book I, p1-21.
   size_t symtab = 1;
-  size_t dynsym = pIsStaticLink ? 0 : 1;
+  size_t dynsym = config().isCodeStatic()? 0 : 1;
 
   // size of string tables starts from 1 to hold the null character in their
   // first byte
   size_t strtab   = 1;
-  size_t dynstr   = pIsStaticLink ? 0 : 1;
+  size_t dynstr   = config().isCodeStatic()? 0 : 1;
   size_t shstrtab = 1;
   size_t hash     = 0;
   size_t gnuhash  = 0;
@@ -764,7 +749,7 @@ void GNULDBackend::sizeNamePools(Module& pModule, bool pIsStaticLink)
   symEnd = symbols.end();
   for (symbol = symbols.begin(); symbol != symEnd; ++symbol) {
     ++symtab;
-    if (ResolveInfo::Section != (*symbol)->type())
+    if (hasEntryInStrTab(**symbol))
       strtab += (*symbol)->nameSize() + 1;
   }
   symtab_local_cnt = 1 + symbols.numOfFiles() + symbols.numOfLocals() +
@@ -780,12 +765,12 @@ void GNULDBackend::sizeNamePools(Module& pModule, bool pIsStaticLink)
     /** fall through **/
     case LinkerConfig::Exec:
     case LinkerConfig::Binary: {
-      if (!pIsStaticLink) {
+      if (!config().isCodeStatic()) {
         /// Compute the size of .dynsym, .dynstr, and dynsym_local_cnt
         symEnd = symbols.dynamicEnd();
         for (symbol = symbols.localDynBegin(); symbol != symEnd; ++symbol) {
           ++dynsym;
-          if (ResolveInfo::Section != (*symbol)->type())
+          if (hasEntryInStrTab(**symbol))
             dynstr += (*symbol)->nameSize() + 1;
         }
         dynsym_local_cnt = 1 + symbols.numOfLocalDyns();
@@ -921,7 +906,7 @@ void GNULDBackend::emitSymbol32(llvm::ELF::Elf32_Sym& pSym,
 {
    // FIXME: check the endian between host and target
    // write out symbol
-   if (ResolveInfo::Section != pSymbol.type()) {
+   if (hasEntryInStrTab(pSymbol)) {
      pSym.st_name  = pStrtabsize;
      strcpy((pStrtab + pStrtabsize), pSymbol.name());
    }
@@ -944,14 +929,13 @@ void GNULDBackend::emitSymbol64(llvm::ELF::Elf64_Sym& pSym,
 {
    // FIXME: check the endian between host and target
    // write out symbol
-   if (ResolveInfo::Section != pSymbol.type()) {
+   if (hasEntryInStrTab(pSymbol)) {
      pSym.st_name  = pStrtabsize;
      strcpy((pStrtab + pStrtabsize), pSymbol.name());
    }
    else {
      pSym.st_name  = 0;
    }
-   pSym.st_name  = pStrtabsize;
    pSym.st_value = pSymbol.value();
    pSym.st_size  = getSymbolSize(pSymbol);
    pSym.st_info  = getSymbolInfo(pSymbol);
@@ -1021,7 +1005,7 @@ void GNULDBackend::emitRegNamePools(const Module& pModule,
     else
       emitSymbol64(symtab64[symIdx], **symbol, strtab, strtabsize, symIdx);
     ++symIdx;
-    if (ResolveInfo::Section != (*symbol)->type())
+    if (hasEntryInStrTab(**symbol))
       strtabsize += (*symbol)->nameSize() + 1;
   }
 }
@@ -1078,14 +1062,9 @@ void GNULDBackend::emitDynNamePools(Module& pModule, MemoryArea& pOutput)
   Module::SymbolTable& symbols = pModule.getSymbolTable();
   // emit .gnu.hash
   if (GeneralOptions::GNU  == config().options().getHashStyle() ||
-      GeneralOptions::Both == config().options().getHashStyle()) {
-    // Currently we may add output symbols after sizeNamePools(), and a
-    // non-stable sort is used in SymbolCategory::arrange(), so we just
-    // sort .dynsym right before emitting .gnu.hash
-    std::stable_sort(symbols.dynamicBegin(), symbols.dynamicEnd(),
-                     DynsymCompare());
+      GeneralOptions::Both == config().options().getHashStyle())
     emitGNUHashTab(symbols, pOutput);
-  }
+
   // emit .hash
   if (GeneralOptions::SystemV == config().options().getHashStyle() ||
       GeneralOptions::Both == config().options().getHashStyle())
@@ -1103,7 +1082,7 @@ void GNULDBackend::emitDynNamePools(Module& pModule, MemoryArea& pOutput)
     entry->setValue(symIdx);
     // sum up counters
     ++symIdx;
-    if (ResolveInfo::Section != (*symbol)->type())
+    if (hasEntryInStrTab(**symbol))
       strtabsize += (*symbol)->nameSize() + 1;
   }
 
@@ -1175,9 +1154,9 @@ void GNULDBackend::emitELFHashTab(const Module::SymbolTable& pSymtab,
   uint32_t* chain  = (bucket + nbucket);
 
   // initialize bucket
-  bzero((void*)bucket, nbucket);
+  memset((void*)bucket, 0, nbucket);
 
-  StringHash<ELF> hash_func;
+  hash::StringHash<hash::ELF> hash_func;
 
   size_t idx = 1;
   Module::const_sym_iterator symbol, symEnd = pSymtab.dynamicEnd();
@@ -1265,7 +1244,7 @@ void GNULDBackend::emitGNUHashTab(Module::SymbolTable& pSymtab,
   symEnd = pSymtab.dynamicEnd();
   for (symbol = pSymtab.localDynBegin() + symidx - 1; symbol != symEnd;
     ++symbol) {
-    StringHash<DJB> hasher;
+    hash::StringHash<hash::DJB> hasher;
     uint32_t djbhash = hasher((*symbol)->name());
     uint32_t hash = djbhash % nbucket;
     symmap.insert(std::make_pair(hash, std::make_pair(*symbol, djbhash)));
@@ -1343,6 +1322,24 @@ void GNULDBackend::emitInterp(MemoryArea& pOutput)
 
     std::memcpy(region->start(), dyld_name, interp.size());
   }
+}
+
+bool GNULDBackend::hasEntryInStrTab(const LDSymbol& pSym) const
+{
+  return ResolveInfo::Section != pSym.type();
+}
+
+void GNULDBackend::orderSymbolTable(Module& pModule)
+{
+  Module::SymbolTable& symbols = pModule.getSymbolTable();
+
+  if (GeneralOptions::GNU  == config().options().getHashStyle() ||
+      GeneralOptions::Both == config().options().getHashStyle())
+    // Currently we may add output symbols after sizeNamePools(), and a
+    // non-stable sort is used in SymbolCategory::arrange(), so we just
+    // sort .dynsym right before emitting .gnu.hash
+    std::stable_sort(symbols.dynamicBegin(), symbols.dynamicEnd(),
+                     DynsymCompare());
 }
 
 /// getSectionOrder
@@ -1423,6 +1420,9 @@ unsigned int GNULDBackend::getSectionOrder(const LDSection& pSectHdr) const
         return SHO_RO_NOTE;
 
     case LDFileFormat::EhFrame:
+      // set writable .eh_frame as relro
+      if (is_write)
+        return SHO_RELRO;
     case LDFileFormat::EhFrameHdr:
     case LDFileFormat::GCCExceptTable:
       return SHO_EXCEPTION;
@@ -1687,6 +1687,8 @@ void GNULDBackend::createProgramHdrs(Module& pModule)
   uint32_t cur_flag, prev_flag = getSegmentFlag(0);
   ELFSegment* load_seg = NULL;
   // make possible PT_LOAD segments
+  LinkerScript::AddressMap::iterator addrEnd
+                                      = pModule.getScript().addressMap().end();
   Module::iterator sect, sect_end = pModule.end();
   for (sect = pModule.begin(); sect != sect_end; ++sect) {
 
@@ -1707,8 +1709,7 @@ void GNULDBackend::createProgramHdrs(Module& pModule)
     }
     else if ((*sect)->kind() == LDFileFormat::BSS &&
              load_seg->isDataSegment() &&
-             config().scripts().addressMap().find(".bss") !=
-             (config().scripts().addressMap().end())) {
+             addrEnd != pModule.getScript().addressMap().find(".bss")) {
       // 3. create bss segment if w/ -Tbss and there is a data segment
       createPT_LOAD = true;
     }
@@ -1716,8 +1717,7 @@ void GNULDBackend::createProgramHdrs(Module& pModule)
       if ((*sect != &(file_format->getText())) &&
           (*sect != &(file_format->getData())) &&
           (*sect != &(file_format->getBSS())) &&
-          (config().scripts().addressMap().find((*sect)->name()) !=
-           config().scripts().addressMap().end()))
+          (addrEnd != pModule.getScript().addressMap().find((*sect)->name())))
         // 4. create PT_LOAD for sections in address map except for text, data,
         // and bss
         createPT_LOAD = true;
@@ -1813,16 +1813,17 @@ void GNULDBackend::createProgramHdrs(Module& pModule)
 }
 
 /// setupProgramHdrs - set up the attributes of segments
-void GNULDBackend::setupProgramHdrs()
+void GNULDBackend::setupProgramHdrs(const LinkerScript& pScript)
 {
   // update segment info
+  uint64_t seg_start_addr = getSegmentStartAddr(pScript);
   ELFSegmentFactory::iterator seg, seg_end = m_ELFSegmentTable.end();
   for (seg = m_ELFSegmentTable.begin(); seg != seg_end; ++seg) {
     ELFSegment& segment = *seg;
 
     // update PT_PHDR
     if (llvm::ELF::PT_PHDR == segment.type()) {
-      uint64_t offset, phdr_size;
+      uint64_t offset = 0, phdr_size = 0;
       if (config().targets().is32Bits()) {
         offset = sizeof(llvm::ELF::Elf32_Ehdr);
         phdr_size = sizeof(llvm::ELF::Elf32_Phdr);
@@ -1832,7 +1833,7 @@ void GNULDBackend::setupProgramHdrs()
         phdr_size = sizeof(llvm::ELF::Elf64_Phdr);
       }
       segment.setOffset(offset);
-      segment.setVaddr(segmentStartAddr() + offset);
+      segment.setVaddr(seg_start_addr + offset);
       segment.setPaddr(segment.vaddr());
       segment.setFilesz(numOfSegments() * phdr_size);
       segment.setMemsz(numOfSegments() * phdr_size);
@@ -1847,7 +1848,7 @@ void GNULDBackend::setupProgramHdrs()
     segment.setOffset(segment.front()->offset());
     if (llvm::ELF::PT_LOAD == segment.type() &&
         LDFileFormat::Null == segment.front()->kind())
-      segment.setVaddr(segmentStartAddr());
+      segment.setVaddr(seg_start_addr);
     else
       segment.setVaddr(segment.front()->addr());
     segment.setPaddr(segment.vaddr());
@@ -2001,6 +2002,8 @@ void GNULDBackend::setOutputSectionAddress(Module& pModule,
          (pSectEnd != pModule.end() &&
           (*pSectBegin)->index() <= (*pSectEnd)->index()));
 
+  const LinkerScript& script = pModule.getScript();
+  uint64_t seg_start_addr = getSegmentStartAddr(script);
   for (ELFSegmentFactory::iterator seg = elfSegmentTable().begin(),
          segEnd = elfSegmentTable().end(), prev = elfSegmentTable().end();
        seg != segEnd; prev = seg, ++seg) {
@@ -2008,28 +2011,28 @@ void GNULDBackend::setOutputSectionAddress(Module& pModule,
       continue;
 
     uint64_t start_addr = 0x0;
-    ScriptOptions::AddressMap::const_iterator mapping;
+    LinkerScript::AddressMap::const_iterator mapping;
     if ((*seg).front()->kind() == LDFileFormat::Null)
-      mapping = config().scripts().addressMap().find(".text");
+      mapping = script.addressMap().find(".text");
     else if ((*seg).isDataSegment())
-      mapping = config().scripts().addressMap().find(".data");
+      mapping = script.addressMap().find(".data");
     else if ((*seg).isBssSegment())
-      mapping = config().scripts().addressMap().find(".bss");
+      mapping = script.addressMap().find(".bss");
     else
-      mapping = config().scripts().addressMap().find((*seg).front()->name());
+      mapping = script.addressMap().find((*seg).front()->name());
 
-    if (mapping != config().scripts().addressMap().end()) {
+    if (mapping != script.addressMap().end()) {
       // use address mapping in script options
       start_addr = mapping.getEntry()->value();
     }
     else {
       if ((*seg).front()->kind() == LDFileFormat::Null) {
         // 1st PT_LOAD
-        start_addr = segmentStartAddr();
+        start_addr = seg_start_addr;
       }
       else if ((*prev).front()->kind() == LDFileFormat::Null) {
         // prev segment is 1st PT_LOAD
-        start_addr = segmentStartAddr() + (*seg).front()->offset();
+        start_addr = seg_start_addr + (*seg).front()->offset();
       }
       else {
         // Others
@@ -2175,10 +2178,10 @@ void GNULDBackend::preLayout(Module& pModule, IRBuilder& pBuilder)
 
   // change .tbss and .tdata section symbol from Local to LocalDyn category
   if (NULL != f_pTDATA)
-    pModule.getSymbolTable().changeLocalToDynamic(*f_pTDATA);
+    pModule.getSymbolTable().changeToDynamic(*f_pTDATA);
 
   if (NULL != f_pTBSS)
-    pModule.getSymbolTable().changeLocalToDynamic(*f_pTBSS);
+    pModule.getSymbolTable().changeToDynamic(*f_pTBSS);
 
   // To merge input's relocation sections into output's relocation sections.
   //
@@ -2259,7 +2262,7 @@ void GNULDBackend::postLayout(Module& pModule, IRBuilder& pBuilder)
     relax(pModule, pBuilder);
 
     // 1.4 set up the attributes of program headers
-    setupProgramHdrs();
+    setupProgramHdrs(pModule.getScript());
   }
 
   // 2. target specific post layout
@@ -2271,10 +2274,7 @@ void GNULDBackend::postProcessing(MemoryArea& pOutput)
   if (LinkerConfig::Object != config().codeGenType() &&
       config().options().hasEhFrameHdr() && getOutputFormat()->hasEhFrame()) {
     // emit eh_frame_hdr
-    if (config().targets().is32Bits())
-      m_pEhFrameHdr->emitOutput<32>(pOutput);
-    else
-      m_pEhFrameHdr->emitOutput<64>(pOutput);
+    m_pEhFrameHdr->emitOutput<32>(pOutput);
   }
 }
 

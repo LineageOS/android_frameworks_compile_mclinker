@@ -6,7 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-// This file declares the mcld::sys::fs:: namespace. It follows TR2/boost
+// This file declares the mcld::sys::fs::Path. It follows TR2/boost
 // filesystem (v3), but modified to remove exception handling and the
 // path class.
 //===----------------------------------------------------------------------===//
@@ -22,35 +22,32 @@
 #include <iosfwd>
 #include <functional>
 #include <string>
+#include <locale>
 
 namespace mcld {
 namespace sys  {
 namespace fs   {
 
 #if defined(MCLD_ON_WIN32)
-const wchar_t       separator = L'\\';
-const wchar_t       preferred_separator = L'\\';
+const char preferred_separator = '/';
+const char separator = '/';
 #else
-const char          separator = '/';
-const char          preferred_separator = '/';
+const char preferred_separator = '/';
+const char separator = '/';
 #endif
+
+const char colon = ':';
+const char dot = '.';
 
 /** \class Path
  *  \brief Path provides an abstraction for the path to a file or directory in
  *   the operating system's filesystem.
- *
- *  FIXME: current Path library only support UTF-8 chararcter set.
- *
  */
 class Path
 {
 public:
-#if defined(MCLD_ON_WIN32)
-  typedef wchar_t                            ValueType;
-#else
   typedef char                               ValueType;
-#endif
-  typedef std::basic_string<ValueType>       StringType;
+  typedef std::string                        StringType;
 
 public:
   Path();
@@ -76,16 +73,11 @@ public:
   bool isFromRoot() const;
   bool isFromPWD() const;
 
-  const StringType &native() const
-  { return m_PathName; }
-
-  StringType &native()
-  { return m_PathName; }
+  const StringType& native() const { return m_PathName; }
+  StringType&       native()       { return m_PathName; }
 
   const ValueType* c_str() const
   { return m_PathName.c_str(); }
-
-  std::string string() const;
 
   // -----  decomposition  ----- //
   Path parent_path() const;
@@ -109,32 +101,36 @@ bool operator==(const Path& pLHS,const Path& pRHS);
 bool operator!=(const Path& pLHS,const Path& pRHS);
 Path operator+(const Path& pLHS, const Path& pRHS);
 
-//--------------------------------------------------------------------------//
-//                              non-member functions                        //
-//--------------------------------------------------------------------------//
-
-/// is_separator - is the given character a separator of a path.
-// @param value a character
-// @result true if \a value is a path separator character on the host OS
-//bool status_known(FileStatus f) { return f.type() != StatusError; }
-
-bool is_separator(char value);
-
+//===----------------------------------------------------------------------===//
+// Non-member Functions
+//===----------------------------------------------------------------------===//
 bool exists(const Path &pPath);
 
 bool is_directory(const Path &pPath);
 
+template <class Char, class Traits>
+inline std::basic_ostream<Char, Traits>&
+operator<<(std::basic_ostream<Char, Traits>& pOS, const Path& pPath)
+{
+  return pOS << pPath.native();
+}
 
-std::ostream &operator<<(std::ostream& pOS, const Path& pPath);
+template <class Char, class Traits>
+inline std::basic_istream<Char, Traits>&
+operator>>(std::basic_istream<Char, Traits>& pOS, Path& pPath)
+{
+  return pOS >> pPath.native();
+}
 
-std::istream &operator>>(std::istream& pOS, Path& pPath);
+inline llvm::raw_ostream&
+operator<<(llvm::raw_ostream& pOS, const Path& pPath)
+{
+  return pOS << pPath.native();
+}
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Path &pPath);
-
-
-//--------------------------------------------------------------------------------------//
-//                     class path member template implementation                        //
-//--------------------------------------------------------------------------------------//
+//===----------------------------------------------------------------------===//
+// class path member template implementation
+//===----------------------------------------------------------------------===//
 template <class InputIterator>
 Path& Path::assign(InputIterator begin, InputIterator end)
 {
@@ -160,9 +156,9 @@ Path& Path::append(InputIterator begin, InputIterator end)
 } // namespace of sys
 } // namespace of mcld
 
-//-------------------------------------------------------------------------//
-//                              STL compatible functions                   //
-//-------------------------------------------------------------------------//
+//===----------------------------------------------------------------------===//
+// STL compatible functions
+//===----------------------------------------------------------------------===//
 namespace std {
 
 template<>
