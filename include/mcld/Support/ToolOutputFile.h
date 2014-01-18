@@ -36,7 +36,7 @@ class raw_mem_ostream;
 class ToolOutputFile
 {
 public:
-  ToolOutputFile(const sys::fs::Path& pPath,
+  ToolOutputFile(const std::string& pPath,
                  FileHandle::OpenMode pMode,
                  FileHandle::Permission pPermission);
 
@@ -59,7 +59,7 @@ private:
   class CleanupInstaller
   {
   public:
-    explicit CleanupInstaller(const sys::fs::Path& pPath);
+    explicit CleanupInstaller(const std::string& pPath);
 
     ~CleanupInstaller();
 
@@ -67,7 +67,7 @@ private:
     bool Keep;
 
   private:
-    sys::fs::Path m_Path;
+    std::string m_Path;
   }; 
 
 private:

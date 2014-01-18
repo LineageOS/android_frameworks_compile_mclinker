@@ -17,7 +17,6 @@
 #include <mcld/Support/MsgHandling.h>
 
 #include <llvm/Support/Signals.h>
-#include <llvm/Support/Path.h>
 #include <llvm/Support/FormattedStream.h>
 
 using namespace mcld;
@@ -25,31 +24,31 @@ using namespace mcld;
 //===----------------------------------------------------------------------===//
 // CleanupInstaller
 //===----------------------------------------------------------------------===//
-ToolOutputFile::CleanupInstaller::CleanupInstaller(const sys::fs::Path& pPath)
+ToolOutputFile::CleanupInstaller::CleanupInstaller(const std::string& pPath)
   : Keep(false), m_Path(pPath) {
   // Arrange for the file to be deleted if the process is killed.
-  if ("-" != m_Path.native())
-    llvm::sys::RemoveFileOnSignal(llvm::sys::Path(m_Path.native()));
+  if ("-" != m_Path)
+    llvm::sys::RemoveFileOnSignal(m_Path);
 }
 
 ToolOutputFile::CleanupInstaller::~CleanupInstaller()
 {
   // Delete the file if the client hasn't told us not to.
   // FIXME: In Windows, some path in CJK characters can not be removed by LLVM
-  // llvm::sys::Path
-  if (!Keep && "_" != m_Path.native())
-    llvm::sys::Path(m_Path.native()).eraseFromDisk();
+  // sys::fs::remove
+  if (!Keep && "_" != m_Path)
+    llvm::sys::fs::remove(m_Path);
 
   // Ok, the file is successfully written and closed, or deleted. There's no
   // further need to clean it up on signals.
-  if ("_" != m_Path.native())
-    llvm::sys::DontRemoveFileOnSignal(llvm::sys::Path(m_Path.native()));
+  if ("_" != m_Path)
+    llvm::sys::DontRemoveFileOnSignal(m_Path);
 }
 
 //===----------------------------------------------------------------------===//
 // ToolOutputFile
 //===----------------------------------------------------------------------===//
-ToolOutputFile::ToolOutputFile(const sys::fs::Path& pPath,
+ToolOutputFile::ToolOutputFile(const std::string& pPath,
                                FileHandle::OpenMode pMode,
                                FileHandle::Permission pPermission)
   : m_Installer(pPath),
