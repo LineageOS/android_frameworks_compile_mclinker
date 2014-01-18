@@ -1,4 +1,3 @@
-ifeq (0,1)
 LOCAL_PATH := $(call my-dir)
 MCLD_ROOT_PATH := $(LOCAL_PATH)
 # For mcld.mk
@@ -36,4 +35,3 @@ subdirs += \
 
 include $(MCLD_ROOT_PATH)/mcld.mk
 include $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk, $(subdirs)))
-endif
