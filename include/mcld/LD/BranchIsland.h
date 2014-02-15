@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_LD_BRANCH_ISLAND_H
-#define MCLD_LD_BRANCH_ISLAND_H
+#ifndef MCLD_LD_BRANCHISLAND_H
+#define MCLD_LD_BRANCHISLAND_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -125,7 +125,7 @@ private:
       size_t operator() (const Key& KEY) const
       {
         llvm::StringRef sym_name(KEY.symbol()->name());
-        hash::StringHash<hash::ELF> str_hasher;
+        hash::StringHash<hash::DJB> str_hasher;
         return (size_t((uintptr_t)KEY.prototype())) ^
                str_hasher(sym_name) ^
                KEY.addend();

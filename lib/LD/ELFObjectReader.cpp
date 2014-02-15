@@ -8,20 +8,22 @@
 //===----------------------------------------------------------------------===//
 #include <mcld/LD/ELFObjectReader.h>
 
-#include <string>
-#include <cassert>
-
-#include <llvm/Support/ELF.h>
-#include <llvm/ADT/Twine.h>
-
 #include <mcld/IRBuilder.h>
-#include <mcld/MC/MCLDInput.h>
+#include <mcld/MC/Input.h>
 #include <mcld/LD/ELFReader.h>
 #include <mcld/LD/EhFrameReader.h>
 #include <mcld/LD/EhFrame.h>
 #include <mcld/Target/GNULDBackend.h>
 #include <mcld/Support/MsgHandling.h>
+#include <mcld/Support/MemoryArea.h>
 #include <mcld/Object/ObjectBuilder.h>
+
+#include <llvm/Support/ELF.h>
+#include <llvm/ADT/Twine.h>
+#include <llvm/ADT/StringRef.h>
+
+#include <string>
+#include <cassert>
 
 using namespace mcld;
 
@@ -57,27 +59,34 @@ ELFObjectReader::~ELFObjectReader()
 }
 
 /// isMyFormat
-bool ELFObjectReader::isMyFormat(Input &pInput) const
+bool ELFObjectReader::isMyFormat(Input &pInput, bool &pContinue) const
 {
   assert(pInput.hasMemArea());
 
   // Don't warning about the frequently requests.
   // MemoryArea has a list of cache to handle this.
   size_t hdr_size = m_pELFReader->getELFHeaderSize();
-  MemoryRegion* region = pInput.memArea()->request(pInput.fileOffset(),
+  if (pInput.memArea()->size() < hdr_size)
+    return false;
+
+  llvm::StringRef region = pInput.memArea()->request(pInput.fileOffset(),
                                                      hdr_size);
 
-  uint8_t* ELF_hdr = region->start();
+  const char* ELF_hdr = region.begin();
   bool result = true;
-  if (!m_pELFReader->isELF(ELF_hdr))
+  if (!m_pELFReader->isELF(ELF_hdr)) {
+    pContinue = true;
     result = false;
-  else if (!m_pELFReader->isMyEndian(ELF_hdr))
+  } else if (Input::Object != m_pELFReader->fileType(ELF_hdr)) {
+    pContinue = true;
     result = false;
-  else if (!m_pELFReader->isMyMachine(ELF_hdr))
+  } else if (!m_pELFReader->isMyEndian(ELF_hdr)) {
+    pContinue = false;
     result = false;
-  else if (Input::Object != m_pELFReader->fileType(ELF_hdr))
+  } else if (!m_pELFReader->isMyMachine(ELF_hdr)) {
+    pContinue = false;
     result = false;
-  pInput.memArea()->release(region);
+  }
   return result;
 }
 
@@ -87,11 +96,13 @@ bool ELFObjectReader::readHeader(Input& pInput)
   assert(pInput.hasMemArea());
 
   size_t hdr_size = m_pELFReader->getELFHeaderSize();
-  MemoryRegion* region = pInput.memArea()->request(pInput.fileOffset(),
+  if (pInput.memArea()->size() < hdr_size)
+    return false;
+
+  llvm::StringRef region = pInput.memArea()->request(pInput.fileOffset(),
                                                      hdr_size);
-  uint8_t* ELF_hdr = region->start();
+  const char* ELF_hdr = region.begin();
   bool result = m_pELFReader->readSectionHeaders(pInput, ELF_hdr);
-  pInput.memArea()->release(region);
   return result;
 }
 
@@ -110,9 +121,9 @@ bool ELFObjectReader::readSections(Input& pInput)
       case LDFileFormat::Group: {
         assert(NULL != (*section)->getLink());
         ResolveInfo* signature =
-              m_pELFReader->readSignature(pInput,
-                                          *(*section)->getLink(),
-                                          (*section)->getInfo());
+            m_pELFReader->readSignature(pInput,
+                                        *(*section)->getLink(),
+                                        (*section)->getInfo());
 
         bool exist = false;
         if (0 == signature->nameSize() &&
@@ -127,18 +138,17 @@ bool ELFObjectReader::readSections(Input& pInput)
         if (exist) {
           // if this is not the first time we see this group signature, then
           // ignore all the members in this group (set Ignore)
-          MemoryRegion* region = pInput.memArea()->request(
+          llvm::StringRef region = pInput.memArea()->request(
                pInput.fileOffset() + (*section)->offset(), (*section)->size());
-          llvm::ELF::Elf32_Word* value =
-                     reinterpret_cast<llvm::ELF::Elf32_Word*>(region->start());
+          const llvm::ELF::Elf32_Word* value =
+              reinterpret_cast<const llvm::ELF::Elf32_Word*>(region.begin());
 
-          size_t size = region->size() / sizeof(llvm::ELF::Elf32_Word);
+          size_t size = region.size() / sizeof(llvm::ELF::Elf32_Word);
           if (llvm::ELF::GRP_COMDAT == *value) {
             for (size_t index = 1; index < size; ++index) {
               pInput.context()->getSection(value[index])->setKind(LDFileFormat::Ignore);
             }
           }
-          pInput.memArea()->release(region);
         }
         ResolveInfo::Destroy(signature);
         break;
@@ -212,10 +222,9 @@ bool ELFObjectReader::readSections(Input& pInput)
       case LDFileFormat::EhFrame: {
         EhFrame* eh_frame = IRBuilder::CreateEhFrame(**section);
 
-        if (m_Config.options().hasEhFrameHdr() &&
+        // We don't really parse EhFrame if this is a partial linking
+        if ((m_Config.codeGenType() != LinkerConfig::Object) &&
             (m_ReadFlag & ParseEhFrame)) {
-
-          // if --eh-frame-hdr option is given, parse .eh_frame.
           if (!m_pEhFrameReader->read<32, true>(pInput, *eh_frame)) {
             // if we failed to parse a .eh_frame, we should not parse the rest
             // .eh_frame.
@@ -284,17 +293,15 @@ bool ELFObjectReader::readSymbols(Input& pInput)
     return false;
   }
 
-  MemoryRegion* symtab_region = pInput.memArea()->request(
-             pInput.fileOffset() + symtab_shdr->offset(), symtab_shdr->size());
-  MemoryRegion* strtab_region = pInput.memArea()->request(
-             pInput.fileOffset() + strtab_shdr->offset(), strtab_shdr->size());
-  char* strtab = reinterpret_cast<char*>(strtab_region->start());
+  llvm::StringRef symtab_region = pInput.memArea()->request(
+      pInput.fileOffset() + symtab_shdr->offset(), symtab_shdr->size());
+  llvm::StringRef strtab_region = pInput.memArea()->request(
+      pInput.fileOffset() + strtab_shdr->offset(), strtab_shdr->size());
+  const char* strtab = strtab_region.begin();
   bool result = m_pELFReader->readSymbols(pInput,
                                           m_Builder,
-                                          *symtab_region,
+                                          symtab_region,
                                           strtab);
-  pInput.memArea()->release(symtab_region);
-  pInput.memArea()->release(strtab_region);
   return result;
 }
 
@@ -310,30 +317,26 @@ bool ELFObjectReader::readRelocations(Input& pInput)
 
     uint32_t offset = pInput.fileOffset() + (*rs)->offset();
     uint32_t size = (*rs)->size();
-    MemoryRegion* region = mem->request(offset, size);
+    llvm::StringRef region = mem->request(offset, size);
     IRBuilder::CreateRelocData(**rs); ///< create relocation data for the header
     switch ((*rs)->type()) {
       case llvm::ELF::SHT_RELA: {
-        if (!m_pELFReader->readRela(pInput, **rs, *region)) {
-          mem->release(region);
+        if (!m_pELFReader->readRela(pInput, **rs, region)) {
           return false;
         }
         break;
       }
       case llvm::ELF::SHT_REL: {
-        if (!m_pELFReader->readRel(pInput, **rs, *region)) {
-          mem->release(region);
+        if (!m_pELFReader->readRel(pInput, **rs, region)) {
           return false;
         }
         break;
       }
       default: { ///< should not enter
-        mem->release(region);
         return false;
       }
     } // end of switch
 
-    mem->release(region);
   } // end of for all relocation data
 
   return true;

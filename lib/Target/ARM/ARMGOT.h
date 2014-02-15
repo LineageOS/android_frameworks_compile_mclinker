@@ -12,14 +12,14 @@
 #include <gtest.h>
 #endif
 
-#include <llvm/ADT/DenseMap.h>
-
 #include <mcld/Target/GOT.h>
+#include <mcld/Support/MemoryRegion.h>
+#include <llvm/ADT/DenseMap.h>
+#include <vector>
 
 namespace mcld {
 
 class LDSection;
-class MemoryRegion;
 
 /** \class ARMGOTEntry
  *  \brief GOT Entry with size of 4 bytes
@@ -56,17 +56,10 @@ public:
 
   ~ARMGOT();
 
-  void reserve(size_t pNum = 1);
+  ARMGOTEntry* createGOT();
+  ARMGOTEntry* createGOTPLT();
 
-  void reserveGOTPLT();
-
-  void reserveGOT();
-
-  ARMGOTEntry* consume();
-
-  ARMGOTEntry* consumeGOT();
-
-  ARMGOTEntry* consumeGOTPLT();
+  void finalizeSectionSize();
 
   uint64_t emit(MemoryRegion& pRegion);
 
@@ -77,20 +70,19 @@ public:
   bool hasGOT1() const;
 
 private:
-  struct Part {
-  public:
-    Part() : front(NULL), last_used(NULL) { }
-
-  public:
-    ARMGOTEntry* front;
-    ARMGOTEntry* last_used;
-  };
+  typedef std::vector<ARMGOTEntry*> EntryListType;
+  typedef EntryListType::iterator entry_iterator;
+  typedef EntryListType::const_iterator const_entry_iterator;
 
 private:
-  Part m_GOTPLT;
-  Part m_GOT;
+  ARMGOTEntry* m_pGOTPLTFront;
+  ARMGOTEntry* m_pGOTFront;
 
-  ARMGOTEntry* m_pLast; ///< the last consumed entry
+  /// m_GOTPLTEntries - a list of gotplt entries
+  EntryListType m_GOTPLT;
+
+  /// m_GOTEntris - a list of got entries
+  EntryListType m_GOT;
 };
 
 } // namespace of mcld

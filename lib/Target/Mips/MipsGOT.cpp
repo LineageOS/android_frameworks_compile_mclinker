@@ -11,7 +11,6 @@
 #include <llvm/Support/ELF.h>
 
 #include <mcld/LD/ResolveInfo.h>
-#include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Target/OutputRelocSection.h>
 
@@ -19,19 +18,14 @@
 #include "MipsRelocator.h"
 
 namespace {
-  const size_t MipsGOT0Num = 1;
+  const uint32_t Mips32ModulePtr = 1 << 31;
+  const uint64_t Mips64ModulePtr = 1ull << 63;
+  const size_t MipsGOT0Num = 2;
   const size_t MipsGOTGpOffset = 0x7FF0;
   const size_t MipsGOTSize = MipsGOTGpOffset + 0x7FFF;
 }
 
 using namespace mcld;
-
-//===----------------------------------------------------------------------===//
-// MipsGOTEntry
-//===----------------------------------------------------------------------===//
-MipsGOTEntry::MipsGOTEntry(uint64_t pContent, SectionData* pParent)
-   : GOT::Entry<4>(pContent, pParent)
-{}
 
 //===----------------------------------------------------------------------===//
 // MipsGOT::GOTMultipart
@@ -57,7 +51,7 @@ void MipsGOT::GOTMultipart::consumeLocal()
   assert(m_ConsumedLocal < m_LocalNum &&
          "Consumed too many local GOT entries");
   ++m_ConsumedLocal;
-  m_pLastLocal = llvm::cast<MipsGOTEntry>(m_pLastLocal->getNextNode());
+  m_pLastLocal = m_pLastLocal->getNextNode();
 }
 
 void MipsGOT::GOTMultipart::consumeGlobal()
@@ -65,7 +59,29 @@ void MipsGOT::GOTMultipart::consumeGlobal()
   assert(m_ConsumedGlobal < m_GlobalNum &&
          "Consumed too many global GOT entries");
   ++m_ConsumedGlobal;
-  m_pLastGlobal = llvm::cast<MipsGOTEntry>(m_pLastGlobal->getNextNode());
+  m_pLastGlobal = m_pLastGlobal->getNextNode();
+}
+
+//===----------------------------------------------------------------------===//
+// MipsGOT::LocalEntry
+//===----------------------------------------------------------------------===//
+MipsGOT::LocalEntry::LocalEntry(const ResolveInfo* pInfo,
+                                Relocation::DWord addend, bool isGot16)
+  : m_pInfo(pInfo),
+    m_Addend(addend),
+    m_IsGot16(isGot16)
+{
+}
+
+bool MipsGOT::LocalEntry::operator<(const LocalEntry &O) const
+{
+  if (m_pInfo != O.m_pInfo)
+    return m_pInfo < O.m_pInfo;
+
+  if (m_Addend != O.m_Addend)
+    return m_Addend < O.m_Addend;
+
+  return m_IsGot16 < O.m_IsGot16;
 }
 
 //===----------------------------------------------------------------------===//
@@ -78,16 +94,15 @@ MipsGOT::MipsGOT(LDSection& pSection)
 {
 }
 
-SizeTraits<32>::Address MipsGOT::getGPDispAddress() const
+uint64_t MipsGOT::getGPDispAddress() const
 {
   return addr() + MipsGOTGpOffset;
 }
 
 void MipsGOT::reserve(size_t pNum)
 {
-  for (size_t i = 0; i < pNum; i++) {
-    new MipsGOTEntry(0, m_SectionData);
-  }
+  for (size_t i = 0; i < pNum; i++)
+    createEntry(0, m_SectionData);
 }
 
 bool MipsGOT::hasGOT1() const
@@ -104,10 +119,10 @@ void MipsGOT::finalizeScanning(OutputRelocSection& pRelDyn)
 {
   for (MultipartListType::iterator it = m_MultipartList.begin();
        it != m_MultipartList.end(); ++it) {
-    reserve(MipsGOT0Num);
-    it->m_pLastLocal = llvm::cast<MipsGOTEntry>(&m_SectionData->back());
+    reserveHeader();
+    it->m_pLastLocal = &m_SectionData->back();
     reserve(it->m_LocalNum);
-    it->m_pLastGlobal = llvm::cast<MipsGOTEntry>(&m_SectionData->back());
+    it->m_pLastGlobal = &m_SectionData->back();
     reserve(it->m_GlobalNum);
 
     if (it == m_MultipartList.begin())
@@ -137,20 +152,6 @@ bool MipsGOT::dynSymOrderCompare(const LDSymbol* pX, const LDSymbol* pY) const
   return itX == m_SymbolOrderMap.end() && itY != m_SymbolOrderMap.end();
 }
 
-uint64_t MipsGOT::emit(MemoryRegion& pRegion)
-{
-  uint32_t* buffer = reinterpret_cast<uint32_t*>(pRegion.getBuffer());
-
-  uint64_t result = 0;
-  for (iterator it = begin(), ie = end();
-       it != ie; ++it, ++buffer) {
-    MipsGOTEntry* got = &(llvm::cast<MipsGOTEntry>((*it)));
-    *buffer = static_cast<uint32_t>(got->getValue());
-    result += got->size();
-  }
-  return result;
-}
-
 void MipsGOT::initGOTList()
 {
   m_SymbolOrderMap.clear();
@@ -170,8 +171,8 @@ void MipsGOT::changeInput()
 {
   m_MultipartList.back().m_Inputs.insert(m_pInput);
 
-  for (SymbolSetType::iterator it = m_InputLocalSymbols.begin(),
-                               end = m_InputLocalSymbols.end();
+  for (LocalSymbolSetType::iterator it = m_InputLocalSymbols.begin(),
+                                    end = m_InputLocalSymbols.end();
        it != end; ++it)
     m_MergedLocalSymbols.insert(*it);
 
@@ -193,7 +194,7 @@ bool MipsGOT::isGOTFull() const
 
   gotCount += 1;
 
-  return (gotCount * mcld::MipsGOTEntry::EntrySize) > MipsGOTSize;
+  return gotCount * getEntrySize() > MipsGOTSize;
 }
 
 void MipsGOT::split()
@@ -234,23 +235,27 @@ void MipsGOT::finalizeScan(const Input& pInput)
 {
 }
 
-bool MipsGOT::reserveLocalEntry(ResolveInfo& pInfo)
+bool MipsGOT::reserveLocalEntry(ResolveInfo& pInfo, int reloc,
+                                Relocation::DWord pAddend)
 {
-  if (pInfo.type() != ResolveInfo::Section) {
-    if (m_InputLocalSymbols.count(&pInfo))
-      return false;
+  LocalEntry entry(&pInfo, pAddend, reloc == llvm::ELF::R_MIPS_GOT16);
 
-    if (m_MergedLocalSymbols.count(&pInfo)) {
-      m_InputLocalSymbols.insert(&pInfo);
-      return false;
-    }
+  if (m_InputLocalSymbols.count(entry))
+    // Do nothing, if we have seen this symbol
+    // in the current input already.
+    return false;
+
+  if (m_MergedLocalSymbols.count(entry)) {
+    // We have seen this symbol in previous inputs.
+    // Remember that it exists in the current input too.
+    m_InputLocalSymbols.insert(entry);
+    return false;
   }
 
   if (isGOTFull())
     split();
 
-  if (pInfo.type() != ResolveInfo::Section)
-    m_InputLocalSymbols.insert(&pInfo);
+  m_InputLocalSymbols.insert(entry);
 
   ++m_MultipartList.back().m_LocalNum;
   return true;
@@ -285,7 +290,7 @@ bool MipsGOT::isPrimaryGOTConsumed()
   return m_CurrentGOTPart > 0;
 }
 
-MipsGOTEntry* MipsGOT::consumeLocal()
+Fragment* MipsGOT::consumeLocal()
 {
   assert(m_CurrentGOTPart < m_MultipartList.size() && "GOT number is out of range!");
 
@@ -297,7 +302,7 @@ MipsGOTEntry* MipsGOT::consumeLocal()
   return m_MultipartList[m_CurrentGOTPart].m_pLastLocal;
 }
 
-MipsGOTEntry* MipsGOT::consumeGlobal()
+Fragment* MipsGOT::consumeGlobal()
 {
   assert(m_CurrentGOTPart < m_MultipartList.size() && "GOT number is out of range!");
 
@@ -309,7 +314,7 @@ MipsGOTEntry* MipsGOT::consumeGlobal()
   return m_MultipartList[m_CurrentGOTPart].m_pLastGlobal;
 }
 
-SizeTraits<32>::Address MipsGOT::getGPAddr(const Input& pInput) const
+uint64_t MipsGOT::getGPAddr(const Input& pInput) const
 {
   uint64_t gotSize = 0;
   for (MultipartListType::const_iterator it = m_MultipartList.begin();
@@ -322,32 +327,59 @@ SizeTraits<32>::Address MipsGOT::getGPAddr(const Input& pInput) const
       gotSize += getGlobalNum() - it->m_GlobalNum;
   }
 
-  return addr() + gotSize * MipsGOTEntry::EntrySize + MipsGOTGpOffset;
+  return addr() + gotSize * getEntrySize() + MipsGOTGpOffset;
 }
 
-SizeTraits<32>::Offset MipsGOT::getGPRelOffset(const Input& pInput,
-                                               const MipsGOTEntry& pEntry) const
+uint64_t MipsGOT::getGPRelOffset(const Input& pInput,
+                                 const Fragment& pEntry) const
 {
-  SizeTraits<32>::Address gpAddr = getGPAddr(pInput);
-  return addr() + pEntry.getOffset() - gpAddr;
+  return addr() + pEntry.getOffset() - getGPAddr(pInput);
 }
 
-void MipsGOT::recordEntry(const ResolveInfo* pInfo, MipsGOTEntry* pEntry)
+void MipsGOT::recordGlobalEntry(const ResolveInfo* pInfo, Fragment* pEntry)
 {
   GotEntryKey key;
   key.m_GOTPage = m_CurrentGOTPart;
   key.m_pInfo = pInfo;
-  m_GotEntriesMap[key] = pEntry;
+  key.m_Addend = 0;
+  m_GotGlobalEntriesMap[key] = pEntry;
 }
 
-MipsGOTEntry* MipsGOT::lookupEntry(const ResolveInfo* pInfo)
+Fragment* MipsGOT::lookupGlobalEntry(const ResolveInfo* pInfo)
 {
   GotEntryKey key;
   key.m_GOTPage= m_CurrentGOTPart;
   key.m_pInfo = pInfo;
-  GotEntryMapType::iterator it = m_GotEntriesMap.find(key);
+  key.m_Addend = 0;
+  GotEntryMapType::iterator it = m_GotGlobalEntriesMap.find(key);
 
-  if (it == m_GotEntriesMap.end())
+  if (it == m_GotGlobalEntriesMap.end())
+    return NULL;
+
+  return it->second;
+}
+
+void MipsGOT::recordLocalEntry(const ResolveInfo* pInfo,
+                               Relocation::DWord pAddend,
+                               Fragment* pEntry)
+{
+  GotEntryKey key;
+  key.m_GOTPage = m_CurrentGOTPart;
+  key.m_pInfo = pInfo;
+  key.m_Addend = pAddend;
+  m_GotLocalEntriesMap[key] = pEntry;
+}
+
+Fragment* MipsGOT::lookupLocalEntry(const ResolveInfo* pInfo,
+                                    Relocation::DWord pAddend)
+{
+  GotEntryKey key;
+  key.m_GOTPage= m_CurrentGOTPart;
+  key.m_pInfo = pInfo;
+  key.m_Addend = pAddend;
+  GotEntryMapType::iterator it = m_GotLocalEntriesMap.find(key);
+
+  if (it == m_GotLocalEntriesMap.end())
     return NULL;
 
   return it->second;
@@ -362,4 +394,86 @@ size_t MipsGOT::getLocalNum() const
 size_t MipsGOT::getGlobalNum() const
 {
   return m_SymbolOrderMap.size();
+}
+
+//===----------------------------------------------------------------------===//
+// Mips32GOT
+//===----------------------------------------------------------------------===//
+Mips32GOT::Mips32GOT(LDSection& pSection)
+  : MipsGOT(pSection)
+{}
+
+void Mips32GOT::setEntryValue(Fragment* entry, uint64_t pValue)
+{
+  llvm::cast<Mips32GOTEntry>(entry)->setValue(pValue);
+}
+
+uint64_t Mips32GOT::emit(MemoryRegion& pRegion)
+{
+  uint32_t* buffer = reinterpret_cast<uint32_t*>(pRegion.begin());
+
+  uint64_t result = 0;
+  for (iterator it = begin(), ie = end(); it != ie; ++it, ++buffer) {
+    Mips32GOTEntry* got = &(llvm::cast<Mips32GOTEntry>((*it)));
+    *buffer = static_cast<uint32_t>(got->getValue());
+    result += got->size();
+  }
+  return result;
+}
+
+Fragment* Mips32GOT::createEntry(uint64_t pValue, SectionData* pParent)
+{
+  return new Mips32GOTEntry(pValue, pParent);
+}
+
+size_t Mips32GOT::getEntrySize() const
+{
+  return Mips32GOTEntry::EntrySize;
+}
+
+void Mips32GOT::reserveHeader()
+{
+  createEntry(0, m_SectionData);
+  createEntry(Mips32ModulePtr, m_SectionData);
+}
+
+//===----------------------------------------------------------------------===//
+// Mips64GOT
+//===----------------------------------------------------------------------===//
+Mips64GOT::Mips64GOT(LDSection& pSection)
+  : MipsGOT(pSection)
+{}
+
+void Mips64GOT::setEntryValue(Fragment* entry, uint64_t pValue)
+{
+  llvm::cast<Mips64GOTEntry>(entry)->setValue(pValue);
+}
+
+uint64_t Mips64GOT::emit(MemoryRegion& pRegion)
+{
+  uint64_t* buffer = reinterpret_cast<uint64_t*>(pRegion.begin());
+
+  uint64_t result = 0;
+  for (iterator it = begin(), ie = end(); it != ie; ++it, ++buffer) {
+    Mips64GOTEntry* got = &(llvm::cast<Mips64GOTEntry>((*it)));
+    *buffer = static_cast<uint64_t>(got->getValue());
+    result += got->size();
+  }
+  return result;
+}
+
+Fragment* Mips64GOT::createEntry(uint64_t pValue, SectionData* pParent)
+{
+  return new Mips64GOTEntry(pValue, pParent);
+}
+
+size_t Mips64GOT::getEntrySize() const
+{
+  return Mips64GOTEntry::EntrySize;
+}
+
+void Mips64GOT::reserveHeader()
+{
+  createEntry(0, m_SectionData);
+  createEntry(Mips64ModulePtr, m_SectionData);
 }

@@ -14,6 +14,7 @@
 
 #include <mcld/Module.h>
 #include <mcld/LinkerConfig.h>
+#include <mcld/LinkerScript.h>
 #include <mcld/InputTree.h>
 #include <mcld/Linker.h>
 #include <mcld/IRBuilder.h>
@@ -26,7 +27,6 @@
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Support/FileHandle.h>
 #include <mcld/Support/raw_ostream.h>
-#include <mcld/Support/MemoryArea.h>
 
 #include <llvm/IR/Module.h>
 #include <llvm/Support/CommandLine.h>
@@ -186,15 +186,24 @@ ArgEndGroupListAlias(")",
                      cl::aliasopt(ArgEndGroupList));
 
 //===----------------------------------------------------------------------===//
+// --defsym
+//===----------------------------------------------------------------------===//
+static cl::list<std::string>
+ArgDefSymList("defsym",
+              cl::ZeroOrMore,
+              cl::desc("Define a symbol"),
+              cl::value_desc("symbol=expression"));
+
+//===----------------------------------------------------------------------===//
 // MCLinker
 //===----------------------------------------------------------------------===//
 MCLinker::MCLinker(LinkerConfig& pConfig,
                    mcld::Module& pModule,
-                   MemoryArea& pOutput)
+                   FileHandle& pFileHandle)
   : MachineFunctionPass(m_ID),
     m_Config(pConfig),
     m_Module(pModule),
-    m_Output(pOutput),
+    m_FileHandle(pFileHandle),
     m_pBuilder(NULL),
     m_pLinker(NULL) {
 }
@@ -225,7 +234,7 @@ bool MCLinker::doFinalization(llvm::Module &pM)
   if (!m_pLinker->link(m_Module, *m_pBuilder))
     return true;
 
-  if (!m_pLinker->emit(m_Output))
+  if (!m_pLinker->emit(m_Module, m_FileHandle.handler()))
     return true;
 
   return false;
@@ -258,9 +267,33 @@ void MCLinker::initializeInputTree(IRBuilder& pBuilder)
                        ArgBStaticList.size() +
                        ArgStartGroupList.size() +
                        ArgEndGroupList.size() +
+                       ArgDefSymList.size() +
                        1; // bitcode
   std::vector<InputAction*> actions;
   actions.reserve(num_actions);
+
+  // -----  scripts  ----- //
+  /// -T
+  if (!m_Config.options().getScriptList().empty()) {
+    GeneralOptions::const_script_iterator ii, ie = m_Config.options().script_end();
+    for (ii = m_Config.options().script_begin(); ii != ie; ++ii) {
+      actions.push_back(new ScriptAction(0x0,
+                                         *ii,
+                                         ScriptFile::LDScript,
+                                         m_Module.getScript().directories()));
+      actions.push_back(new ContextAction(0x0));
+      actions.push_back(new MemoryAreaAction(0x0, FileHandle::ReadOnly));
+    }
+  }
+
+  /// --defsym
+  cl::list<std::string>::iterator defsym, dsBegin, dsEnd;
+  dsBegin = ArgDefSymList.begin();
+  dsEnd = ArgDefSymList.end();
+  for (defsym = dsBegin; defsym != dsEnd; ++defsym) {
+    unsigned int pos = ArgDefSymList.getPosition(defsym - dsBegin);
+    actions.push_back(new DefSymAction(pos, *defsym));
+  }
 
   // -----  inputs  ----- //
   cl::list<mcld::sys::fs::Path>::iterator input, inBegin, inEnd;
@@ -277,11 +310,10 @@ void MCLinker::initializeInputTree(IRBuilder& pBuilder)
   cl::list<std::string>::iterator namespec, nsBegin, nsEnd;
   nsBegin = ArgNameSpecList.begin();
   nsEnd = ArgNameSpecList.end();
-  mcld::Module& module = pBuilder.getModule();
   for (namespec = nsBegin; namespec != nsEnd; ++namespec) {
     unsigned int pos = ArgNameSpecList.getPosition(namespec - nsBegin);
     actions.push_back(new NamespecAction(pos, *namespec,
-                                         module.getScript().directories()));
+                                         m_Module.getScript().directories()));
     actions.push_back(new ContextAction(pos));
     actions.push_back(new MemoryAreaAction(pos, FileHandle::ReadOnly));
   }

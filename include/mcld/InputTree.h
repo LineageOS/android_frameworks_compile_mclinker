@@ -6,15 +6,15 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_MC_INPUT_TREE_H
-#define MCLD_MC_INPUT_TREE_H
+#ifndef MCLD_INPUTTREE_H
+#define MCLD_INPUTTREE_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
 
 #include <mcld/ADT/BinTree.h>
 #include <mcld/ADT/TypeTraits.h>
-#include <mcld/MC/MCLDInput.h>
+#include <mcld/MC/Input.h>
 #include <mcld/Support/Path.h>
 
 #include <string>
@@ -182,16 +182,16 @@ public:
   //  @param DIRECT the direction of the connecting edge of the parent node.
   //  @param position the parent node
   //  @param value the value being pushed.
-  template<size_t DIRECT, class Pos>
-  BinaryTree& join(Pos position, const Input& value) {
+  template<size_t DIRECT>
+  BinaryTree& join(TreeIteratorBase& pPosition, const Input& value) {
     node_type *node = BinaryTreeBase<Input>::createNode();
     node->data = const_cast<Input*>(&value);
-    if (position.isRoot())
-      proxy::hook<TreeIteratorBase::Leftward>(position.m_pNode,
-                          const_cast<const node_type*>(node));
+
+    if (pPosition.isRoot())
+      pPosition.hook<TreeIteratorBase::Leftward>(node);
     else
-      proxy::hook<DIRECT>(position.m_pNode,
-                          const_cast<const node_type*>(node));
+      pPosition.hook<DIRECT>(node);
+
     return *this;
   }
 
@@ -200,14 +200,13 @@ public:
   //  @param position the parent node
   //  @param the tree being joined.
   //  @return the joined tree
-  template<size_t DIRECT, class Pos>
-  BinaryTree& merge(Pos position, BinaryTree& pTree) {
+  template<size_t DIRECT>
+  BinaryTree& merge(TreeIteratorBase& pPosition, BinaryTree& pTree) {
     if (this == &pTree)
       return *this;
 
     if (!pTree.empty()) {
-      proxy::hook<DIRECT>(position.m_pNode,
-                        const_cast<const NodeBase*>(pTree.m_Root.node.left));
+      pPosition.hook<DIRECT>(pTree.m_Root.node.left);
       BinaryTreeBase<Input>::m_Root.summon(
                                    pTree.BinaryTreeBase<Input>::m_Root);
       BinaryTreeBase<Input>::m_Root.delegate(pTree.m_Root);
@@ -248,20 +247,20 @@ public:
    *  connects two nodes of the given iterators togather.
    */
   struct Mover {
-    virtual ~Mover() {}
-    virtual void connect(TreeIteratorBase& pFrom, const TreeIteratorBase& pTo) const = 0;
+    virtual void connect(TreeIteratorBase& pFrom, NodeBase* pTo) const = 0;
     virtual void move(TreeIteratorBase& pNode) const = 0;
+    virtual ~Mover() { }
   };
 
   /** \class Succeeder
    *  \brief class Succeeder moves the iterator afterward.
    */
   struct Succeeder : public Mover {
-    virtual void connect(TreeIteratorBase& pFrom, const TreeIteratorBase& pTo) const {
-      proxy::hook<Positional>(pFrom.m_pNode, pTo.m_pNode);
+    void connect(TreeIteratorBase& pFrom, NodeBase* pTo) const {
+      pFrom.hook<Positional>(pTo);
     }
 
-    virtual void move(TreeIteratorBase& pNode) const {
+    void move(TreeIteratorBase& pNode) const {
       pNode.move<Positional>();
     }
   };
@@ -270,11 +269,11 @@ public:
    *  \brief class Includer moves the iterator downward.
    */
   struct Includer : public Mover {
-    virtual void connect(TreeIteratorBase& pFrom, const TreeIteratorBase& pTo) const {
-      proxy::hook<Inclusive>(pFrom.m_pNode, pTo.m_pNode);
+    void connect(TreeIteratorBase& pFrom, NodeBase* pTo) const {
+      pFrom.hook<Inclusive>(pTo);
     }
 
-    virtual void move(TreeIteratorBase& pNode) const {
+    void move(TreeIteratorBase& pNode) const {
       pNode.move<Inclusive>();
     }
   };
@@ -325,12 +324,12 @@ mcld::InputTree&
 mcld::InputTree::enterGroup(mcld::TreeIteratorBase pRoot)
 {
   BinTreeTy::node_type* node = createNode();
+
   if (pRoot.isRoot())
-    proxy::hook<TreeIteratorBase::Leftward>(pRoot.m_pNode,
-        const_cast<const node_type*>(node));
+    pRoot.hook<TreeIteratorBase::Leftward>(node);
   else
-    proxy::hook<DIRECT>(pRoot.m_pNode,
-        const_cast<const node_type*>(node));
+    pRoot.hook<DIRECT>(node);
+
   return *this;
 }
 
@@ -340,12 +339,12 @@ mcld::InputTree& mcld::InputTree::insert(mcld::TreeIteratorBase pRoot,
 {
   BinTreeTy::node_type* node = createNode();
   node->data = &pInput;
+
   if (pRoot.isRoot())
-    proxy::hook<TreeIteratorBase::Leftward>(pRoot.m_pNode,
-                                         const_cast<const node_type*>(node));
+    pRoot.hook<TreeIteratorBase::Leftward>(node);
   else
-    proxy::hook<DIRECT>(pRoot.m_pNode,
-                        const_cast<const node_type*>(node));
+    pRoot.hook<DIRECT>(node);
+
   return *this;
 }
 

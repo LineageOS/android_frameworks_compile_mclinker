@@ -1,4 +1,4 @@
-//===-- llvm/Target/TargetLDBackend.h - Target LD Backend -----*- C++ -*-===//
+//===-- TargetLDBackend.h - Target LD Backend -------------------*- C++ -*-===//
 //
 //                     The MCLinker Project
 //
@@ -9,36 +9,34 @@
 #ifndef MCLD_TARGET_TARGETLDBACKEND_H
 #define MCLD_TARGET_TARGETLDBACKEND_H
 
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/DataTypes.h>
+#include <mcld/LD/GarbageCollection.h>
 
 namespace mcld {
 
-class Module;
-class LinkerConfig;
-class IRBuilder;
-class Relocation;
-class RelocationFactory;
-class Relocator;
-class Layout;
 class ArchiveReader;
-class ObjectReader;
-class DynObjReader;
 class BinaryReader;
-class ObjectWriter;
+class BinaryWriter;
+class BranchIslandFactory;
+class DynObjReader;
 class DynObjWriter;
 class ExecWriter;
-class BinaryWriter;
-class LDFileFormat;
-class LDSymbol;
-class LDSection;
-class SectionData;
+class FileOutputBuffer;
+class SectionReachedListMap;
+class IRBuilder;
 class Input;
-class GOT;
-class MemoryArea;
-class MemoryAreaFactory;
-class BranchIslandFactory;
-class StubFactory;
+class LDSection;
+class LDSymbol;
+class Layout;
+class LinkerConfig;
+class Module;
 class ObjectBuilder;
+class ObjectReader;
+class ObjectWriter;
+class Relocator;
+class SectionData;
+class StubFactory;
 
 //===----------------------------------------------------------------------===//
 /// TargetLDBackend - Generic interface to target specific assembler backends.
@@ -84,7 +82,7 @@ public:
   virtual void postLayout(Module& pModule, IRBuilder& pBuilder) = 0;
 
   /// postProcessing - Backend can do any needed modification in the final stage
-  virtual void postProcessing(MemoryArea& pOutput) = 0;
+  virtual void postProcessing(FileOutputBuffer& pOutput) = 0;
 
   /// section start offset in the output file
   virtual size_t sectionStartOffset() const = 0;
@@ -112,8 +110,16 @@ public:
   virtual bool allocateCommonSymbols(Module& pModule) = 0;
 
   /// mergeSection - merge target dependent sections.
-  virtual bool mergeSection(Module& pModule, LDSection& pInputSection)
+  virtual bool mergeSection(Module& pModule,
+                            const Input& pInputFile,
+                            LDSection& pInputSection)
   { return true; }
+
+  /// setUpReachedSectionsForGC - set the reference between two sections for
+  /// some special target sections. GC will set up the reference for the Regular
+  /// and BSS sections. Backends can also set up the reference if need.
+  virtual void setUpReachedSectionsForGC(const Module& pModule,
+        GarbageCollection::SectionReachedListMap& pSectReachedListMap) const { }
 
   /// updateSectionFlags - update pTo's flags when merging pFrom
   /// update the output section flags based on input section flags.
@@ -130,6 +136,9 @@ public:
   /// In ELF executables, this is the length of dynamic linker's path name
   virtual void sizeInterp() = 0;
 
+  /// getEntry - get the entry point name
+  virtual llvm::StringRef getEntry(const Module& pModule) const = 0;
+
   // -----  relaxation  ----- //
   virtual bool initBRIslandFactory() = 0;
   virtual bool initStubFactory() = 0;
@@ -143,6 +152,20 @@ public:
 
   /// mayRelax - return true if the backend needs to do relaxation
   virtual bool mayRelax() = 0;
+
+  /// commonPageSize - the common page size of the target machine
+  virtual uint64_t commonPageSize() const = 0;
+
+  /// abiPageSize - the abi page size of the target machine
+  virtual uint64_t abiPageSize() const = 0;
+
+  /// sortRelocation - sort the dynamic relocations to let dynamic linker
+  /// process relocations more efficiently
+  virtual void sortRelocation(LDSection& pSection) = 0;
+
+  /// createAndSizeEhFrameHdr - This is seperated since we may add eh_frame
+  /// entry in the middle
+  virtual void createAndSizeEhFrameHdr(Module& pModule) = 0;
 
 protected:
   const LinkerConfig& config() const { return m_Config; }

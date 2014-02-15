@@ -6,13 +6,13 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TREE_ALLOCATOR_H
-#define MCLD_TREE_ALLOCATOR_H
+#ifndef MCLD_ADT_TREEALLOCATOR_H
+#define MCLD_ADT_TREEALLOCATOR_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
 #include <set>
-#include "mcld/Support/GCFactory.h"
+#include <mcld/Support/GCFactory.h>
 
 namespace mcld {
 

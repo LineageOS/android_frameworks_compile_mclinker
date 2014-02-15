@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_STATIC_SYMBOL_RESOLVER_H
-#define MCLD_STATIC_SYMBOL_RESOLVER_H
+#ifndef MCLD_LD_STATICRESOLVER_H
+#define MCLD_LD_STATICRESOLVER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -111,7 +111,7 @@ public:
   /// @param pNew the symbol which is used to replace pOld
   virtual bool resolve(ResolveInfo & __restrict__ pOld,
                        const ResolveInfo & __restrict__ pNew,
-                       bool &pOverride) const;
+                       bool &pOverride, LDSymbol::ValueType pValue) const;
 
 private:
   inline unsigned int getOrdinate(const ResolveInfo& pInfo) const {

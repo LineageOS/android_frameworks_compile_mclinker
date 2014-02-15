@@ -6,19 +6,21 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_ELF_SEGMENT_H
-#define MCLD_ELF_SEGMENT_H
+#ifndef MCLD_LD_ELFSEGMENT_H
+#define MCLD_LD_ELFSEGMENT_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
+#include <mcld/Support/Allocators.h>
+#include <mcld/Config/Config.h>
 #include <llvm/Support/ELF.h>
 #include <llvm/Support/DataTypes.h>
-#include <mcld/LD/LDSection.h>
-#include <cassert>
 #include <vector>
 
 namespace mcld
 {
+
+class LDSection;
 
 /** \class ELFSegment
  *  \brief decribe the program header for ELF executable or shared object
@@ -26,25 +28,30 @@ namespace mcld
 class ELFSegment
 {
 public:
-  typedef std::vector<LDSection*>::iterator sect_iterator;
-  typedef std::vector<LDSection*>::const_iterator const_sect_iterator;
+  typedef std::vector<LDSection*> SectionList;
+  typedef SectionList::iterator iterator;
+  typedef SectionList::const_iterator const_iterator;
+  typedef SectionList::reverse_iterator reverse_iterator;
+  typedef SectionList::const_reverse_iterator const_reverse_iterator;
+
+private:
+  friend class Chunk<ELFSegment, MCLD_SEGMENTS_PER_OUTPUT>;
+  ELFSegment();
+  ELFSegment(uint32_t pType, uint32_t pFlag = llvm::ELF::PF_R);
+
 public:
-  ELFSegment(uint32_t pType,
-             uint32_t pFlag = llvm::ELF::PF_R,
-             uint64_t pOffset = 0,
-             uint64_t pVaddr = 0,
-             uint64_t pPaddr = 0,
-             uint64_t pFilesz = 0,
-             uint64_t pMemsz = 0,
-             uint64_t pAlign = 0,
-             uint64_t pMaxSectAlign = 0);
   ~ELFSegment();
 
   ///  -----  iterators  -----  ///
-  sect_iterator       begin()       { return m_SectionList.begin(); }
-  const_sect_iterator begin() const { return m_SectionList.begin(); }
-  sect_iterator       end()         { return m_SectionList.end(); }
-  const_sect_iterator end()   const { return m_SectionList.end(); }
+  iterator       begin()       { return m_SectionList.begin(); }
+  const_iterator begin() const { return m_SectionList.begin(); }
+  iterator       end()         { return m_SectionList.end(); }
+  const_iterator end()   const { return m_SectionList.end(); }
+
+  reverse_iterator       rbegin()       { return m_SectionList.rbegin(); }
+  const_reverse_iterator rbegin() const { return m_SectionList.rbegin(); }
+  reverse_iterator       rend()         { return m_SectionList.rend(); }
+  const_reverse_iterator rend()   const { return m_SectionList.rend(); }
 
   LDSection*       front()       { return m_SectionList.front(); }
   const LDSection* front() const { return m_SectionList.front(); }
@@ -52,35 +59,20 @@ public:
   const LDSection* back()  const { return m_SectionList.back(); }
 
   ///  -----  observers  -----  ///
-  uint32_t type() const
-  { return m_Type; }
+  uint32_t type()   const { return m_Type; }
+  uint64_t offset() const { return m_Offset; }
+  uint64_t vaddr()  const { return m_Vaddr; }
+  uint64_t paddr()  const { return m_Paddr; }
+  uint64_t filesz() const { return m_Filesz; }
+  uint64_t memsz()  const { return m_Memsz; }
+  uint32_t flag()   const { return m_Flag; }
+  uint64_t align()  const { return std::max(m_Align, m_MaxSectionAlign); }
 
-  uint64_t offset() const
-  { return m_Offset; }
+  size_t size() const { return m_SectionList.size(); }
+  bool  empty() const { return m_SectionList.empty(); }
 
-  uint64_t vaddr() const
-  { return m_Vaddr; }
-
-  uint64_t paddr() const
-  { return m_Paddr; }
-
-  uint64_t filesz() const
-  { return m_Filesz; }
-
-  uint64_t memsz() const
-  { return m_Memsz; }
-
-  uint32_t flag() const
-  { return m_Flag; }
-
-  uint64_t align() const
-  { return std::max(m_Align, m_MaxSectionAlign); }
-
-  size_t numOfSections() const
-  { return m_SectionList.size(); }
-
+  bool isLoadSegment() const;
   bool isDataSegment() const;
-
   bool isBssSegment() const;
 
   ///  -----  modifiers  -----  ///
@@ -112,13 +104,14 @@ public:
   void setAlign(uint64_t pAlign)
   { m_Align = pAlign; }
 
-  void addSection(LDSection* pSection)
-  {
-    assert(NULL != pSection);
-    if (pSection->align() > m_MaxSectionAlign)
-      m_MaxSectionAlign = pSection->align();
-    m_SectionList.push_back(pSection);
-  }
+  iterator insert(iterator pPos, LDSection* pSection);
+
+  void append(LDSection* pSection);
+
+  /* factory methods */
+  static ELFSegment* Create(uint32_t pType, uint32_t pFlag = llvm::ELF::PF_R);
+  static void Destroy(ELFSegment*& pSegment);
+  static void Clear();
 
 private:
   uint32_t m_Type;            // Type of segment
@@ -130,7 +123,7 @@ private:
   uint64_t m_Memsz;           // # of bytes in mem image of segment (may be 0)
   uint64_t m_Align;           // alignment constraint
   uint64_t m_MaxSectionAlign; // max alignment of the sections in this segment
-  std::vector<LDSection*> m_SectionList;
+  SectionList m_SectionList;
 };
 
 } // namespace of mcld

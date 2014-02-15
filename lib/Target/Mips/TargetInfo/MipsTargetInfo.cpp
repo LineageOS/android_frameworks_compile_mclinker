@@ -6,16 +6,19 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include "mcld/Target/TargetMachine.h"
-#include "mcld/Support/TargetRegistry.h"
+#include <mcld/Support/Target.h>
+#include <mcld/Support/TargetRegistry.h>
 
 namespace mcld {
 
 mcld::Target TheMipselTarget;
+mcld::Target TheMips64elTarget;
 
 extern "C" void MCLDInitializeMipsLDTargetInfo() {
-  // register into mcld::TargetRegistry
-  mcld::RegisterTarget X(TheMipselTarget, "mipsel");
+  mcld::RegisterTarget<llvm::Triple::mipsel>
+                       X1(TheMipselTarget, "mipsel");
+  mcld::RegisterTarget<llvm::Triple::mips64el>
+                       X2(TheMips64elTarget, "mips64el");
 }
 
 } // namespace of mcld

@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "ARM.h"
 #include "ARMGNUInfo.h"
+#include "ARMELFAttributeData.h"
 #include "ARMELFDynamic.h"
 #include "ARMLDBackend.h"
 #include "ARMRelocator.h"
@@ -28,17 +29,21 @@
 #include <mcld/Fragment/FillFragment.h>
 #include <mcld/Fragment/AlignFragment.h>
 #include <mcld/Fragment/RegionFragment.h>
+#include <mcld/Fragment/Stub.h>
+#include <mcld/Fragment/NullFragment.h>
 #include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MemoryArea.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Support/TargetRegistry.h>
-#include <mcld/Fragment/Stub.h>
 #include <mcld/LD/BranchIslandFactory.h>
 #include <mcld/LD/StubFactory.h>
-#include <mcld/Object/ObjectBuilder.h>
-#include <mcld/Fragment/NullFragment.h>
 #include <mcld/LD/LDContext.h>
+#include <mcld/LD/ELFFileFormat.h>
+#include <mcld/LD/ELFSegmentFactory.h>
+#include <mcld/LD/ELFSegment.h>
+#include <mcld/Target/ELFAttribute.h>
 #include <mcld/Target/GNUInfo.h>
+#include <mcld/Object/ObjectBuilder.h>
 
 using namespace mcld;
 
@@ -52,6 +57,7 @@ ARMGNULDBackend::ARMGNULDBackend(const LinkerConfig& pConfig, GNUInfo* pInfo)
     m_pPLT(NULL),
     m_pRelDyn(NULL),
     m_pRelPLT(NULL),
+    m_pAttrData(NULL),
     m_pDynamic(NULL),
     m_pGOTSymbol(NULL),
     m_pEXIDXStart(NULL),
@@ -69,6 +75,7 @@ ARMGNULDBackend::~ARMGNULDBackend()
   delete m_pRelDyn;
   delete m_pRelPLT;
   delete m_pDynamic;
+  delete m_pAttrData;
 }
 
 void ARMGNULDBackend::initTargetSections(Module& pModule, ObjectBuilder& pBuilder)
@@ -90,6 +97,10 @@ void ARMGNULDBackend::initTargetSections(Module& pModule, ObjectBuilder& pBuilde
                                            llvm::ELF::SHT_ARM_ATTRIBUTES,
                                            0x0,
                                            0x1);
+
+  // initialize "aeabi" attributes subsection
+  m_pAttrData = new ARMELFAttributeData();
+  attribute().registerAttributeData(*m_pAttrData);
 
   if (LinkerConfig::Object != config().codeGenType()) {
     ELFFileFormat* file_format = getOutputFormat();
@@ -206,6 +217,9 @@ void ARMGNULDBackend::doPreLayout(IRBuilder& pBuilder)
   if (!config().isCodeStatic() && NULL == m_pDynamic)
     m_pDynamic = new ARMELFDynamic(*this, config());
 
+  // set attribute section size
+  m_pAttributes->setSize(attribute().sizeOutput());
+
   // set .got size
   // when building shared object, the .got section is must
   if (LinkerConfig::Object != config().codeGenType()) {
@@ -316,77 +330,71 @@ uint64_t ARMGNULDBackend::emitSectionData(const LDSection& pSection,
 
   const ELFFileFormat* file_format = getOutputFormat();
 
-  if (&pSection == m_pAttributes ||
-      &pSection == m_pEXIDX ||
-      &pSection == m_pEXTAB) {
-    // FIXME: Currently Emitting .ARM.attributes, .ARM.exidx, and .ARM.extab
-    // directly from the input file.
-    const SectionData* sect_data = pSection.getSectionData();
-    SectionData::const_iterator frag_iter, frag_end = sect_data->end();
-    uint8_t* out_offset = pRegion.start();
-    for (frag_iter = sect_data->begin(); frag_iter != frag_end; ++frag_iter) {
-      size_t size = frag_iter->size();
-      switch(frag_iter->getKind()) {
-        case Fragment::Fillment: {
-          const FillFragment& fill_frag =
-            llvm::cast<FillFragment>(*frag_iter);
-          if (0 == fill_frag.getValueSize()) {
-            // virtual fillment, ignore it.
-            break;
-          }
-
-          memset(out_offset, fill_frag.getValue(), fill_frag.size());
-          break;
-        }
-        case Fragment::Region: {
-          const RegionFragment& region_frag =
-            llvm::cast<RegionFragment>(*frag_iter);
-          const uint8_t* start = region_frag.getRegion().start();
-          memcpy(out_offset, start, size);
-          break;
-        }
-        case Fragment::Alignment: {
-          const AlignFragment& align_frag = llvm::cast<AlignFragment>(*frag_iter);
-          uint64_t count = size / align_frag.getValueSize();
-          switch (align_frag.getValueSize()) {
-            case 1u:
-              std::memset(out_offset, align_frag.getValue(), count);
-              break;
-            default:
-              llvm::report_fatal_error(
-                "unsupported value size for align fragment emission yet.\n");
-              break;
-          } // end switch
-          break;
-        }
-        case Fragment::Null: {
-          assert(0x0 == size);
-          break;
-        }
-        default:
-          llvm::report_fatal_error("unsupported fragment type.\n");
-          break;
-      } // end switch
-      out_offset += size;
-    } // end for
-    return pRegion.size();
-  } // end if
-
-  if (&pSection == &(file_format->getPLT())) {
-    assert(NULL != m_pPLT && "emitSectionData failed, m_pPLT is NULL!");
+  if (file_format->hasPLT() && (&pSection == &(file_format->getPLT()))) {
     uint64_t result = m_pPLT->emit(pRegion);
     return result;
   }
 
-  if (&pSection == &(file_format->getGOT())) {
-    assert(NULL != m_pGOT && "emitSectionData failed, m_pGOT is NULL!");
+  if (file_format->hasGOT() && (&pSection == &(file_format->getGOT()))) {
     uint64_t result = m_pGOT->emit(pRegion);
     return result;
   }
-  fatal(diag::unrecognized_output_sectoin)
-          << pSection.name()
-          << "mclinker@googlegroups.com";
-  return 0x0;
+
+  if (&pSection == m_pAttributes) {
+    return attribute().emit(pRegion);
+  }
+
+  // FIXME: Currently Emitting .ARM.attributes, .ARM.exidx, and .ARM.extab
+  // directly from the input file.
+  const SectionData* sect_data = pSection.getSectionData();
+  SectionData::const_iterator frag_iter, frag_end = sect_data->end();
+  uint8_t* out_offset = pRegion.begin();
+  for (frag_iter = sect_data->begin(); frag_iter != frag_end; ++frag_iter) {
+    size_t size = frag_iter->size();
+    switch(frag_iter->getKind()) {
+      case Fragment::Fillment: {
+        const FillFragment& fill_frag =
+          llvm::cast<FillFragment>(*frag_iter);
+        if (0 == fill_frag.getValueSize()) {
+          // virtual fillment, ignore it.
+          break;
+        }
+
+        memset(out_offset, fill_frag.getValue(), fill_frag.size());
+        break;
+      }
+      case Fragment::Region: {
+        const RegionFragment& region_frag =
+          llvm::cast<RegionFragment>(*frag_iter);
+        const char* start = region_frag.getRegion().begin();
+        memcpy(out_offset, start, size);
+        break;
+      }
+      case Fragment::Alignment: {
+        const AlignFragment& align_frag = llvm::cast<AlignFragment>(*frag_iter);
+        uint64_t count = size / align_frag.getValueSize();
+        switch (align_frag.getValueSize()) {
+          case 1u:
+            std::memset(out_offset, align_frag.getValue(), count);
+            break;
+          default:
+            llvm::report_fatal_error(
+              "unsupported value size for align fragment emission yet.\n");
+            break;
+        } // end switch
+        break;
+      }
+      case Fragment::Null: {
+        assert(0x0 == size);
+        break;
+      }
+      default:
+        llvm::report_fatal_error("unsupported fragment type.\n");
+        break;
+    } // end switch
+    out_offset += size;
+  } // end for
+  return pRegion.size();
 }
 
 /// finalizeSymbol - finalize the symbol value
@@ -395,30 +403,94 @@ bool ARMGNULDBackend::finalizeTargetSymbols()
   return true;
 }
 
-bool ARMGNULDBackend::mergeSection(Module& pModule, LDSection& pSection)
+bool ARMGNULDBackend::mergeSection(Module& pModule,
+                                   const Input& pInput,
+                                   LDSection& pSection)
 {
   switch (pSection.type()) {
     case llvm::ELF::SHT_ARM_ATTRIBUTES: {
-      // FIXME: (Luba)
-      // Handle ARM attributes in the right way.
-      // In current milestone, we goes through the shortcut.
-      // It reads input's ARM attributes and copies the first ARM attributes
-      // into the output file. The correct way is merge these sections, not
-      // just copy.
-      if (0 != m_pAttributes->size())
-        return true;
-
-      // First time we meet a ARM attributes section.
-      SectionData* sd = IRBuilder::CreateSectionData(*m_pAttributes);
-      ObjectBuilder::MoveSectionData(*pSection.getSectionData(), *sd);
-      return true;
+      return attribute().merge(pInput, pSection);
     }
+    case llvm::ELF::SHT_ARM_EXIDX: {
+      assert(NULL != pSection.getLink());
+      if (LDFileFormat::Ignore == pSection.getLink()->kind()) {
+        // if the target section of the .ARM.exidx is Ignore, then it should be
+        // ignored as well
+        pSection.setKind(LDFileFormat::Ignore);
+        return true;
+      }
+    }
+    /** fall through **/
     default: {
       ObjectBuilder builder(config(), pModule);
-      return builder.MergeSection(pSection);
+      builder.MergeSection(pInput, pSection);
+      return true;
     }
   } // end of switch
   return true;
+}
+
+void ARMGNULDBackend::setUpReachedSectionsForGC(const Module& pModule,
+            GarbageCollection::SectionReachedListMap& pSectReachedListMap) const
+{
+  // traverse all the input relocations to find the relocation sections applying
+  // .ARM.exidx sections
+  Module::const_obj_iterator input, inEnd = pModule.obj_end();
+  for (input = pModule.obj_begin(); input != inEnd; ++input) {
+    LDContext::const_sect_iterator rs,
+                                   rsEnd = (*input)->context()->relocSectEnd();
+    for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
+      // bypass the discarded relocation section
+      // 1. its section kind is changed to Ignore. (The target section is a
+      // discarded group section.)
+      // 2. it has no reloc data. (All symbols in the input relocs are in the
+      // discarded group sections)
+      LDSection* reloc_sect = *rs;
+      LDSection* apply_sect = reloc_sect->getLink();
+      if ((LDFileFormat::Ignore == reloc_sect->kind()) ||
+          (!reloc_sect->hasRelocData()))
+        continue;
+
+      if (llvm::ELF::SHT_ARM_EXIDX == apply_sect->type()) {
+        // 1. set up the reference according to relocations
+        bool add_first = false;
+        GarbageCollection::SectionListTy* reached_sects = NULL;
+        RelocData::iterator reloc_it, rEnd = reloc_sect->getRelocData()->end();
+        for (reloc_it = reloc_sect->getRelocData()->begin(); reloc_it != rEnd;
+                                                                   ++reloc_it) {
+          Relocation* reloc = llvm::cast<Relocation>(reloc_it);
+          ResolveInfo* sym = reloc->symInfo();
+          // only the target symbols defined in the input fragments can make the
+          // reference
+          if (NULL == sym)
+            continue;
+          if (!sym->isDefine() || !sym->outSymbol()->hasFragRef())
+            continue;
+
+          // only the target symbols defined in the concerned sections can make
+          // the reference
+          const LDSection* target_sect =
+                &sym->outSymbol()->fragRef()->frag()->getParent()->getSection();
+          if (target_sect->kind() != LDFileFormat::Regular &&
+              target_sect->kind() != LDFileFormat::BSS)
+            continue;
+
+          // setup the reached list, if we first add the element to reached list
+          // of this section, create an entry in ReachedSections map
+          if (!add_first) {
+            reached_sects = &pSectReachedListMap.getReachedList(*apply_sect);
+            add_first = true;
+          }
+          reached_sects->insert(target_sect);
+        }
+        reached_sects = NULL;
+        add_first = false;
+        // 2. set up the reference from XXX to .ARM.exidx.XXX
+        assert(apply_sect->getLink() != NULL);
+        pSectReachedListMap.addReference(*apply_sect->getLink(), *apply_sect);
+      }
+    }
+  }
 }
 
 bool ARMGNULDBackend::readSection(Input& pInput, SectionData& pSD)
@@ -427,14 +499,14 @@ bool ARMGNULDBackend::readSection(Input& pInput, SectionData& pSD)
   uint32_t offset = pInput.fileOffset() + pSD.getSection().offset();
   uint32_t size = pSD.getSection().size();
 
-  MemoryRegion* region = pInput.memArea()->request(offset, size);
-  if (NULL == region) {
+  llvm::StringRef region = pInput.memArea()->request(offset, size);
+  if (region.size() == 0) {
     // If the input section's size is zero, we got a NULL region.
     // use a virtual fill fragment
     frag = new FillFragment(0x0, 0, 0);
   }
   else {
-    frag = new RegionFragment(*region);
+    frag = new RegionFragment(region);
   }
 
   ObjectBuilder::AppendFragment(*frag, pSD);
@@ -489,18 +561,30 @@ const OutputRelocSection& ARMGNULDBackend::getRelPLT() const
   return *m_pRelPLT;
 }
 
+ARMELFAttributeData& ARMGNULDBackend::getAttributeData()
+{
+  assert(NULL != m_pAttrData && ".ARM.attributes section not exist");
+  return *m_pAttrData;
+}
+
+const ARMELFAttributeData& ARMGNULDBackend::getAttributeData() const
+{
+  assert(NULL != m_pAttrData && ".ARM.attributes section not exist");
+  return *m_pAttrData;
+}
+
 unsigned int
 ARMGNULDBackend::getTargetSectionOrder(const LDSection& pSectHdr) const
 {
   const ELFFileFormat* file_format = getOutputFormat();
 
-  if (&pSectHdr == &file_format->getGOT()) {
+  if (file_format->hasGOT() && (&pSectHdr == &file_format->getGOT())) {
     if (config().options().hasNow())
       return SHO_RELRO_LAST;
     return SHO_DATA;
   }
 
-  if (&pSectHdr == &file_format->getPLT())
+  if (file_format->hasPLT() && (&pSectHdr == &file_format->getPLT()))
     return SHO_PLT;
 
   if (&pSectHdr == m_pEXIDX || &pSectHdr == m_pEXTAB) {
@@ -538,8 +622,7 @@ ARMGNULDBackend::doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished)
           case llvm::ELF::R_ARM_THM_CALL:
           case llvm::ELF::R_ARM_THM_XPC22:
           case llvm::ELF::R_ARM_THM_JUMP24:
-          case llvm::ELF::R_ARM_THM_JUMP19:
-          case llvm::ELF::R_ARM_V4BX: {
+          case llvm::ELF::R_ARM_THM_JUMP19: {
             // calculate the possible symbol value
             uint64_t sym_value = 0x0;
             LDSymbol* symbol = relocation->symInfo()->outSymbol();
@@ -561,23 +644,32 @@ ARMGNULDBackend::doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished)
                                                   pBuilder,
                                                   *getBRIslandFactory());
             if (NULL != stub) {
-              // a stub symbol should be local
-              assert(NULL != stub->symInfo() && stub->symInfo()->isLocal());
-              LDSection& symtab = file_format->getSymTab();
-              LDSection& strtab = file_format->getStrTab();
+              switch (config().options().getStripSymbolMode()) {
+                case GeneralOptions::StripAllSymbols:
+                case GeneralOptions::StripLocals:
+                  break;
+                default: {
+                  // a stub symbol should be local
+                  assert(NULL != stub->symInfo() && stub->symInfo()->isLocal());
+                  LDSection& symtab = file_format->getSymTab();
+                  LDSection& strtab = file_format->getStrTab();
 
-              // increase the size of .symtab and .strtab if needed
-              if (config().targets().is32Bits())
-                symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf32_Sym));
-              else
-                symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf64_Sym));
-              symtab.setInfo(symtab.getInfo() + 1);
-              strtab.setSize(strtab.size() + stub->symInfo()->nameSize() + 1);
-
+                  // increase the size of .symtab and .strtab if needed
+                  if (config().targets().is32Bits())
+                    symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf32_Sym));
+                  else
+                    symtab.setSize(symtab.size() + sizeof(llvm::ELF::Elf64_Sym));
+                  symtab.setInfo(symtab.getInfo() + 1);
+                  strtab.setSize(strtab.size() + stub->symInfo()->nameSize() + 1);
+                }
+              } // end of switch
               isRelaxed = true;
             }
             break;
           }
+          case llvm::ELF::R_ARM_V4BX:
+            /* FIXME: bypass R_ARM_V4BX relocation now */
+            break;
           default:
             break;
         } // end of switch
@@ -639,7 +731,7 @@ void ARMGNULDBackend::doCreateProgramHdrs(Module& pModule)
      // make PT_ARM_EXIDX
      ELFSegment* exidx_seg = elfSegmentTable().produce(llvm::ELF::PT_ARM_EXIDX,
                                                        llvm::ELF::PF_R);
-     exidx_seg->addSection(m_pEXIDX);
+     exidx_seg->append(m_pEXIDX);
    }
 }
 
@@ -648,8 +740,7 @@ namespace mcld {
 //===----------------------------------------------------------------------===//
 /// createARMLDBackend - the help funtion to create corresponding ARMLDBackend
 ///
-TargetLDBackend* createARMLDBackend(const llvm::Target& pTarget,
-                                    const LinkerConfig& pConfig)
+TargetLDBackend* createARMLDBackend(const LinkerConfig& pConfig)
 {
   if (pConfig.targets().triple().isOSDarwin()) {
     assert(0 && "MachO linker is not supported yet");

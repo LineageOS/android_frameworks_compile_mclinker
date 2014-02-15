@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TARGET_GNU_INFO_H
-#define MCLD_TARGET_GNU_INFO_H
+#ifndef MCLD_TARGET_GNUINFO_H
+#define MCLD_TARGET_GNUINFO_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -36,7 +36,7 @@ public:
   uint8_t OSABI() const;
 
   /// ABIVersion - the value of e_ident[EI_ABIVRESION]
-  uint8_t ABIVersion() const { return 0x0; }
+  virtual uint8_t ABIVersion() const { return 0x0; }
 
   /// defaultTextSegmentAddr - target should specify its own default start address
   /// of the text segment. esp. for exec.
@@ -65,7 +65,7 @@ public:
   /// here. If target favors the different size, please override this function
   virtual uint64_t abiPageSize() const { return 0x1000; }
 
-private:
+protected:
   const llvm::Triple& m_Triple;
 };
 

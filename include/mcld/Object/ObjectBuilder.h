@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_OBJECT_OBJECT_BUILDER_H
-#define MCLD_OBJECT_OBJECT_BUILDER_H
+#ifndef MCLD_OBJECT_OBJECTBUILDER_H
+#define MCLD_OBJECT_OBJECTBUILDER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -27,6 +27,7 @@ class SectionData;
 class RelocData;
 class Fragment;
 class Relocation;
+class Input;
 
 /** \class ObjectBuilder
  *  \brief ObjectBuilder recieve ObjectAction and build the mcld::Module.
@@ -67,7 +68,7 @@ public:
   /// @param [in] pInputSection The merged input section.
   /// @return The merged output section. If the corresponding output sections
   /// is not defined, return NULL.
-  LDSection* MergeSection(LDSection& pInputSection);
+  LDSection* MergeSection(const Input& pInputFile, LDSection& pInputSection);
 
   /// MoveSectionData - move the fragment of pFrom to pTo section data.
   static bool MoveSectionData(SectionData& pFrom, SectionData& pTo);

@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_BINARY_TREE_H
-#define MCLD_BINARY_TREE_H
+#ifndef MCLD_ADT_BITREE_H
+#define MCLD_ADT_BITREE_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -438,16 +438,16 @@ public:
   //  @param DIRECT the direction of the connecting edge of the parent node.
   //  @param position the parent node
   //  @param value the value being pushed.
-  template<size_t DIRECT, class Pos>
-  BinaryTree& join(Pos position, const DataType& value) {
+  template<size_t DIRECT>
+  BinaryTree& join(TreeIteratorBase& pPosition, const DataType& pValue) {
     node_type *node = BinaryTreeBase<DataType>::createNode();
-    node->data = const_cast<DataType*>(&value);
-    if (position.isRoot())
-      proxy::hook<TreeIteratorBase::Leftward>(position.m_pNode,
-                          const_cast<const node_type*>(node));
+    node->data = const_cast<DataType*>(&pValue);
+
+    if (pPosition.isRoot())
+      pPosition.hook<TreeIteratorBase::Leftward>(node);
     else
-      proxy::hook<DIRECT>(position.m_pNode,
-                          const_cast<const node_type*>(node));
+      pPosition.hook<DIRECT>(node);
+
     return *this;
   }
 
@@ -456,14 +456,13 @@ public:
   //  @param position the parent node
   //  @param the tree being joined.
   //  @return the joined tree
-  template<size_t DIRECT, class Pos>
-  BinaryTree& merge(Pos position, BinaryTree& pTree) {
+  template<size_t DIRECT>
+  BinaryTree& merge(TreeIteratorBase& pPosition, BinaryTree& pTree) {
     if (this == &pTree)
       return *this;
 
     if (!pTree.empty()) {
-      proxy::hook<DIRECT>(position.m_pNode,
-                        const_cast<const NodeBase*>(pTree.m_Root.node.left));
+      pPosition.hook<DIRECT>(pTree.m_Root.node.left);
       BinaryTreeBase<DataType>::m_Root.summon(
                                    pTree.BinaryTreeBase<DataType>::m_Root);
       BinaryTreeBase<DataType>::m_Root.delegate(pTree.m_Root);

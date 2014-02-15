@@ -6,31 +6,21 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TARGET_GNU_LDBACKEND_H
-#define MCLD_TARGET_GNU_LDBACKEND_H
+#ifndef MCLD_TARGET_GNULDBACKEND_H
+#define MCLD_TARGET_GNULDBACKEND_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
 #include <mcld/Target/TargetLDBackend.h>
 
-#include <llvm/Support/ELF.h>
-#include <mcld/ADT/HashTable.h>
-#include <mcld/ADT/HashEntry.h>
-#include <mcld/LD/ELFDynObjFileFormat.h>
-#include <mcld/LD/ELFExecFileFormat.h>
-#include <mcld/LD/ELFObjectFileFormat.h>
+#include <mcld/Module.h>
 #include <mcld/LD/GNUArchiveReader.h>
-#include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFDynObjReader.h>
 #include <mcld/LD/ELFBinaryReader.h>
+#include <mcld/LD/ELFObjectReader.h>
 #include <mcld/LD/ELFObjectWriter.h>
-#include <mcld/LD/ELFSegment.h>
-#include <mcld/LD/ELFSegmentFactory.h>
-#include <mcld/Target/ELFDynamic.h>
-#include <mcld/Target/GNUInfo.h>
 
-#include <mcld/Support/GCFactory.h>
-#include <mcld/Module.h>
+#include <llvm/Support/ELF.h>
 
 namespace mcld {
 
@@ -42,6 +32,15 @@ class EhFrameHdr;
 class BranchIslandFactory;
 class StubFactory;
 class GNUInfo;
+class ELFFileFormat;
+class ELFSegmentFactory;
+class ELFAttribute;
+class ELFDynamic;
+class ELFDynObjFileFormat;
+class ELFExecFileFormat;
+class ELFObjectFileFormat;
+class LinkerScript;
+class Relocation;
 
 /** \class GNULDBackend
  *  \brief GNULDBackend provides a common interface for all GNU Unix-OS
@@ -110,6 +109,9 @@ public:
   /// getSegmentStartAddr - this function returns the start address of the segment
   uint64_t getSegmentStartAddr(const LinkerScript& pScript) const;
 
+  /// sizeShstrtab - compute the size of .shstrtab
+  void sizeShstrtab(Module& pModule);
+
   /// sizeNamePools - compute the size of regular name pools
   /// In ELF executable files, regular name pools are .symtab, .strtab.,
   /// .dynsym, .dynstr, and .hash
@@ -120,25 +122,25 @@ public:
                                    MemoryRegion& pRegion) const = 0;
 
   /// emitRegNamePools - emit regular name pools - .symtab, .strtab
-  virtual void emitRegNamePools(const Module& pModule, MemoryArea& pOutput);
+  virtual void emitRegNamePools(const Module& pModule, FileOutputBuffer& pOutput);
 
   /// emitNamePools - emit dynamic name pools - .dyntab, .dynstr, .hash
-  virtual void emitDynNamePools(Module& pModule, MemoryArea& pOutput);
+  virtual void emitDynNamePools(Module& pModule, FileOutputBuffer& pOutput);
 
   /// emitELFHashTab - emit .hash
   virtual void emitELFHashTab(const Module::SymbolTable& pSymtab,
-                              MemoryArea& pOutput);
+                              FileOutputBuffer& pOutput);
 
   /// emitGNUHashTab - emit .gnu.hash
   virtual void emitGNUHashTab(Module::SymbolTable& pSymtab,
-                              MemoryArea& pOutput);
+                              FileOutputBuffer& pOutput);
 
   /// sizeInterp - compute the size of program interpreter's name
   /// In ELF executables, this is the length of dynamic linker's path name
   virtual void sizeInterp();
 
   /// emitInterp - emit the .interp
-  virtual void emitInterp(MemoryArea& pOutput);
+  virtual void emitInterp(FileOutputBuffer& pOutput);
 
   /// hasEntryInStrTab - symbol has an entry in a .strtab
   virtual bool hasEntryInStrTab(const LDSymbol& pSym) const;
@@ -169,16 +171,11 @@ public:
   virtual unsigned int getTargetSectionOrder(const LDSection& pSectHdr) const
   { return (unsigned int)-1; }
 
-  /// numOfSegments - return the number of segments
-  /// if the target favors other ways to emit program header, please override
-  /// this function
-  size_t numOfSegments() const { return m_ELFSegmentTable.size(); }
+  /// elfSegmentTable - return the reference of the elf segment table
+  ELFSegmentFactory&       elfSegmentTable();
 
   /// elfSegmentTable - return the reference of the elf segment table
-  ELFSegmentFactory&       elfSegmentTable()       { return m_ELFSegmentTable; }
-
-  /// elfSegmentTable - return the reference of the elf segment table
-  const ELFSegmentFactory& elfSegmentTable() const { return m_ELFSegmentTable; }
+  const ELFSegmentFactory& elfSegmentTable() const;
 
   /// commonPageSize - the common page size of the target machine
   uint64_t commonPageSize() const;
@@ -197,6 +194,58 @@ public:
   /// updateSectionFlags - update pTo's flags when merging pFrom
   /// update the output section flags based on input section flags.
   virtual bool updateSectionFlags(LDSection& pTo, const LDSection& pFrom);
+
+  /// readRelocation - read ELF32_Rel entry
+  virtual bool readRelocation(const llvm::ELF::Elf32_Rel& pRel,
+                              uint32_t& pType,
+                              uint32_t& pSymIdx,
+                              uint32_t& pOffset) const;
+
+  /// readRelocation - read ELF32_Rela entry
+  virtual bool readRelocation(const llvm::ELF::Elf32_Rela& pRel,
+                              uint32_t& pType,
+                              uint32_t& pSymIdx,
+                              uint32_t& pOffset,
+                              int32_t& pAddend) const;
+
+  /// readRelocation - read ELF64_Rel entry
+  virtual bool readRelocation(const llvm::ELF::Elf64_Rel& pRel,
+                              uint32_t& pType,
+                              uint32_t& pSymIdx,
+                              uint64_t& pOffset) const;
+
+  /// readRel - read ELF64_Rela entry
+  virtual bool readRelocation(const llvm::ELF::Elf64_Rela& pRel,
+                              uint32_t& pType,
+                              uint32_t& pSymIdx,
+                              uint64_t& pOffset,
+                              int64_t& pAddend) const;
+
+  /// emitRelocation - write data to the ELF32_Rel entry
+  virtual void emitRelocation(llvm::ELF::Elf32_Rel& pRel,
+                              uint32_t pType,
+                              uint32_t pSymIdx,
+                              uint32_t pOffset) const;
+
+  /// emitRelocation - write data to the ELF32_Rela entry
+  virtual void emitRelocation(llvm::ELF::Elf32_Rela& pRel,
+                              uint32_t pType,
+                              uint32_t pSymIdx,
+                              uint32_t pOffset,
+                              int32_t pAddend) const;
+
+  /// emitRelocation - write data to the ELF64_Rel entry
+  virtual void emitRelocation(llvm::ELF::Elf64_Rel& pRel,
+                              uint32_t pType,
+                              uint32_t pSymIdx,
+                              uint64_t pOffset) const;
+
+  /// emitRelocation - write data to the ELF64_Rela entry
+  virtual void emitRelocation(llvm::ELF::Elf64_Rela& pRel,
+                              uint32_t pType,
+                              uint32_t pSymIdx,
+                              uint64_t pOffset,
+                              int64_t pAddend) const;
 
   /// symbolNeedsPLT - return whether the symbol needs a PLT entry
   /// @ref Google gold linker, symtab.h:596
@@ -223,11 +272,11 @@ public:
 
   /// isDynamicSymbol
   /// @ref Google gold linker: symtab.cc:311
-  bool isDynamicSymbol(const LDSymbol& pSymbol);
+  bool isDynamicSymbol(const LDSymbol& pSymbol) const;
 
   /// isDynamicSymbol
   /// @ref Google gold linker: symtab.cc:311
-  bool isDynamicSymbol(const ResolveInfo& pResolveInfo);
+  bool isDynamicSymbol(const ResolveInfo& pResolveInfo) const;
 
   virtual ResolveInfo::Desc getSymDesc(uint16_t pShndx) const {
     return ResolveInfo::Define;
@@ -246,6 +295,9 @@ public:
   /// getTBSSSymbol - get section symbol of .tbss
   LDSymbol& getTBSSSymbol();
   const LDSymbol& getTBSSSymbol() const;
+
+  /// getEntry - get the entry point name
+  llvm::StringRef getEntry(const Module& pModule) const;
 
   //  -----  relaxation  -----  //
   /// initBRIslandFactory - initialize the branch island factory for relaxation
@@ -267,7 +319,27 @@ public:
   /// checkAndSetHasTextRel - check pSection flag to set HasTextRel
   void checkAndSetHasTextRel(const LDSection& pSection);
 
+  /// sortRelocation - sort the dynamic relocations to let dynamic linker
+  /// process relocations more efficiently
+  void sortRelocation(LDSection& pSection);
+
+  /// createAndSizeEhFrameHdr - This is seperated since we may add eh_frame
+  /// entry in the middle
+  void createAndSizeEhFrameHdr(Module& pModule);
+
+  /// attribute - the attribute section data.
+  ELFAttribute& attribute() { return *m_pAttribute; }
+
+  /// attribute - the attribute section data.
+  const ELFAttribute& attribute() const { return *m_pAttribute; }
+
 protected:
+  /// getRelEntrySize - the size in BYTE of rel type relocation
+  virtual size_t getRelEntrySize() = 0;
+
+  /// getRelEntrySize - the size in BYTE of rela type relocation
+  virtual size_t getRelaEntrySize() = 0;
+
   uint64_t getSymbolSize(const LDSymbol& pSymbol) const;
 
   uint64_t getSymbolInfo(const LDSymbol& pSymbol) const;
@@ -315,33 +387,19 @@ private:
 
   /// getSegmentFlag - give a section flag and return the corresponding segment
   /// flag
-  inline uint32_t getSegmentFlag(const uint32_t pSectionFlag)
-  {
-    uint32_t flag = llvm::ELF::PF_R;
-    if (0 != (pSectionFlag & llvm::ELF::SHF_WRITE))
-      flag |= llvm::ELF::PF_W;
-    if (0 != (pSectionFlag & llvm::ELF::SHF_EXECINSTR))
-      flag |= llvm::ELF::PF_X;
-    return flag;
-  }
+  inline uint32_t getSegmentFlag(const uint32_t pSectionFlag);
 
   /// setupGNUStackInfo - setup the section flag of .note.GNU-stack in output
   void setupGNUStackInfo(Module& pModule);
 
-  /// setupRelro - setup the offset constraint of PT_RELRO
-  void setupRelro(Module& pModule);
+  /// setOutputSectionOffset - helper function to set output sections' offset.
+  void setOutputSectionOffset(Module& pModule);
 
-  /// setOutputSectionOffset - helper function to set a group of output sections'
-  /// offset, and set pSectBegin to pStartOffset if pStartOffset is not -1U.
-  void setOutputSectionOffset(Module& pModule,
-                              Module::iterator pSectBegin,
-                              Module::iterator pSectEnd,
-                              uint64_t pStartOffset = -1U);
+  /// setOutputSectionAddress - helper function to set output sections' address.
+  void setOutputSectionAddress(Module& pModule);
 
-  /// setOutputSectionOffset - helper function to set output sections' address.
-  void setOutputSectionAddress(Module& pModule,
-                               Module::iterator pSectBegin,
-                               Module::iterator pSectEnd);
+  /// placeOutputSections - place output sections based on SectionMap
+  void placeOutputSections(Module& pModule);
 
   /// layout - layout method
   void layout(Module& pModule);
@@ -359,7 +417,7 @@ private:
   virtual void doPostLayout(Module& pModule, IRBuilder& pLinker) = 0;
 
   /// postProcessing - Backend can do any needed modification in the final stage
-  void postProcessing(MemoryArea& pOutput);
+  void postProcessing(FileOutputBuffer& pOutput);
 
   /// dynamic - the dynamic section of the target machine.
   virtual ELFDynamic& dynamic() = 0;
@@ -380,56 +438,48 @@ private:
   virtual bool doRelax(Module& pModule, IRBuilder& pBuilder, bool& pFinished)
   { return false; }
 
-  /// getRelEntrySize - the size in BYTE of rel type relocation
-  virtual size_t getRelEntrySize() = 0;
-
-  /// getRelEntrySize - the size in BYTE of rela type relocation
-  virtual size_t getRelaEntrySize() = 0;
-
 protected:
   // Based on Kind in LDFileFormat to define basic section orders for ELF, and
   // refer gold linker to add more enumerations to handle Regular and BSS kind
   enum SectionOrder {
-    SHO_INTERP = 1,          // .interp
-    SHO_RO_NOTE,             // .note.ABI-tag, .note.gnu.build-id
-    SHO_NAMEPOOL,            // *.hash, .dynsym, .dynstr
-    SHO_RELOCATION,          // .rel.*, .rela.*
-    SHO_REL_PLT,             // .rel.plt should come after other .rel.*
-    SHO_INIT,                // .init
-    SHO_PLT,                 // .plt
-    SHO_TEXT,                // .text
-    SHO_FINI,                // .fini
-    SHO_RO,                  // .rodata
-    SHO_EXCEPTION,           // .eh_frame_hdr, .eh_frame, .gcc_except_table
-    SHO_TLS_DATA,            // .tdata
-    SHO_TLS_BSS,             // .tbss
-    SHO_RELRO_LOCAL,         // .data.rel.ro.local
-    SHO_RELRO,               // .data.rel.ro,
-    SHO_RELRO_LAST,          // for x86 to adjust .got if needed
-    SHO_NON_RELRO_FIRST,     // for x86 to adjust .got.plt if needed
-    SHO_DATA,                // .data
-    SHO_LARGE_DATA,          // .ldata
-    SHO_RW_NOTE,             //
-    SHO_SMALL_DATA,          // .sdata
-    SHO_SMALL_BSS,           // .sbss
-    SHO_BSS,                 // .bss
-    SHO_LARGE_BSS,           // .lbss
-    SHO_UNDEFINED,           // default order
-    SHO_STRTAB               // .strtab
+    SHO_NULL = 0,        // NULL
+    SHO_INTERP,          // .interp
+    SHO_RO_NOTE,         // .note.ABI-tag, .note.gnu.build-id
+    SHO_NAMEPOOL,        // *.hash, .dynsym, .dynstr
+    SHO_RELOCATION,      // .rel.*, .rela.*
+    SHO_REL_PLT,         // .rel.plt should come after other .rel.*
+    SHO_INIT,            // .init
+    SHO_PLT,             // .plt
+    SHO_TEXT,            // .text
+    SHO_FINI,            // .fini
+    SHO_RO,              // .rodata
+    SHO_EXCEPTION,       // .eh_frame_hdr, .eh_frame, .gcc_except_table
+    SHO_TLS_DATA,        // .tdata
+    SHO_TLS_BSS,         // .tbss
+    SHO_RELRO_LOCAL,     // .data.rel.ro.local
+    SHO_RELRO,           // .data.rel.ro,
+    SHO_RELRO_LAST,      // for x86 to adjust .got if needed
+    SHO_NON_RELRO_FIRST, // for x86 to adjust .got.plt if needed
+    SHO_DATA,            // .data
+    SHO_LARGE_DATA,      // .ldata
+    SHO_RW_NOTE,         //
+    SHO_SMALL_DATA,      // .sdata
+    SHO_SMALL_BSS,       // .sbss
+    SHO_BSS,             // .bss
+    SHO_LARGE_BSS,       // .lbss
+    SHO_UNDEFINED,       // default order
+    SHO_STRTAB           // .strtab
   };
 
-  typedef std::pair<LDSection*, unsigned int> SHOEntry;
-
-  struct SHOCompare
+  // for -z combreloc
+  struct RelocCompare
   {
-    bool operator()(const SHOEntry& X, const SHOEntry& Y) const
-    { return X.second < Y.second; }
-  };
-
-  struct SymCompare
-  {
-    bool operator()(const LDSymbol* X, const LDSymbol* Y) const
-    { return (X==Y); }
+    RelocCompare(const GNULDBackend& pBackend)
+      : m_Backend(pBackend) {
+    }
+    bool operator()(const Relocation* X, const Relocation* Y) const;
+  private:
+    const GNULDBackend& m_Backend;
   };
 
   // for gnu style hash table
@@ -438,6 +488,12 @@ protected:
     bool needGNUHash(const LDSymbol& X) const;
 
     bool operator()(const LDSymbol* X, const LDSymbol* Y) const;
+  };
+
+  struct SymCompare
+  {
+    bool operator()(const LDSymbol* X, const LDSymbol* Y) const
+    { return (X==Y); }
   };
 
   struct SymPtrHash
@@ -467,7 +523,7 @@ protected:
   GNUInfo* m_pInfo;
 
   // ELF segment factory
-  ELFSegmentFactory m_ELFSegmentTable;
+  ELFSegmentFactory* m_pELFSegmentTable;
 
   // branch island factory
   BranchIslandFactory* m_pBRIslandFactory;
@@ -480,6 +536,9 @@ protected:
 
   // section .eh_frame_hdr
   EhFrameHdr* m_pEhFrameHdr;
+
+  // attribute section
+  ELFAttribute* m_pAttribute;
 
   // ----- dynamic flags ----- //
   // DF_TEXTREL of DT_FLAGS

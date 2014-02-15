@@ -6,7 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include <mcld/MC/MCLDInput.h>
+#include <mcld/MC/Input.h>
 #include <mcld/LD/BSDArchiveReader.h>
 #include <mcld/LD/Archive.h>
 
@@ -20,14 +20,16 @@ BSDArchiveReader::~BSDArchiveReader()
 {
 }
 
-bool BSDArchiveReader::readArchive(Archive& pArchive)
+bool BSDArchiveReader::readArchive(const LinkerConfig& pConfig,
+                                   Archive& pArchive)
 {
   // TODO
   return true;
 }
 
-bool BSDArchiveReader::isMyFormat(Input& pInput) const
+bool BSDArchiveReader::isMyFormat(Input& pInput, bool &pContinue) const
 {
+  pContinue = true;
   // TODO
   return false;
 }

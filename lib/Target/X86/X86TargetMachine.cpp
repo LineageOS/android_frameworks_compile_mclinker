@@ -9,7 +9,6 @@
 #include "X86TargetMachine.h"
 
 #include "X86.h"
-#include <mcld/Target/TargetMachine.h>
 #include <mcld/Support/TargetRegistry.h>
 
 extern "C" void MCLDInitializeX86LDTarget() {
@@ -18,13 +17,15 @@ extern "C" void MCLDInitializeX86LDTarget() {
   mcld::RegisterTargetMachine<mcld::X86TargetMachine> Y(mcld::TheX86_64Target);
 }
 
-mcld::X86TargetMachine::X86TargetMachine(llvm::TargetMachine& pPM,
-                                         const mcld::Target &pTarget,
-                                         const std::string& pTriple)
-  : mcld::MCLDTargetMachine(pPM, pTarget, pTriple) {
-}
+using namespace mcld;
 
-mcld::X86TargetMachine::~X86TargetMachine()
-{
+//===----------------------------------------------------------------------===//
+// X86TargetMachine
+//===----------------------------------------------------------------------===//
+X86TargetMachine::X86TargetMachine(llvm::TargetMachine& pPM,
+                                   const llvm::Target& pLLVMTarget,
+                                   const mcld::Target& pMCLDTarget,
+                                   const std::string& pTriple)
+  : MCLDTargetMachine(pPM, pLLVMTarget, pMCLDTarget, pTriple) {
 }
 
