@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TARGET_OPTIONS_H
-#define MCLD_TARGET_OPTIONS_H
+#ifndef MCLD_TARGETOPTIONS_H
+#define MCLD_TARGETOPTIONS_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -44,6 +44,10 @@ public:
 
   void setTriple(const llvm::Triple& pTriple);
 
+  const std::string& getArch() const { return m_ArchName; }
+
+  void setArch(const std::string& pArchName);
+
   const std::string& getTargetCPU() const { return m_TargetCPU; }
 
   void setTargetCPU(const std::string& pCPU);
@@ -68,6 +72,7 @@ public:
 
 private:
   llvm::Triple m_Triple;
+  std::string m_ArchName;
   std::string m_TargetCPU;
   std::string m_TargetFS;
   Endian m_Endian;

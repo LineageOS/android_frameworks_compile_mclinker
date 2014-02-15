@@ -22,9 +22,9 @@ namespace mcld {
 MCLinker* createARMMCLinker(const std::string& pTriple,
                             LinkerConfig& pConfig,
                             mcld::Module& pModule,
-                            MemoryArea& pOutput)
+                            FileHandle& pFileHandle)
 {
-  Triple theTriple(pTriple);
+  llvm::Triple theTriple(pTriple);
   if (theTriple.isOSDarwin()) {
     assert(0 && "MachO linker has not supported yet");
     return NULL;
@@ -34,7 +34,7 @@ MCLinker* createARMMCLinker(const std::string& pTriple,
     return NULL;
   }
 
-  return new ARMELFMCLinker(pConfig, pModule, pOutput);
+  return new ARMELFMCLinker(pConfig, pModule, pFileHandle);
 }
 
 } // namespace of mcld

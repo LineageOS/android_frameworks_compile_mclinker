@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_GROUPREADER_H
-#define MCLD_GROUPREADER_H
+#ifndef MCLD_LD_GROUPREADER_H
+#define MCLD_LD_GROUPREADER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -43,6 +43,7 @@ public:
   /// readGroup - handle the input sub-tree wich its root is pRoot
   /// @param pRoot - the root Group node of the sub-tree
   bool readGroup(Module::input_iterator pRoot,
+                 Module::input_iterator pEnd,
                  InputBuilder& pBuilder,
                  const LinkerConfig& pConfig);
 

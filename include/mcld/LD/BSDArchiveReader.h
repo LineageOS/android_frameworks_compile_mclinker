@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_BSD_ARCHIVE_READER_H
-#define MCLD_BSD_ARCHIVE_READER_H
+#ifndef MCLD_LD_BSDARCHIVEREADER_H
+#define MCLD_LD_BSDARCHIVEREADER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -18,6 +18,7 @@ namespace mcld
 
 class Input;
 class Archive;
+class LinkerConfig;
 
 /** \class BSDArchiveReader
  *  \brief BSDArchiveReader reads BSD-variant archive files.
@@ -29,8 +30,8 @@ public:
   BSDArchiveReader();
   ~BSDArchiveReader();
 
-  bool readArchive(Archive& pArchive);
-  bool isMyFormat(Input& pInput) const;
+  bool readArchive(const LinkerConfig& pConfig, Archive& pArchive);
+  bool isMyFormat(Input& pInput, bool &pContinue) const;
 };
 
 } // namespace of mcld

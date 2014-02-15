@@ -10,9 +10,8 @@
 
 #include <mcld/IRBuilder.h>
 #include <mcld/LinkerConfig.h>
-#include <mcld/MC/MCLDInput.h>
+#include <mcld/MC/Input.h>
 #include <mcld/Support/MemoryArea.h>
-#include <mcld/Target/GNULDBackend.h>
 
 #include <llvm/Support/ELF.h>
 
@@ -24,18 +23,20 @@ using namespace mcld;
 // ELFBinaryReader
 //===----------------------------------------------------------------------===//
 /// constructor
-ELFBinaryReader::ELFBinaryReader(GNULDBackend& pBackend,
-                                 IRBuilder& pBuilder,
+ELFBinaryReader::ELFBinaryReader(IRBuilder& pBuilder,
                                  const LinkerConfig& pConfig)
-  : BinaryReader(),
-    m_Backend(pBackend),
-    m_Builder(pBuilder),
-    m_Config(pConfig) {
+  : m_Builder(pBuilder), m_Config(pConfig) {
 }
 
 /// destructor
 ELFBinaryReader::~ELFBinaryReader()
 {
+}
+
+bool ELFBinaryReader::isMyFormat(Input& pInput, bool &pContinue) const
+{
+  pContinue = true;
+  return m_Config.options().isBinaryInput();
 }
 
 bool ELFBinaryReader::readBinary(Input& pInput)
@@ -57,7 +58,7 @@ bool ELFBinaryReader::readBinary(Input& pInput)
 
 
   SectionData* data = m_Builder.CreateSectionData(*data_sect);
-  size_t data_size = pInput.memArea()->handler()->size();
+  size_t data_size = pInput.memArea()->size();
   Fragment* frag = m_Builder.CreateRegion(pInput, 0x0, data_size);
   m_Builder.AppendFragment(*frag, *data);
 

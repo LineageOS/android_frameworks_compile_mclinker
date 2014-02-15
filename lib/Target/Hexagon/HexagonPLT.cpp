@@ -49,7 +49,6 @@ HexagonPLT::HexagonPLT(LDSection& pSection,
   m_PLT0Size = sizeof (hexagon_plt0);
   // create PLT0
   new HexagonPLT0(*m_SectionData);
-  m_Last = m_SectionData->begin();
   pSection.setAlign(16);
 }
 
@@ -98,25 +97,9 @@ bool HexagonPLT::hasPLT1() const
   return (m_SectionData->size() > 1);
 }
 
-void HexagonPLT::reserveEntry(size_t pNum)
+HexagonPLT1* HexagonPLT::create()
 {
-  PLTEntryBase* plt1_entry = NULL;
-
-  for (size_t i = 0; i < pNum; ++i) {
-    plt1_entry = new HexagonPLT1(*m_SectionData);
-
-    if (NULL == plt1_entry)
-      fatal(diag::fail_allocate_memory_plt);
-  }
-}
-
-HexagonPLT1* HexagonPLT::consume()
-{
-  ++m_Last;
-  assert(m_Last != m_SectionData->end() &&
-         "The number of PLT Entries and ResolveInfo doesn't match");
-
-  return llvm::cast<HexagonPLT1>(&(*m_Last));
+  return new HexagonPLT1(*m_SectionData);
 }
 
 void HexagonPLT::applyPLT0()
@@ -200,7 +183,7 @@ uint64_t HexagonPLT::emit(MemoryRegion& pRegion)
   uint64_t result = 0x0;
   iterator it = begin();
 
-  unsigned char* buffer = pRegion.getBuffer();
+  unsigned char* buffer = pRegion.begin();
   memcpy(buffer, llvm::cast<HexagonPLT0>((*it)).getValue(), HexagonPLT0::EntrySize);
   result += HexagonPLT0::EntrySize;
   ++it;

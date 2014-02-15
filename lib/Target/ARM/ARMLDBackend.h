@@ -18,9 +18,9 @@
 
 namespace mcld {
 
+class ARMELFAttributeData;
 class LinkerConfig;
 class GNUInfo;
-class SectionMap;
 
 //===----------------------------------------------------------------------===//
 /// ARMGNULDBackend - linker backend of ARM target of GNU ELF format
@@ -103,6 +103,9 @@ public:
   OutputRelocSection& getRelPLT();
   const OutputRelocSection& getRelPLT() const;
 
+  ARMELFAttributeData& getAttributeData();
+  const ARMELFAttributeData& getAttributeData() const;
+
   LDSymbol* getGOTSymbol()             { return m_pGOTSymbol; }
   const LDSymbol* getGOTSymbol() const { return m_pGOTSymbol; }
 
@@ -113,7 +116,12 @@ public:
   bool finalizeTargetSymbols();
 
   /// mergeSection - merge target dependent sections
-  bool mergeSection(Module& pModule, LDSection& pSection);
+  bool mergeSection(Module& pModule, const Input& pInput, LDSection& pSection);
+
+  /// setUpReachedSectionsForGC - set the reference from section XXX to
+  /// .ARM.exidx.XXX to make sure GC correctly handle section exidx
+  void setUpReachedSectionsForGC(const Module& pModule,
+           GarbageCollection::SectionReachedListMap& pSectReachedListMap) const;
 
   /// readSection - read target dependent sections
   bool readSection(Input& pInput, SectionData& pSD);
@@ -158,6 +166,9 @@ private:
   OutputRelocSection* m_pRelDyn;
   /// m_RelPLT - dynamic relocation table of .rel.plt
   OutputRelocSection* m_pRelPLT;
+
+  /// m_pAttrData - attribute data in public ("aeabi") attribute subsection
+  ARMELFAttributeData* m_pAttrData;
 
   ARMELFDynamic* m_pDynamic;
   LDSymbol* m_pGOTSymbol;

@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_GENERAL_OPTIONS_H
-#define MCLD_GENERAL_OPTIONS_H
+#ifndef MCLD_GENERALOPTIONS_H
+#define MCLD_GENERALOPTIONS_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -15,11 +15,11 @@
 #include <vector>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/FileSystem.h>
-#include <mcld/MC/ZOption.h>
 
 namespace mcld {
 
 class Input;
+class ZOption;
 
 /** \class GeneralOptions
  *  \brief GeneralOptions collects the options that not be one of the
@@ -46,6 +46,10 @@ public:
   typedef RpathList::iterator rpath_iterator;
   typedef RpathList::const_iterator const_rpath_iterator;
 
+  typedef std::vector<std::string> ScriptList;
+  typedef ScriptList::iterator script_iterator;
+  typedef ScriptList::const_iterator const_script_iterator;
+
   typedef std::vector<std::string> AuxiliaryList;
   typedef AuxiliaryList::iterator aux_iterator;
   typedef AuxiliaryList::const_iterator const_aux_iterator;
@@ -53,11 +57,6 @@ public:
 public:
   GeneralOptions();
   ~GeneralOptions();
-
-  /// default link script
-  bool hasDefaultLDScript() const;
-  const char* defaultLDScript() const;
-  void setDefaultLDScript(const std::string& pFilename);
 
   /// trace
   void setTrace(bool pEnableTrace = true)
@@ -83,15 +82,6 @@ public:
 
   bool Bgroup() const
   { return m_Bgroup; }
-
-  bool hasEntry() const
-  { return !m_Entry.empty(); }
-
-  void setEntry(const std::string& pEntry)
-  { m_Entry = pEntry; }
-
-  const std::string& entry() const
-  { return m_Entry; }
 
   void setDyld(const std::string& pDyld)
   { m_Dyld = pDyld; }
@@ -132,10 +122,10 @@ public:
   { return m_bColor; }
 
   void setNoUndefined(bool pEnable = true)
-  { m_bNoUndefined = pEnable; }
+  { m_NoUndefined = (pEnable?YES:NO); }
 
   void setMulDefs(bool pEnable = true)
-  { m_bMulDefs = pEnable; }
+  { m_MulDefs = (pEnable?YES:NO); }
 
   void setEhFrameHdr(bool pEnable = true)
   { m_bCreateEhFrameHdr = pEnable; }
@@ -146,8 +136,11 @@ public:
   bool hasCombReloc() const
   { return m_bCombReloc; }
 
+  bool hasNoUndefined() const
+  { return (Unknown != m_NoUndefined); }
+
   bool isNoUndefined() const
-  { return m_bNoUndefined; }
+  { return (YES == m_NoUndefined); }
 
   bool hasStackSet() const
   { return (Unknown != m_ExecStack); }
@@ -165,7 +158,10 @@ public:
   { return m_bLoadFltr; }
 
   bool hasMulDefs() const
-  { return m_bMulDefs; }
+  { return (Unknown != m_MulDefs); }
+
+  bool isMulDefs() const
+  { return (YES == m_MulDefs); }
 
   bool hasNoCopyReloc() const
   { return m_bNoCopyReloc; }
@@ -278,6 +274,26 @@ public:
   bool printMap() const
   { return m_bPrintMap; }
 
+  void setWarnMismatch(bool pEnable = true)
+  { m_bWarnMismatch = pEnable; }
+
+  bool warnMismatch() const
+  { return m_bWarnMismatch; }
+
+  // --gc-sections
+  void setGCSections(bool pEnable = true)
+  { m_bGCSections = pEnable; }
+
+  bool GCSections() const
+  { return m_bGCSections; }
+
+  // --ld-generated-unwind-info
+  void setGenUnwindInfo(bool pEnable = true)
+  { m_bGenUnwindInfo = pEnable; }
+
+  bool genUnwindInfo() const
+  { return m_bGenUnwindInfo; }
+
   // -G, max GP size option
   void setGPSize(int gpsize)
   { m_GPSize = gpsize; }
@@ -298,6 +314,15 @@ public:
   rpath_iterator       rpath_begin()       { return m_RpathList.begin(); }
   const_rpath_iterator rpath_end  () const { return m_RpathList.end();   }
   rpath_iterator       rpath_end  ()       { return m_RpathList.end();   }
+
+  // -----  link-in script  ----- //
+  const ScriptList& getScriptList() const { return m_ScriptList; }
+  ScriptList&       getScriptList()       { return m_ScriptList; }
+
+  const_script_iterator script_begin() const { return m_ScriptList.begin(); }
+  script_iterator       script_begin()       { return m_ScriptList.begin(); }
+  const_script_iterator script_end  () const { return m_ScriptList.end();   }
+  script_iterator       script_end  ()       { return m_ScriptList.end();   }
 
   // -----  filter and auxiliary filter  ----- //
   void setFilter(const std::string& pFilter)
@@ -327,21 +352,20 @@ private:
 private:
   Input* m_pDefaultBitcode;
   std::string m_DefaultLDScript;
-  std::string m_Entry;
   std::string m_Dyld;
   std::string m_SOName;
   int8_t m_Verbose;            // --verbose[=0,1,2]
   uint16_t m_MaxErrorNum;      // --error-limit=N
   uint16_t m_MaxWarnNum;       // --warning-limit=N
   status m_ExecStack;          // execstack, noexecstack
+  status m_NoUndefined;        // defs, --no-undefined
+  status m_MulDefs;            // muldefs, --allow-multiple-definition
   uint64_t m_CommPageSize;     // common-page-size=value
   uint64_t m_MaxPageSize;      // max-page-size=value
   bool m_bCombReloc     : 1;   // combreloc, nocombreloc
-  bool m_bNoUndefined   : 1;   // defs, --no-undefined
   bool m_bInitFirst     : 1;   // initfirst
   bool m_bInterPose     : 1;   // interpose
   bool m_bLoadFltr      : 1;   // loadfltr
-  bool m_bMulDefs       : 1;   // muldefs
   bool m_bNoCopyReloc   : 1;   // nocopyreloc
   bool m_bNoDefaultLib  : 1;   // nodefaultlib
   bool m_bNoDelete      : 1;   // nodelete
@@ -367,9 +391,13 @@ private:
   bool m_bNewDTags: 1; // --enable-new-dtags
   bool m_bNoStdlib: 1; // -nostdlib
   bool m_bPrintMap: 1; // --print-map
+  bool m_bWarnMismatch: 1; // --no-warn-mismatch
+  bool m_bGCSections: 1; // --gc-sections
+  bool m_bGenUnwindInfo: 1; // --ld-generated-unwind-info
   uint32_t m_GPSize; // -G, --gpsize
   StripSymbolMode m_StripSymbols;
   RpathList m_RpathList;
+  ScriptList m_ScriptList;
   unsigned int m_HashStyle;
   std::string m_Filter;
   AuxiliaryList m_AuxiliaryList;

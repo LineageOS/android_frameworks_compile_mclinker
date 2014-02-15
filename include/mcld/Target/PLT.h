@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_PROCEDURE_LINKAGE_TABLE_H
-#define MCLD_PROCEDURE_LINKAGE_TABLE_H
+#ifndef MCLD_TARGET_PLT_H
+#define MCLD_TARGET_PLT_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -22,7 +22,7 @@ class LDSection;
 class ResolveInfo;
 
 /** \class PLTEntryDefaultBase
- *  \brief PLTEntryDefaultBase provides the default interface for PLE Entry
+ *  \brief PLTEntryDefaultBase provides the default interface for PLT Entry
  */
 class PLTEntryBase : public TargetFragment
 {
@@ -33,7 +33,7 @@ public:
 
   virtual ~PLTEntryBase()
   {
-    delete m_pValue;
+    free(m_pValue);
   }
 
   void setValue(unsigned char* pValue)
@@ -80,10 +80,6 @@ public:
   PLT(LDSection& pSection);
 
   virtual ~PLT();
-
-  /// reserveEntry - reseve the number of pNum of empty entries
-  /// The empty entris are reserved for layout to adjust the fragment offset.
-  virtual void reserveEntry(size_t pNum = 1) = 0;
 
   // finalizeSectionSize - set LDSection size
   virtual void finalizeSectionSize() = 0;

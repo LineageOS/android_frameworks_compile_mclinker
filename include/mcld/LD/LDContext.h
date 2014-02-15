@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_LDCONTEXT_H
-#define MCLD_LDCONTEXT_H
+#ifndef MCLD_LD_LDCONTEXT_H
+#define MCLD_LD_LDCONTEXT_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -71,6 +71,12 @@ public:
 
   void addSymbol(LDSymbol* pSym)
   { m_SymTab.push_back(pSym); }
+
+  const_sym_iterator symTabBegin() const { return m_SymTab.begin(); }
+  sym_iterator       symTabBegin()       { return m_SymTab.begin(); }
+
+  const_sym_iterator symTabEnd() const { return m_SymTab.end(); }
+  sym_iterator       symTabEnd()       { return m_SymTab.end(); }
 
   // -----  relocations  ----- //
   const_sect_iterator relocSectBegin() const { return m_RelocSections.begin(); }

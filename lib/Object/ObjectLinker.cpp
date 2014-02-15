@@ -9,6 +9,7 @@
 #include <mcld/Object/ObjectLinker.h>
 
 #include <mcld/LinkerConfig.h>
+#include <mcld/LinkerScript.h>
 #include <mcld/Module.h>
 #include <mcld/InputTree.h>
 #include <mcld/IRBuilder.h>
@@ -20,27 +21,37 @@
 #include <mcld/LD/DynObjReader.h>
 #include <mcld/LD/GroupReader.h>
 #include <mcld/LD/BinaryReader.h>
+#include <mcld/LD/GarbageCollection.h>
 #include <mcld/LD/ObjectWriter.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/RelocData.h>
 #include <mcld/LD/Relocator.h>
+#include <mcld/LD/SectionData.h>
+#include <mcld/LD/BranchIslandFactory.h>
+#include <mcld/Script/ScriptFile.h>
+#include <mcld/Script/ScriptReader.h>
+#include <mcld/Script/Assignment.h>
+#include <mcld/Script/Operand.h>
+#include <mcld/Script/RpnEvaluator.h>
 #include <mcld/Support/RealPath.h>
-#include <mcld/Support/MemoryArea.h>
+#include <mcld/Support/FileOutputBuffer.h>
 #include <mcld/Support/MsgHandling.h>
-#include <mcld/Support/DefSymParser.h>
 #include <mcld/Target/TargetLDBackend.h>
-#include <mcld/Fragment/FragmentLinker.h>
+#include <mcld/Fragment/Relocation.h>
 #include <mcld/Object/ObjectBuilder.h>
 
 #include <llvm/Support/Casting.h>
-
+#include <llvm/Support/Host.h>
 
 using namespace llvm;
 using namespace mcld;
+
+//===----------------------------------------------------------------------===//
+// ObjectLinker
+//===----------------------------------------------------------------------===//
 ObjectLinker::ObjectLinker(const LinkerConfig& pConfig,
                            TargetLDBackend& pLDBackend)
   : m_Config(pConfig),
-    m_pLinker(NULL),
     m_pModule(NULL),
     m_pBuilder(NULL),
     m_LDBackend(pLDBackend),
@@ -49,54 +60,39 @@ ObjectLinker::ObjectLinker(const LinkerConfig& pConfig,
     m_pArchiveReader(NULL),
     m_pGroupReader(NULL),
     m_pBinaryReader(NULL),
+    m_pScriptReader(NULL),
     m_pWriter(NULL) {
 }
 
 ObjectLinker::~ObjectLinker()
 {
-  delete m_pLinker;
   delete m_pObjectReader;
   delete m_pDynObjReader;
   delete m_pArchiveReader;
   delete m_pGroupReader;
   delete m_pBinaryReader;
+  delete m_pScriptReader;
   delete m_pWriter;
 }
 
-void ObjectLinker::setup(Module& pModule, IRBuilder& pBuilder)
+bool ObjectLinker::initialize(Module& pModule, IRBuilder& pBuilder)
 {
   m_pModule = &pModule;
   m_pBuilder = &pBuilder;
 
-  // set up soname
-  if (!m_Config.options().soname().empty()) {
-    m_pModule->setName(m_Config.options().soname());
-  }
-}
-
-/// initFragmentLinker - initialize FragmentLinker
-///  Connect all components with FragmentLinker
-bool ObjectLinker::initFragmentLinker()
-{
-  if (NULL == m_pLinker) {
-    m_pLinker = new FragmentLinker(m_Config,
-                                   *m_pModule,
-                                   m_LDBackend);
-  }
-
   // initialize the readers and writers
-  // Because constructor can not be failed, we initalize all readers and
-  // writers outside the FragmentLinker constructors.
   m_pObjectReader  = m_LDBackend.createObjectReader(*m_pBuilder);
   m_pArchiveReader = m_LDBackend.createArchiveReader(*m_pModule);
   m_pDynObjReader  = m_LDBackend.createDynObjReader(*m_pBuilder);
   m_pBinaryReader  = m_LDBackend.createBinaryReader(*m_pBuilder);
   m_pGroupReader   = new GroupReader(*m_pModule, *m_pObjectReader,
                          *m_pDynObjReader, *m_pArchiveReader, *m_pBinaryReader);
+  m_pScriptReader  = new ScriptReader(*m_pGroupReader);
   m_pWriter        = m_LDBackend.createWriter();
 
   // initialize Relocator
   m_LDBackend.initRelocator();
+
   return true;
 }
 
@@ -122,7 +118,8 @@ void ObjectLinker::normalize()
   for (input = m_pModule->input_begin(); input!=inEnd; ++input) {
     // is a group node
     if (isGroup(input)) {
-      getGroupReader()->readGroup(input, m_pBuilder->getInputBuilder(), m_Config);
+      getGroupReader()->readGroup(input, inEnd, m_pBuilder->getInputBuilder(),
+                                  m_Config);
       continue;
     }
 
@@ -143,14 +140,15 @@ void ObjectLinker::normalize()
       continue;
     }
 
+    bool doContinue = false;
     // read input as a binary file
-    if (m_Config.options().isBinaryInput()) {
+    if (getBinaryReader()->isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Object);
       getBinaryReader()->readBinary(**input);
       m_pModule->getObjectList().push_back(*input);
     }
     // is a relocatable object file
-    else if (getObjectReader()->isMyFormat(**input)) {
+    else if (doContinue && getObjectReader()->isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Object);
       getObjectReader()->readHeader(**input);
       getObjectReader()->readSections(**input);
@@ -158,25 +156,39 @@ void ObjectLinker::normalize()
       m_pModule->getObjectList().push_back(*input);
     }
     // is a shared object file
-    else if (getDynObjReader()->isMyFormat(**input)) {
+    else if (doContinue && getDynObjReader()->isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::DynObj);
       getDynObjReader()->readHeader(**input);
       getDynObjReader()->readSymbols(**input);
       m_pModule->getLibraryList().push_back(*input);
     }
     // is an archive
-    else if (getArchiveReader()->isMyFormat(**input)) {
+    else if (doContinue && getArchiveReader()->isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Archive);
       Archive archive(**input, m_pBuilder->getInputBuilder());
-      getArchiveReader()->readArchive(archive);
+      getArchiveReader()->readArchive(m_Config, archive);
       if(archive.numOfObjectMember() > 0) {
         m_pModule->getInputTree().merge<InputTree::Inclusive>(input,
-                                                            archive.inputs());
+                                                              archive.inputs());
+      }
+    }
+    // try to parse input as a linker script
+    else if (doContinue && getScriptReader()->isMyFormat(**input, doContinue)) {
+      ScriptFile script(ScriptFile::LDScript, **input,
+                        m_pBuilder->getInputBuilder());
+      if (getScriptReader()->readScript(m_Config, script)) {
+        (*input)->setType(Input::Script);
+        script.activate(*m_pModule);
+        if (script.inputs().size() > 0) {
+          m_pModule->getInputTree().merge<InputTree::Inclusive>(input,
+            script.inputs());
+        }
       }
     }
     else {
-      fatal(diag::err_unrecognized_input_file) << (*input)->path()
-                                          << m_Config.targets().triple().str();
+      if (m_Config.options().warnMismatch())
+        warning(diag::warn_unrecognized_input_file) << (*input)->path()
+          << m_Config.targets().triple().str();
     }
   } // end of for
 }
@@ -217,6 +229,16 @@ bool ObjectLinker::linkable() const
   return true;
 }
 
+void ObjectLinker::dataStrippingOpt()
+{
+  // Garbege collection
+  if (m_Config.options().GCSections()) {
+    GarbageCollection GC(m_Config, m_LDBackend, *m_pModule);
+    GC.run();
+  }
+  return;
+}
+
 /// readRelocations - read all relocation entries
 ///
 /// All symbols should be read and resolved before this function.
@@ -247,14 +269,21 @@ bool ObjectLinker::mergeSections()
         // Some *INPUT sections should not be merged.
         case LDFileFormat::Ignore:
         case LDFileFormat::Null:
-        case LDFileFormat::Relocation:
         case LDFileFormat::NamePool:
         case LDFileFormat::Group:
         case LDFileFormat::StackNote:
           // skip
           continue;
+        case LDFileFormat::Relocation: {
+          if (!(*sect)->hasRelocData())
+            continue; // skip
+
+          if ((*sect)->getLink()->kind() == LDFileFormat::Ignore)
+            (*sect)->setKind(LDFileFormat::Ignore);
+          break;
+        }
         case LDFileFormat::Target:
-          if (!m_LDBackend.mergeSection(*m_pModule, **sect)) {
+          if (!m_LDBackend.mergeSection(*m_pModule, **obj, **sect)) {
             error(diag::err_cannot_merge_section) << (*sect)->name()
                                                   << (*obj)->name();
             return false;
@@ -265,16 +294,12 @@ bool ObjectLinker::mergeSections()
             continue; // skip
 
           LDSection* out_sect = NULL;
-          if (NULL == (out_sect = builder.MergeSection(**sect))) {
-            error(diag::err_cannot_merge_section) << (*sect)->name()
-                                                  << (*obj)->name();
-            return false;
-          }
-
-          if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
-            error(diag::err_cannot_merge_section) << (*sect)->name()
-                                                  << (*obj)->name();
-            return false;
+          if (NULL != (out_sect = builder.MergeSection(**obj, **sect))) {
+            if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
+              error(diag::err_cannot_merge_section) << (*sect)->name()
+                                                    << (*obj)->name();
+              return false;
+            }
           }
           break;
         }
@@ -283,24 +308,104 @@ bool ObjectLinker::mergeSections()
             continue; // skip
 
           LDSection* out_sect = NULL;
-          if (NULL == (out_sect = builder.MergeSection(**sect))) {
-            error(diag::err_cannot_merge_section) << (*sect)->name()
-                                                  << (*obj)->name();
-            return false;
-          }
-
-          if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
-            error(diag::err_cannot_merge_section) << (*sect)->name()
-                                                  << (*obj)->name();
-            return false;
+          if (NULL != (out_sect = builder.MergeSection(**obj, **sect))) {
+            if (!m_LDBackend.updateSectionFlags(*out_sect, **sect)) {
+              error(diag::err_cannot_merge_section) << (*sect)->name()
+                                                    << (*obj)->name();
+              return false;
+            }
           }
           break;
         }
       } // end of switch
     } // for each section
   } // for each obj
+
+  RpnEvaluator evaluator(*m_pModule, m_LDBackend);
+  SectionMap::iterator out, outBegin, outEnd;
+  outBegin = m_pModule->getScript().sectionMap().begin();
+  outEnd = m_pModule->getScript().sectionMap().end();
+  for (out = outBegin; out != outEnd; ++out) {
+    uint64_t out_align = 0x0, in_align = 0x0;
+    LDSection* out_sect = (*out)->getSection();
+    SectionMap::Output::iterator in, inBegin, inEnd;
+    inBegin = (*out)->begin();
+    inEnd = (*out)->end();
+
+    // force input alignment from ldscript if any
+    if ((*out)->prolog().hasSubAlign()) {
+      evaluator.eval((*out)->prolog().subAlign(), in_align);
+    }
+
+    for (in = inBegin; in != inEnd; ++in) {
+      LDSection* in_sect = (*in)->getSection();
+      if ((*out)->prolog().hasSubAlign())
+        in_sect->setAlign(in_align);
+
+      if (builder.MoveSectionData(*in_sect->getSectionData(),
+                                  *out_sect->getSectionData())) {
+        builder.UpdateSectionAlign(*out_sect, *in_sect);
+        m_LDBackend.updateSectionFlags(*out_sect, *in_sect);
+      }
+    } // for each input section description
+
+    // force output alignment from ldscript if any
+    if ((*out)->prolog().hasAlign()) {
+      evaluator.eval((*out)->prolog().align(), out_align);
+      out_sect->setAlign(out_align);
+    }
+
+    if ((*out)->hasContent()) {
+      LDSection* target = m_pModule->getSection((*out)->name());
+      assert(target != NULL && target->hasSectionData());
+      if (builder.MoveSectionData(*out_sect->getSectionData(),
+                                  *target->getSectionData())) {
+        builder.UpdateSectionAlign(*target, *out_sect);
+        m_LDBackend.updateSectionFlags(*target, *out_sect);
+      }
+    }
+  } // for each output section description
+
   return true;
 }
+
+void ObjectLinker::addSymbolToOutput(ResolveInfo& pInfo, Module& pModule)
+{
+  // section symbols will be defined by linker later, we should not add section
+  // symbols to output here
+  if (ResolveInfo::Section == pInfo.type() || NULL == pInfo.outSymbol())
+    return;
+
+  // if the symbols defined in the Ignore sections (e.g. discared by GC), then
+  // not to put them to output
+  if (pInfo.outSymbol()->hasFragRef() && LDFileFormat::Ignore ==
+        pInfo.outSymbol()->fragRef()->frag()->getParent()->getSection().kind())
+    return;
+
+  if (pInfo.shouldForceLocal(m_Config))
+    pModule.getSymbolTable().forceLocal(*pInfo.outSymbol());
+  else
+    pModule.getSymbolTable().add(*pInfo.outSymbol());
+}
+
+void ObjectLinker::addSymbolsToOutput(Module& pModule)
+{
+  // Traverse all the free ResolveInfo and add the output symobols to output
+  NamePool::freeinfo_iterator free_it,
+                              free_end = pModule.getNamePool().freeinfo_end();
+  for (free_it = pModule.getNamePool().freeinfo_begin(); free_it != free_end;
+                                                                      ++free_it)
+    addSymbolToOutput(**free_it, pModule);
+
+
+  // Traverse all the resolveInfo and add the output symbol to output
+  NamePool::syminfo_iterator info_it,
+                             info_end = pModule.getNamePool().syminfo_end();
+  for (info_it = pModule.getNamePool().syminfo_begin(); info_it != info_end;
+                                                                      ++info_it)
+    addSymbolToOutput(*info_it.getEntry(), pModule);
+}
+
 
 /// addStandardSymbols - shared object and executable files need some
 /// standard symbols
@@ -331,40 +436,63 @@ bool ObjectLinker::addTargetSymbols()
 /// scripts.
 bool ObjectLinker::addScriptSymbols()
 {
-  const LinkerScript& script = m_pModule->getScript();
-  LinkerScript::DefSymMap::const_entry_iterator it;
-  LinkerScript::DefSymMap::const_entry_iterator ie = script.defSymMap().end();
-  // go through the entire defSymMap
-  for (it = script.defSymMap().begin(); it != ie; ++it) {
-    const llvm::StringRef sym =  it.getEntry()->key();
-    ResolveInfo* old_info = m_pModule->getNamePool().findInfo(sym);
+  LinkerScript& script = m_pModule->getScript();
+  LinkerScript::Assignments::iterator it, ie = script.assignments().end();
+  // go through the entire symbol assignments
+  for (it = script.assignments().begin(); it != ie; ++it) {
+    LDSymbol* symbol = NULL;
+    assert((*it).second.symbol().type() == Operand::SYMBOL);
+    const llvm::StringRef symName =  (*it).second.symbol().name();
+    ResolveInfo::Type       type = ResolveInfo::NoType;
+    ResolveInfo::Visibility vis  = ResolveInfo::Default;
+    size_t size = 0;
+    ResolveInfo* old_info = m_pModule->getNamePool().findInfo(symName);
     // if the symbol does not exist, we can set type to NOTYPE
     // else we retain its type, same goes for size - 0 or retain old value
     // and visibility - Default or retain
     if (old_info != NULL) {
-      if(!m_pBuilder->AddSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
-                             sym,
-                             static_cast<ResolveInfo::Type>(old_info->type()),
-                             ResolveInfo::Define,
-                             ResolveInfo::Absolute,
-                             old_info->size(),
-                             0x0,
-                             FragmentRef::Null(),
-                             old_info->visibility()))
-        return false;
+      type = static_cast<ResolveInfo::Type>(old_info->type());
+      vis = old_info->visibility();
+      size = old_info->size();
     }
-    else {
-      if (!m_pBuilder->AddSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
-                             sym,
-                             ResolveInfo::NoType,
-                             ResolveInfo::Define,
-                             ResolveInfo::Absolute,
-                             0x0,
-                             0x0,
-                             FragmentRef::Null(),
-                             ResolveInfo::Default))
-        return false;
+
+    // Add symbol and refine the visibility if needed
+    // FIXME: bfd linker would change the binding instead, but currently
+    //        ABS is also a kind of Binding in ResolveInfo.
+    switch ((*it).second.type()) {
+    case Assignment::HIDDEN:
+      vis = ResolveInfo::Hidden;
+      // Fall through
+    case Assignment::DEFAULT:
+      symbol =
+        m_pBuilder->AddSymbol<IRBuilder::Force,
+                              IRBuilder::Unresolve>(symName,
+                                                    type,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Absolute,
+                                                    size,
+                                                    0x0,
+                                                    FragmentRef::Null(),
+                                                    vis);
+      break;
+    case Assignment::PROVIDE_HIDDEN:
+      vis = ResolveInfo::Hidden;
+      // Fall through
+    case Assignment::PROVIDE:
+      symbol =
+        m_pBuilder->AddSymbol<IRBuilder::AsReferred,
+                              IRBuilder::Unresolve>(symName,
+                                                    type,
+                                                    ResolveInfo::Define,
+                                                    ResolveInfo::Absolute,
+                                                    size,
+                                                    0x0,
+                                                    FragmentRef::Null(),
+                                                    vis);
+      break;
     }
+    // Set symbol of this assignment.
+    (*it).first = symbol;
   }
   return true;
 }
@@ -387,10 +515,18 @@ bool ObjectLinker::scanRelocations()
       RelocData::iterator reloc, rEnd = (*rs)->getRelocData()->end();
       for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
         Relocation* relocation = llvm::cast<Relocation>(reloc);
+
+        // bypass the reloc if the symbol is in the discarded input section
+        ResolveInfo* info = relocation->symInfo();
+        if (!info->outSymbol()->hasFragRef() &&
+            ResolveInfo::Section == info->type() &&
+            ResolveInfo::Undefined == info->desc())
+           continue;
+
         // scan relocation
         if (LinkerConfig::Object != m_Config.codeGenType())
           m_LDBackend.getRelocator()->scanRelocation(
-                                    *relocation, *m_pBuilder, *m_pModule, **rs);
+                                    *relocation, *m_pBuilder, *m_pModule, **rs, **input);
         else
           m_LDBackend.getRelocator()->partialScanRelocation(
                                                  *relocation, *m_pModule, **rs);
@@ -450,11 +586,17 @@ bool ObjectLinker::prelayout()
   /// In ELF, will compute  the size of.symtab, .strtab, .dynsym, .dynstr,
   /// .hash and .shstrtab sections.
   ///
-  /// dump all symbols and strings from FragmentLinker and build the format-dependent
+  /// dump all symbols and strings from ObjectLinker and build the format-dependent
   /// hash table.
   /// @note sizeNamePools replies on LinkerConfig::CodePosition. Must determine
   /// code position model before calling GNULDBackend::sizeNamePools()
   m_LDBackend.sizeNamePools(*m_pModule);
+
+  // Do this after backend prelayout since it may add eh_frame entries.
+  LDSection* eh_frame_sect = m_pModule->getSection(".eh_frame");
+  if (eh_frame_sect && eh_frame_sect->hasEhFrame())
+    eh_frame_sect->getEhFrame()->computeOffsetSize();
+  m_LDBackend.createAndSizeEhFrameHdr(*m_pModule);
 
   return true;
 }
@@ -478,30 +620,69 @@ bool ObjectLinker::postlayout()
 }
 
 /// finalizeSymbolValue - finalize the resolved symbol value.
-///   Before relocate(), after layout(), FragmentLinker should correct value of all
+///   Before relocate(), after layout(), ObjectLinker should correct value of all
 ///   symbol.
 bool ObjectLinker::finalizeSymbolValue()
 {
-  bool finalized = m_pLinker->finalizeSymbols() && m_LDBackend.finalizeSymbols();
-  bool scriptSymsAdded = true;
-  uint64_t symVal;
-  const LinkerScript& script = m_pModule->getScript();
-  LinkerScript::DefSymMap::const_entry_iterator it;
-  LinkerScript::DefSymMap::const_entry_iterator ie = script.defSymMap().end();
+  Module::sym_iterator symbol, symEnd = m_pModule->sym_end();
+  for (symbol = m_pModule->sym_begin(); symbol != symEnd; ++symbol) {
 
-  DefSymParser parser(*m_pModule);
-  for (it = script.defSymMap().begin(); it != ie; ++it) {
-    llvm::StringRef symName =  it.getEntry()->key();
-    llvm::StringRef expr =  it.getEntry()->value();
+    if ((*symbol)->resolveInfo()->isAbsolute() ||
+        (*symbol)->resolveInfo()->type() == ResolveInfo::File) {
+      // absolute symbols should just use its value directly (i.e., the result
+      // of symbol resolution)
+      continue;
+    }
 
-    LDSymbol* symbol = m_pModule->getNamePool().findSymbol(symName);
-    assert(NULL != symbol && "--defsym symbol should be in the name pool");
-    scriptSymsAdded &= parser.parse(expr, symVal);
-    if (!scriptSymsAdded)
-      break;
-    symbol->setValue(symVal);
+    if ((*symbol)->resolveInfo()->type() == ResolveInfo::ThreadLocal) {
+      m_LDBackend.finalizeTLSSymbol(**symbol);
+      continue;
+    }
+
+    if ((*symbol)->hasFragRef()) {
+      // set the virtual address of the symbol. If the output file is
+      // relocatable object file, the section's virtual address becomes zero.
+      // And the symbol's value become section relative offset.
+      uint64_t value = (*symbol)->fragRef()->getOutputOffset();
+      assert(NULL != (*symbol)->fragRef()->frag());
+      uint64_t addr =
+        (*symbol)->fragRef()->frag()->getParent()->getSection().addr();
+      (*symbol)->setValue(value + addr);
+      continue;
+    }
   }
-  return finalized && scriptSymsAdded ;
+
+  RpnEvaluator evaluator(*m_pModule, m_LDBackend);
+  bool finalized = m_LDBackend.finalizeSymbols();
+  bool scriptSymsFinalized = true;
+  LinkerScript& script = m_pModule->getScript();
+  LinkerScript::Assignments::iterator assign, assignEnd;
+  assignEnd = script.assignments().end();
+  for (assign = script.assignments().begin(); assign != assignEnd; ++assign) {
+    LDSymbol* symbol = (*assign).first;
+    Assignment& assignment = (*assign).second;
+
+    if (symbol == NULL)
+      continue;
+
+    scriptSymsFinalized &= assignment.assign(evaluator);
+    if (!scriptSymsFinalized)
+      break;
+
+    symbol->setValue(assignment.symbol().value());
+  } // for each script symbol assignment
+
+  bool assertionsPassed = true;
+  LinkerScript::Assertions::iterator assert, assertEnd;
+  assertEnd = script.assertions().end();
+  for (assert = script.assertions().begin(); assert != assertEnd; ++assert) {
+    uint64_t res = 0x0;
+    evaluator.eval((*assert).getRpnExpr(), res);
+    if (res == 0x0)
+      fatal(diag::err_assert_failed) << (*assert).message();
+  } // for each assertion in ldscript
+
+  return finalized && scriptSymsFinalized && assertionsPassed;
 }
 
 /// relocate - applying relocation entries and create relocation
@@ -511,25 +692,193 @@ bool ObjectLinker::finalizeSymbolValue()
 /// and push_back into the relocation section
 bool ObjectLinker::relocation()
 {
-  return m_pLinker->applyRelocations();
+  // when producing relocatables, no need to apply relocation
+  if (LinkerConfig::Object == m_Config.codeGenType())
+    return true;
+
+  // apply all relocations of all inputs
+  Module::obj_iterator input, inEnd = m_pModule->obj_end();
+  for (input = m_pModule->obj_begin(); input != inEnd; ++input) {
+    m_LDBackend.getRelocator()->initializeApply(**input);
+    LDContext::sect_iterator rs, rsEnd = (*input)->context()->relocSectEnd();
+    for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
+      // bypass the reloc section if
+      // 1. its section kind is changed to Ignore. (The target section is a
+      // discarded group section.)
+      // 2. it has no reloc data. (All symbols in the input relocs are in the
+      // discarded group sections)
+      if (LDFileFormat::Ignore == (*rs)->kind() || !(*rs)->hasRelocData())
+        continue;
+      RelocData::iterator reloc, rEnd = (*rs)->getRelocData()->end();
+      for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
+        Relocation* relocation = llvm::cast<Relocation>(reloc);
+
+        // bypass the reloc if the symbol is in the discarded input section
+        ResolveInfo* info = relocation->symInfo();
+        if (!info->outSymbol()->hasFragRef() &&
+            ResolveInfo::Section == info->type() &&
+            ResolveInfo::Undefined == info->desc())
+          continue;
+
+        relocation->apply(*m_LDBackend.getRelocator());
+      } // for all relocations
+    } // for all relocation section
+    m_LDBackend.getRelocator()->finalizeApply(**input);
+  } // for all inputs
+
+  // apply relocations created by relaxation
+  BranchIslandFactory* br_factory = m_LDBackend.getBRIslandFactory();
+  BranchIslandFactory::iterator facIter, facEnd = br_factory->end();
+  for (facIter = br_factory->begin(); facIter != facEnd; ++facIter) {
+    BranchIsland& island = *facIter;
+    BranchIsland::reloc_iterator iter, iterEnd = island.reloc_end();
+    for (iter = island.reloc_begin(); iter != iterEnd; ++iter)
+      (*iter)->apply(*m_LDBackend.getRelocator());
+  }
+  return true;
 }
 
 /// emitOutput - emit the output file.
-bool ObjectLinker::emitOutput(MemoryArea& pOutput)
+bool ObjectLinker::emitOutput(FileOutputBuffer& pOutput)
 {
   return llvm::errc::success == getWriter()->writeObject(*m_pModule, pOutput);
 }
 
 
 /// postProcessing - do modification after all processes
-bool ObjectLinker::postProcessing(MemoryArea& pOutput)
+bool ObjectLinker::postProcessing(FileOutputBuffer& pOutput)
 {
-  m_pLinker->syncRelocationResult(pOutput);
+  if (LinkerConfig::Object != m_Config.codeGenType())
+    normalSyncRelocationResult(pOutput);
+  else
+    partialSyncRelocationResult(pOutput);
 
   // emit .eh_frame_hdr
   // eh_frame_hdr should be emitted after syncRelocation, because eh_frame_hdr
   // needs FDE PC value, which will be corrected at syncRelocation
   m_LDBackend.postProcessing(pOutput);
   return true;
+}
+
+void ObjectLinker::normalSyncRelocationResult(FileOutputBuffer& pOutput)
+{
+  uint8_t* data = pOutput.getBufferStart();
+
+  // sync all relocations of all inputs
+  Module::obj_iterator input, inEnd = m_pModule->obj_end();
+  for (input = m_pModule->obj_begin(); input != inEnd; ++input) {
+    LDContext::sect_iterator rs, rsEnd = (*input)->context()->relocSectEnd();
+    for (rs = (*input)->context()->relocSectBegin(); rs != rsEnd; ++rs) {
+      // bypass the reloc section if
+      // 1. its section kind is changed to Ignore. (The target section is a
+      // discarded group section.)
+      // 2. it has no reloc data. (All symbols in the input relocs are in the
+      // discarded group sections)
+      if (LDFileFormat::Ignore == (*rs)->kind() || !(*rs)->hasRelocData())
+        continue;
+      RelocData::iterator reloc, rEnd = (*rs)->getRelocData()->end();
+      for (reloc = (*rs)->getRelocData()->begin(); reloc != rEnd; ++reloc) {
+        Relocation* relocation = llvm::cast<Relocation>(reloc);
+
+        // bypass the reloc if the symbol is in the discarded input section
+        ResolveInfo* info = relocation->symInfo();
+        if (!info->outSymbol()->hasFragRef() &&
+            ResolveInfo::Section == info->type() &&
+            ResolveInfo::Undefined == info->desc())
+          continue;
+
+        // bypass the relocation with NONE type. This is to avoid overwrite the
+        // target result by NONE type relocation if there is a place which has
+        // two relocations to apply to, and one of it is NONE type. The result
+        // we want is the value of the other relocation result. For example,
+        // in .exidx, there are usually an R_ARM_NONE and R_ARM_PREL31 apply to
+        // the same place
+        if (0x0 == relocation->type())
+          continue;
+        writeRelocationResult(*relocation, data);
+      } // for all relocations
+    } // for all relocation section
+  } // for all inputs
+
+  // sync relocations created by relaxation
+  BranchIslandFactory* br_factory = m_LDBackend.getBRIslandFactory();
+  BranchIslandFactory::iterator facIter, facEnd = br_factory->end();
+  for (facIter = br_factory->begin(); facIter != facEnd; ++facIter) {
+    BranchIsland& island = *facIter;
+    BranchIsland::reloc_iterator iter, iterEnd = island.reloc_end();
+    for (iter = island.reloc_begin(); iter != iterEnd; ++iter) {
+      Relocation* reloc = *iter;
+      writeRelocationResult(*reloc, data);
+    }
+  }
+}
+
+void ObjectLinker::partialSyncRelocationResult(FileOutputBuffer& pOutput)
+{
+  uint8_t* data = pOutput.getBufferStart();
+
+  // traverse outputs' LDSection to get RelocData
+  Module::iterator sectIter, sectEnd = m_pModule->end();
+  for (sectIter = m_pModule->begin(); sectIter != sectEnd; ++sectIter) {
+    if (LDFileFormat::Relocation != (*sectIter)->kind())
+      continue;
+
+    RelocData* reloc_data = (*sectIter)->getRelocData();
+    RelocData::iterator relocIter, relocEnd = reloc_data->end();
+    for (relocIter = reloc_data->begin(); relocIter != relocEnd; ++relocIter) {
+      Relocation* reloc = llvm::cast<Relocation>(relocIter);
+
+      // bypass the relocation with NONE type. This is to avoid overwrite the
+      // target result by NONE type relocation if there is a place which has
+      // two relocations to apply to, and one of it is NONE type. The result
+      // we want is the value of the other relocation result. For example,
+      // in .exidx, there are usually an R_ARM_NONE and R_ARM_PREL31 apply to
+      // the same place
+      if (0x0 == reloc->type())
+        continue;
+      writeRelocationResult(*reloc, data);
+    }
+  }
+}
+
+void ObjectLinker::writeRelocationResult(Relocation& pReloc, uint8_t* pOutput)
+{
+  // get output file offset
+  size_t out_offset =
+                 pReloc.targetRef().frag()->getParent()->getSection().offset() +
+                 pReloc.targetRef().getOutputOffset();
+
+  uint8_t* target_addr = pOutput + out_offset;
+  // byte swapping if target and host has different endian, and then write back
+  if(llvm::sys::IsLittleEndianHost != m_Config.targets().isLittleEndian()) {
+     uint64_t tmp_data = 0;
+
+     switch(pReloc.size(*m_LDBackend.getRelocator())) {
+       case 8u:
+         std::memcpy(target_addr, &pReloc.target(), 1);
+         break;
+
+       case 16u:
+         tmp_data = mcld::bswap16(pReloc.target());
+         std::memcpy(target_addr, &tmp_data, 2);
+         break;
+
+       case 32u:
+         tmp_data = mcld::bswap32(pReloc.target());
+         std::memcpy(target_addr, &tmp_data, 4);
+         break;
+
+       case 64u:
+         tmp_data = mcld::bswap64(pReloc.target());
+         std::memcpy(target_addr, &tmp_data, 8);
+         break;
+
+       default:
+         break;
+    }
+  }
+  else
+    std::memcpy(target_addr, &pReloc.target(),
+                                      pReloc.size(*m_LDBackend.getRelocator())/8);
 }
 

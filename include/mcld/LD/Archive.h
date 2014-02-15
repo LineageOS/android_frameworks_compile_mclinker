@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_ARCHIVE_H
-#define MCLD_ARCHIVE_H
+#ifndef MCLD_LD_ARCHIVE_H
+#define MCLD_LD_ARCHIVE_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -26,9 +26,6 @@ namespace mcld {
 class Input;
 class InputFactory;
 class InputBuilder;
-class AttributeFactory;
-class ContextFactory;
-class MemoryAreaFactory;
 
 /** \class Archive
  *  \brief This class define the interfacee to Archive files
@@ -40,6 +37,7 @@ public:
   static const char   THIN_MAGIC[];        ///< magic of thin archive
   static const size_t MAGIC_LEN;           ///< length of magic string
   static const char   SVR4_SYMTAB_NAME[];  ///< SVR4 symtab entry name
+  static const char   IRIX6_SYMTAB_NAME[]; ///< Irix6 symtab entry name
   static const char   STRTAB_NAME[];       ///< Name of string table
   static const char   PAD[];               ///< inter-file align padding
   static const char   MEMBER_MAGIC[];      ///< fmag field magic #
@@ -98,7 +96,7 @@ private:
 
 public:
   typedef HashTable<ArchiveMemberEntryType,
-                    hash::StringHash<hash::ELF>,
+                    hash::StringHash<hash::DJB>,
                     EntryFactory<ArchiveMemberEntryType> > ArchiveMemberMapType;
 
   struct Symbol

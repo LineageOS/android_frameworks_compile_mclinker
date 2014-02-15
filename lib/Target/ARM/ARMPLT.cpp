@@ -14,7 +14,6 @@
 #include <llvm/Support/Casting.h>
 
 #include <mcld/LD/LDSection.h>
-#include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
 
 using namespace mcld;
@@ -28,11 +27,9 @@ ARMPLT1::ARMPLT1(SectionData& pParent)
 //===----------------------------------------------------------------------===//
 // ARMPLT
 
-ARMPLT::ARMPLT(LDSection& pSection,
-               ARMGOT &pGOTPLT)
-  : PLT(pSection), m_GOT(pGOTPLT), m_PLTEntryIterator() {
+ARMPLT::ARMPLT(LDSection& pSection, ARMGOT &pGOTPLT)
+  : PLT(pSection), m_GOT(pGOTPLT) {
   new ARMPLT0(*m_SectionData);
-  m_PLTEntryIterator = m_SectionData->begin();
 }
 
 ARMPLT::~ARMPLT()
@@ -58,39 +55,12 @@ void ARMPLT::finalizeSectionSize()
   }
 }
 
-void ARMPLT::reserveEntry(size_t pNum)
+ARMPLT1* ARMPLT::create()
 {
-  ARMPLT1* plt1_entry = 0;
-
-  for (size_t i = 0; i < pNum; ++i) {
-    plt1_entry = new (std::nothrow) ARMPLT1(*m_SectionData);
-
-    if (!plt1_entry)
-      fatal(diag::fail_allocate_memory_plt);
-
-    m_GOT.reserveGOTPLT();
-  }
-}
-
-ARMPLT1* ARMPLT::consume()
-{
-  ++m_PLTEntryIterator;
-  assert(m_PLTEntryIterator != m_SectionData->end() &&
-         "The number of PLT Entries and ResolveInfo doesn't match");
-
-  return llvm::cast<ARMPLT1>(&(*m_PLTEntryIterator));
-}
-
-ARMPLT0* ARMPLT::getPLT0() const {
-
-  iterator first = m_SectionData->getFragmentList().begin();
-
-  assert(first != m_SectionData->getFragmentList().end() &&
-         "FragmentList is empty, getPLT0 failed!");
-
-  ARMPLT0* plt0 = &(llvm::cast<ARMPLT0>(*first));
-
-  return plt0;
+  ARMPLT1* plt1_entry = new (std::nothrow) ARMPLT1(*m_SectionData);
+  if (!plt1_entry)
+    fatal(diag::fail_allocate_memory_plt);
+  return plt1_entry;
 }
 
 void ARMPLT::applyPLT0() {
@@ -181,7 +151,7 @@ uint64_t ARMPLT::emit(MemoryRegion& pRegion)
   uint64_t result = 0x0;
   iterator it = begin();
 
-  unsigned char* buffer = pRegion.getBuffer();
+  unsigned char* buffer = pRegion.begin();
   memcpy(buffer, llvm::cast<ARMPLT0>((*it)).getValue(), ARMPLT0::EntrySize);
   result += ARMPLT0::EntrySize;
   ++it;

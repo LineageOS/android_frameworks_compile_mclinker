@@ -7,23 +7,24 @@
 //
 //===----------------------------------------------------------------------===//
 #include "MipsTargetMachine.h"
-
 #include "Mips.h"
-#include <mcld/Target/TargetMachine.h>
 #include <mcld/Support/TargetRegistry.h>
 
+typedef mcld::RegisterTargetMachine<mcld::MipsBaseTargetMachine> RegMipsTarget;
+
 extern "C" void MCLDInitializeMipsLDTarget() {
-  // Register createTargetMachine function pointer to mcld::Target
-  mcld::RegisterTargetMachine<mcld::MipsBaseTargetMachine>
-        X(mcld::TheMipselTarget);
+  RegMipsTarget X1(mcld::TheMipselTarget);
+  RegMipsTarget X2(mcld::TheMips64elTarget);
 }
 
-mcld::MipsBaseTargetMachine::MipsBaseTargetMachine(llvm::TargetMachine& pPM,
-                                                   const mcld::Target &pTarget,
-                                                   const std::string& pTriple)
-  : mcld::MCLDTargetMachine(pPM, pTarget, pTriple) {
-}
+using namespace mcld;
 
-mcld::MipsBaseTargetMachine::~MipsBaseTargetMachine()
-{
+//===----------------------------------------------------------------------===//
+// MipsBaseTargetMachine
+//===----------------------------------------------------------------------===//
+MipsBaseTargetMachine::MipsBaseTargetMachine(llvm::TargetMachine& pPM,
+                                             const llvm::Target &pLLVMTarget,
+                                             const mcld::Target &pMCLDTarget,
+                                             const std::string& pTriple)
+  : MCLDTargetMachine(pPM, pLLVMTarget, pMCLDTarget, pTriple) {
 }

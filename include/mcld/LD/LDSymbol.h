@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_LD_SYMBOL_H
-#define MCLD_LD_SYMBOL_H
+#ifndef MCLD_LD_LDSYMBOL_H
+#define MCLD_LD_LDSYMBOL_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -19,7 +19,12 @@
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/Support/Allocators.h>
 
-#include <llvm/Support/ManagedStatic.h>
+namespace llvm {
+
+// forware declaration
+template<class T> void* object_creator();
+
+} // namespace of llvm
 
 namespace mcld {
 

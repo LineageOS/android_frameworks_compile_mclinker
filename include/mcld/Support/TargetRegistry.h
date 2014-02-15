@@ -6,9 +6,11 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TARGET_REGISTRY_H
-#define MCLD_TARGET_REGISTRY_H
-#include <llvm/Support/TargetRegistry.h>
+#ifndef MCLD_SUPPORT_TARGETREGISTRY_H
+#define MCLD_SUPPORT_TARGETREGISTRY_H
+#include <mcld/Support/Target.h>
+#include <llvm/ADT/Triple.h>
+
 #include <string>
 #include <list>
 
@@ -21,122 +23,9 @@ class AsmPrinter;
 
 namespace mcld {
 
-class Module;
-class LinkerConfig;
-class LinkerScript;
-class MemoryArea;
-class MCLDTargetMachine;
-class TargetRegistry;
-class MCLinker;
-class TargetLDBackend;
-class AttributeFactory;
-class InputFactory;
-class ContextFactory;
-class DiagnosticLineInfo;
-
-//===----------------------------------------------------------------------===//
-/// Target - mcld::Target is an object adapter of llvm::Target
-//===----------------------------------------------------------------------===//
-class Target
-{
-  friend class mcld::MCLDTargetMachine;
-  friend class mcld::TargetRegistry;
-public:
-  typedef mcld::MCLDTargetMachine *(*TargetMachineCtorTy)(const mcld::Target &,
-                                                          llvm::TargetMachine &,
-                                                          const std::string&);
-
-  typedef MCLinker *(*MCLinkerCtorTy)(const std::string& pTriple,
-                                      LinkerConfig&,
-                                      Module&,
-                                      MemoryArea& pOutput);
-
-  typedef bool (*EmulationFnTy)(LinkerScript&, LinkerConfig&);
-
-  typedef TargetLDBackend  *(*TargetLDBackendCtorTy)(const llvm::Target&,
-                                                     const LinkerConfig&);
-
-  typedef DiagnosticLineInfo *(*DiagnosticLineInfoCtorTy)(const mcld::Target&,
-                                                          const std::string&);
-
-public:
-  Target();
-
-  void setTarget(const llvm::Target& pTarget)
-  { m_pT = &pTarget; }
-
-  mcld::MCLDTargetMachine *createTargetMachine(const std::string &pTriple,
-                          const std::string &pCPU, const std::string &pFeatures,
-                          const llvm::TargetOptions &Options,
-                          llvm::Reloc::Model RM = llvm::Reloc::Default,
-                          llvm::CodeModel::Model CM = llvm::CodeModel::Default,
-                          llvm::CodeGenOpt::Level OL = llvm::CodeGenOpt::Default) const
-  {
-    if (TargetMachineCtorFn && m_pT) {
-      llvm::TargetMachine *tm = m_pT->createTargetMachine(pTriple, pCPU, pFeatures, Options, RM, CM, OL);
-      if (tm)
-        return TargetMachineCtorFn(*this, *tm, pTriple);
-    }
-    return NULL;
-  }
-
-  /// createMCLinker - create target-specific MCLinker
-  ///
-  /// @return created MCLinker
-  MCLinker *createMCLinker(const std::string &pTriple,
-                           LinkerConfig& pConfig,
-                           Module& pModule,
-                           MemoryArea& pOutput) const {
-    if (!MCLinkerCtorFn)
-      return NULL;
-    return MCLinkerCtorFn(pTriple, pConfig, pModule, pOutput);
-  }
-
-  /// emulate - given MCLinker default values for the other aspects of the
-  /// target system.
-  bool emulate(LinkerScript& pScript, LinkerConfig& pConfig) const {
-    if (!EmulationFn)
-      return false;
-    return EmulationFn(pScript, pConfig);
-  }
-
-  /// createLDBackend - create target-specific LDBackend
-  ///
-  /// @return created TargetLDBackend
-  TargetLDBackend* createLDBackend(const LinkerConfig& pConfig) const
-  {
-    if (!TargetLDBackendCtorFn)
-      return NULL;
-    return TargetLDBackendCtorFn(*get(), pConfig);
-  }
-
-  /// createDiagnosticLineInfo - create target-specific DiagnosticLineInfo
-  DiagnosticLineInfo* createDiagnosticLineInfo(const mcld::Target& pTarget,
-                                               const std::string& pTriple) const
-  {
-    if (!DiagnosticLineInfoCtorFn)
-      return NULL;
-    return DiagnosticLineInfoCtorFn(pTarget, pTriple);
-  }
-
-  const llvm::Target* get() const { return m_pT; }
-
-private:
-  // -----  function pointers  ----- //
-  TargetMachineCtorTy TargetMachineCtorFn;
-  MCLinkerCtorTy MCLinkerCtorFn;
-  EmulationFnTy EmulationFn;
-  TargetLDBackendCtorTy TargetLDBackendCtorFn;
-  DiagnosticLineInfoCtorTy DiagnosticLineInfoCtorFn;
-
-  // -----  adapted llvm::Target  ----- //
-  const llvm::Target* m_pT;
-};
-
-//===----------------------------------------------------------------------===//
-/// TargetRegistry - mcld::TargetRegistry is an object adapter of
-/// llvm::TargetRegistry
-///
+/** \class TargetRegistry
+ *  \brief TargetRegistry is an object adapter of llvm::TargetRegistry
+ */
 class TargetRegistry
 {
 public:
@@ -161,7 +50,9 @@ public:
   /// this is done by initializing all targets at program startup.
   ///
   /// @param T - The target being registered.
-  static void RegisterTarget(mcld::Target &T);
+  static void RegisterTarget(Target& pTarget,
+                             const char* pName,
+                             Target::TripleMatchQualityFnTy pQualityFn);
 
   /// RegisterTargetMachine - Register a TargetMachine implementation for the
   /// given target.
@@ -221,16 +112,23 @@ public:
       T.DiagnosticLineInfoCtorFn = Fn;
   }
 
-  /// lookupTarget - Lookup a target based on a llvm::Target.
-  ///
-  /// @param T - The llvm::Target to find
-  static const mcld::Target *lookupTarget(const llvm::Target& T);
-
-  /// lookupTarget - function wrapper of llvm::TargetRegistry::lookupTarget
+  /// lookupTarget - Look up MCLinker target
   ///
   /// @param Triple - The Triple string
   /// @param Error  - The returned error message
-  static const mcld::Target *lookupTarget(const std::string &Triple,
+  static const mcld::Target *lookupTarget(const std::string& pTriple,
+                                          std::string& pError);
+
+  /// lookupTarget - Look up MCLinker target by an architecture name
+  /// and a triple. If the architecture name is not empty, then the
+  /// the lookup is done mainly by architecture. Otherwise, the target
+  /// triple is used.
+  ///
+  /// @param pArch   - The architecture name
+  /// @param pTriple - The target triple
+  /// @param pError  - The returned error message
+  static const mcld::Target *lookupTarget(const std::string& pArchName,
+                                          llvm::Triple& pTriple,
                                           std::string &Error);
 };
 
@@ -240,22 +138,27 @@ public:
 /// Target TheFooTarget; // The global target instance.
 ///
 /// extern "C" void MCLDInitializeFooTargetInfo() {
-///   RegisterTarget X(TheFooTarget, "foo", "Foo description");
+///   RegisterTarget<llvm::Foo> X(TheFooTarget, "foo", "Foo description");
 /// }
+template<llvm::Triple::ArchType TargetArchType = llvm::Triple::UnknownArch>
 struct RegisterTarget
 {
-  RegisterTarget(mcld::Target &T, const char *Name) {
-    llvm::TargetRegistry::iterator TIter, TEnd = llvm::TargetRegistry::end();
-    // lookup llvm::Target
-    for( TIter=llvm::TargetRegistry::begin(); TIter!=TEnd; ++TIter ) {
-      if( 0==strcmp(TIter->getName(), Name) )
-        break;
+public:
+  RegisterTarget(mcld::Target &pTarget, const char* pName) {
+    // if we've registered one, then return immediately.
+    TargetRegistry::iterator target, ie = TargetRegistry::end();
+    for (target = TargetRegistry::begin(); target != ie; ++target) {
+      if (0 == strcmp((*target)->name(), pName))
+        return;
     }
 
-    if (TIter != TEnd)
-      T.setTarget(*TIter);
+    TargetRegistry::RegisterTarget(pTarget, pName, &getTripleMatchQuality);
+  }
 
-    TargetRegistry::RegisterTarget(T);
+  static unsigned int getTripleMatchQuality(const llvm::Triple& pTriple) {
+    if (pTriple.getArch() == TargetArchType)
+      return 20;
+    return 0;
   }
 };
 
@@ -275,10 +178,11 @@ struct RegisterTargetMachine
   }
 
 private:
-  static mcld::MCLDTargetMachine *Allocator(const mcld::Target &T,
-                                            llvm::TargetMachine& TM,
-                                            const std::string &Triple) {
-    return new TargetMachineImpl(TM, T, Triple);
+  static MCLDTargetMachine *Allocator(const llvm::Target& pLLVMTarget,
+                                      const mcld::Target& pMCLDTarget,
+                                      llvm::TargetMachine& pTM,
+                                      const std::string& pTriple) {
+    return new TargetMachineImpl(pTM, pLLVMTarget, pMCLDTarget, pTriple);
   }
 };
 

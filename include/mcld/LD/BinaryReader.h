@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_Binary_READER_H
-#define MCLD_Binary_READER_H
+#ifndef MCLD_LD_BINARYREADER_H
+#define MCLD_LD_BINARYREADER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -25,16 +25,11 @@ class Input;
  */
 class BinaryReader : public LDReader
 {
-protected:
-  BinaryReader()
-  { }
-
 public:
-  virtual ~BinaryReader()
-  { }
+  virtual ~BinaryReader() = 0;
 
-  virtual bool isMyFormat(Input& pInput) const
-  { return true; }
+  virtual bool isMyFormat(Input& pInput, bool &pContinue) const
+  { pContinue = true; return false; }
 
   virtual bool readBinary(Input& pFile) = 0;
 };
