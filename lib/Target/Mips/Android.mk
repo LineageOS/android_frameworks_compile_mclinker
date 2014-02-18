@@ -25,8 +25,6 @@ include $(BUILD_HOST_STATIC_LIBRARY)
 
 # For the device
 # =====================================================
-ifeq ($(TARGET_ARCH),mips)
-
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := $(mcld_mips_target_SRC_FILES)
@@ -37,4 +35,3 @@ LOCAL_MODULE_TAGS := optional
 include $(MCLD_DEVICE_BUILD_MK)
 include $(BUILD_STATIC_LIBRARY)
 
-endif
