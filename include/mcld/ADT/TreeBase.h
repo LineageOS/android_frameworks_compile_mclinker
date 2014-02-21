@@ -6,9 +6,9 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_TREE_BASE_H
-#define MCLD_TREE_BASE_H
-#include "mcld/ADT/TypeTraits.h"
+#ifndef MCLD_ADT_TREEBASE_H
+#define MCLD_ADT_TREEBASE_H
+#include <mcld/ADT/TypeTraits.h>
 
 #include <cstddef>
 #include <cassert>
@@ -27,18 +27,6 @@ public:
   : left(0), right(0)
   { }
 };
-
-namespace proxy
-{
-  template<size_t DIRECT>
-  inline void move(NodeBase *&X)
-  { assert(0 && "not allowed"); }
-
-  template<size_t DIRECT>
-  inline void hook(NodeBase *X, const NodeBase *Y)
-  { assert(0 && "not allowed"); }
-
-} // namespace of template proxy
 
 class TreeIteratorBase
 {
@@ -67,9 +55,10 @@ public:
   virtual ~TreeIteratorBase(){};
 
   template<size_t DIRECT>
-  inline void move() {
-    proxy::move<DIRECT>(m_pNode);
-  }
+  void move() { assert(0 && "not allowed"); }
+
+  template<size_t DIRECT>
+  void hook(NodeBase* pNode) { assert(0 && "not allowed"); }
 
   bool isRoot() const
   { return (m_pNode->right == m_pNode); }
@@ -87,25 +76,29 @@ public:
   { return this->m_pNode != y.m_pNode; }
 };
 
-namespace proxy
+template<> inline
+void TreeIteratorBase::move<TreeIteratorBase::Leftward>()
 {
-  template<>
-  inline void move<TreeIteratorBase::Leftward>(NodeBase *&X)
-  { X = X->left; }
+  this->m_pNode = this->m_pNode->left;
+}
 
-  template<>
-  inline void move<TreeIteratorBase::Rightward>(NodeBase *&X)
-  { X = X->right; }
+template<> inline
+void TreeIteratorBase::move<TreeIteratorBase::Rightward>()
+{
+  this->m_pNode = this->m_pNode->right;
+}
 
-  template<>
-  inline void hook<TreeIteratorBase::Leftward>(NodeBase *X, const NodeBase *Y)
-  { X->left = const_cast<NodeBase*>(Y); }
+template<> inline
+void TreeIteratorBase::hook<TreeIteratorBase::Leftward>(NodeBase* pOther)
+{
+  this->m_pNode->left = pOther;
+}
 
-  template<>
-  inline void hook<TreeIteratorBase::Rightward>(NodeBase* X, const NodeBase* Y)
-  { X->right = const_cast<NodeBase*>(Y); }
-
-} //namespace of template proxy
+template<> inline
+void TreeIteratorBase::hook<TreeIteratorBase::Rightward>(NodeBase* pOther)
+{
+  this->m_pNode->right = pOther;
+}
 
 template<typename DataType>
 class Node : public NodeBase

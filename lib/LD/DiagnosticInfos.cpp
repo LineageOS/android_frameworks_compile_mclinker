@@ -42,12 +42,14 @@ public:
 static const DiagStaticInfo DiagCommonInfo[] = {
 #define DIAG(ENUM, CLASS, ADDRDESC, LOCDESC) \
   { diag::ENUM, CLASS, STR_SIZE(ADDRDESC, uint16_t), ADDRDESC },
+#include "mcld/LD/DiagAttribute.inc"
 #include "mcld/LD/DiagCommonKinds.inc"
 #include "mcld/LD/DiagReaders.inc"
 #include "mcld/LD/DiagSymbolResolutions.inc"
 #include "mcld/LD/DiagRelocations.inc"
 #include "mcld/LD/DiagLayouts.inc"
 #include "mcld/LD/DiagGOTPLT.inc"
+#include "mcld/LD/DiagLDScript.inc"
 #undef DIAG
   { 0, DiagnosticEngine::None, 0, 0}
 };
@@ -58,11 +60,14 @@ static const unsigned int DiagCommonInfoSize =
 static const DiagStaticInfo DiagLoCInfo[] = {
 #define DIAG(ENUM, CLASS, ADDRDESC, LOCDESC) \
   { diag::ENUM, CLASS, STR_SIZE(LOCDESC, uint16_t), LOCDESC },
+#include "mcld/LD/DiagAttribute.inc"
+#include "mcld/LD/DiagCommonKinds.inc"
 #include "mcld/LD/DiagReaders.inc"
 #include "mcld/LD/DiagSymbolResolutions.inc"
 #include "mcld/LD/DiagRelocations.inc"
 #include "mcld/LD/DiagLayouts.inc"
 #include "mcld/LD/DiagGOTPLT.inc"
+#include "mcld/LD/DiagLDScript.inc"
 #undef DIAG
   { 0, DiagnosticEngine::None, 0, 0}
 };
@@ -114,12 +119,13 @@ bool DiagnosticInfos::process(DiagnosticEngine& pEngine) const
 
   switch (ID) {
     case diag::multiple_definitions: {
-      if (m_Config.options().hasMulDefs()) {
+      if (m_Config.options().isMulDefs()) {
         severity = DiagnosticEngine::Ignore;
       }
       break;
     }
-    case diag::undefined_reference: {
+    case diag::undefined_reference:
+    case diag::undefined_reference_text: {
       // we have not implement --unresolved-symbols=method yet. So far, MCLinker
       // provides the easier --allow-shlib-undefined and --no-undefined (i.e. -z defs)
       switch(m_Config.codeGenType()) {

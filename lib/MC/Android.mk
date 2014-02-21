@@ -9,8 +9,8 @@ mcld_mc_SRC_FILES := \
   InputAction.cpp  \
   InputBuilder.cpp  \
   InputFactory.cpp  \
+  Input.cpp \
   MCLDDirectory.cpp \
-  MCLDInput.cpp \
   SearchDirs.cpp  \
   SymbolCategory.cpp  \
   ZOption.cpp

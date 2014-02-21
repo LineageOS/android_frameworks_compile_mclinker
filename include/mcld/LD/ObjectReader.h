@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_OBJECT_READER_H
-#define MCLD_OBJECT_READER_H
+#ifndef MCLD_LD_OBJECTREADER_H
+#define MCLD_LD_OBJECTREADER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -29,7 +29,7 @@ class Input;
 class ObjectReader : public LDReader
 {
 protected:
-  typedef HashTable<ResolveInfo, hash::StringHash<hash::ELF> > GroupSignatureMap;
+  typedef HashTable<ResolveInfo, hash::StringHash<hash::DJB> > GroupSignatureMap;
 
 protected:
   ObjectReader()

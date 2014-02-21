@@ -6,39 +6,34 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-//
-// ObjectLinker plays the same role as GNU collect2 to prepare all implicit
-// parameters for FragmentLinker.
-//
-//===----------------------------------------------------------------------===//
-#ifndef MCLD_OBJECT_OBJECT_LINKER_H
-#define MCLD_OBJECT_OBJECT_LINKER_H
+#ifndef MCLD_OBJECT_OBJECTLINKER_H
+#define MCLD_OBJECT_OBJECTLINKER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
-#include <stddef.h>
+#include <llvm/Support/DataTypes.h>
 
 namespace mcld {
 
 class Module;
 class LinkerConfig;
 class IRBuilder;
-class FragmentLinker;
 class TargetLDBackend;
-class MemoryArea;
-class MemoryAreaFactory;
+class FileOutputBuffer;
 class ObjectReader;
 class DynObjReader;
 class ArchiveReader;
 class GroupReader;
 class BinaryReader;
+class ScriptReader;
 class ObjectWriter;
 class DynObjWriter;
 class ExecWriter;
 class BinaryWriter;
+class Relocation;
+class ResolveInfo;
 
 /** \class ObjectLinker
- *  \brief ObjectLinker prepares parameters for FragmentLinker.
  */
 class ObjectLinker
 {
@@ -48,11 +43,7 @@ public:
 
   ~ObjectLinker();
 
-  void setup(Module& pModule, IRBuilder& pBuilder);
-
-  /// initFragmentLinker - initialize FragmentLinker
-  ///  Connect all components in FragmentLinker
-  bool initFragmentLinker();
+  bool initialize(Module& pModule, IRBuilder& pBuilder);
 
   /// initStdSections - initialize standard sections of the output file.
   bool initStdSections();
@@ -69,8 +60,15 @@ public:
   /// readRelocations - read all relocation entries
   bool readRelocations();
 
+  /// dataStrippingOpt - optimizations for reducing code size
+  void dataStrippingOpt();
+
   /// mergeSections - put allinput sections into output sections
   bool mergeSections();
+
+  /// addSymbolsToOutput - after all symbols has been resolved, add the symbol
+  /// to output
+  void addSymbolsToOutput(Module& pModule);
 
   /// allocateCommonSymobols - allocate fragments for common symbols to the
   /// corresponding sections
@@ -122,18 +120,10 @@ public:
   bool finalizeSymbolValue();
 
   /// emitOutput - emit the output file.
-  bool emitOutput(MemoryArea& pOutput);
+  bool emitOutput(FileOutputBuffer& pOutput);
 
   /// postProcessing - do modificatiion after all processes
-  bool postProcessing(MemoryArea& pOutput);
-
-  /// getLinker - get internal FragmentLinker object
-  const FragmentLinker* getLinker() const { return m_pLinker; }
-  FragmentLinker*       getLinker()       { return m_pLinker; }
-
-  /// hasInitLinker - has Linker been initialized?
-  bool hasInitLinker() const
-  { return (NULL != m_pLinker); }
+  bool postProcessing(FileOutputBuffer& pOutput);
 
   // -----  readers and writers  ----- //
   const ObjectReader*  getObjectReader () const { return m_pObjectReader;  }
@@ -151,12 +141,31 @@ public:
   const BinaryReader*  getBinaryReader () const { return m_pBinaryReader;  }
   BinaryReader*        getBinaryReader ()       { return m_pBinaryReader;  }
 
+  const ScriptReader*  getScriptReader () const { return m_pScriptReader;  }
+  ScriptReader*        getScriptReader ()       { return m_pScriptReader;  }
+
   const ObjectWriter*  getWriter () const { return m_pWriter;  }
   ObjectWriter*        getWriter ()       { return m_pWriter;  }
 
 private:
+  /// normalSyncRelocationResult - sync relocation result when producing shared
+  /// objects or executables
+  void normalSyncRelocationResult(FileOutputBuffer& pOutput);
+
+  /// partialSyncRelocationResult - sync relocation result when doing partial
+  /// link
+  void partialSyncRelocationResult(FileOutputBuffer& pOutput);
+
+  /// writeRelocationResult - helper function of syncRelocationResult, write
+  /// relocation target data to output
+  void writeRelocationResult(Relocation& pReloc, uint8_t* pOutput);
+
+  /// addSymbolToOutput - add a symbol to output symbol table if it's not a
+  /// section symbol and not defined in the discarded section
+  void addSymbolToOutput(ResolveInfo& pInfo, Module& pModule);
+
+private:
   const LinkerConfig& m_Config;
-  FragmentLinker* m_pLinker;
   Module* m_pModule;
   IRBuilder* m_pBuilder;
 
@@ -168,6 +177,7 @@ private:
   ArchiveReader* m_pArchiveReader;
   GroupReader*   m_pGroupReader;
   BinaryReader*  m_pBinaryReader;
+  ScriptReader*  m_pScriptReader;
   ObjectWriter*  m_pWriter;
 };
 

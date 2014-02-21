@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_MC_COMMAND_ACTION_H
-#define MCLD_MC_COMMAND_ACTION_H
+#ifndef MCLD_MC_COMMANDACTION_H
+#define MCLD_MC_COMMANDACTION_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -15,11 +15,13 @@
 #include <string>
 #include <mcld/Support/Path.h>
 #include <mcld/MC/InputAction.h>
+#include <mcld/Script/ScriptFile.h>
 
 namespace mcld {
 
 class SearchDirs;
 class InputBuilder;
+class LinkerConfig;
 
 //===----------------------------------------------------------------------===//
 // Derived InputAction
@@ -44,7 +46,7 @@ class NamespecAction : public InputAction
 public:
   NamespecAction(unsigned int pPosition,
                  const std::string &pNamespec,
-                 SearchDirs& pSearchDirs);
+                 const SearchDirs& pSearchDirs);
 
   const std::string &namespec() const { return m_Namespec; }
 
@@ -52,7 +54,7 @@ public:
 
 private:
   std::string m_Namespec;
-  SearchDirs& m_SearchDirs;
+  const SearchDirs& m_SearchDirs;
 };
 
 /// BitcodeAction
@@ -157,6 +159,41 @@ public:
   explicit BStaticAction(unsigned int pPosition);
 
   bool activate(InputBuilder&) const;
+};
+
+/// DefSymAction
+class DefSymAction : public InputAction
+{
+public:
+  explicit DefSymAction(unsigned int pPosition, std::string& pAssignment);
+
+  bool activate(InputBuilder&) const;
+
+  const std::string& assignment() const { return m_Assignment; }
+
+private:
+  std::string& m_Assignment;
+};
+
+/// ScriptAction
+class ScriptAction : public InputAction
+{
+public:
+  ScriptAction(unsigned int pPosition,
+               const std::string& pFileName,
+               ScriptFile::Kind pKind,
+               const SearchDirs& pSearchDirs);
+
+  bool activate(InputBuilder&) const;
+
+  const std::string& filename() const { return m_FileName; }
+
+  ScriptFile::Kind kind() const { return m_Kind; }
+
+private:
+  std::string m_FileName;
+  ScriptFile::Kind m_Kind;
+  const SearchDirs& m_SearchDirs;
 };
 
 } // end of namespace mcld

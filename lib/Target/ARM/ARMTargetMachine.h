@@ -10,18 +10,17 @@
 #define MCLD_ARM_TARGET_MACHINE_H
 
 #include "ARM.h"
-#include <mcld/Target/TargetMachine.h>
+#include <mcld/CodeGen/TargetMachine.h>
 
 namespace mcld {
 
 class ARMBaseTargetMachine : public MCLDTargetMachine
 {
 public:
-  ARMBaseTargetMachine(llvm::TargetMachine &pTM,
-                       const mcld::Target &pTarget,
-                       const std::string &pTriple);
-
-  virtual ~ARMBaseTargetMachine();
+  ARMBaseTargetMachine(llvm::TargetMachine& pTM,
+                       const llvm::Target& pLLVMTarget,
+                       const mcld::Target& pMCLDTarget,
+                       const std::string& pTriple);
 };
 
 } // namespace of mcld

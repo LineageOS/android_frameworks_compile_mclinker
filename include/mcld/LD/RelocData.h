@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_RELOCATION_DATA_H
-#define MCLD_RELOCATION_DATA_H
+#ifndef MCLD_LD_RELOCDATA_H
+#define MCLD_LD_RELOCDATA_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -20,6 +20,8 @@
 #include <llvm/ADT/ilist.h>
 #include <llvm/ADT/ilist_node.h>
 #include <llvm/Support/DataTypes.h>
+
+#include <list>
 
 namespace mcld {
 
@@ -73,6 +75,7 @@ public:
   bool empty() const { return m_Relocations.empty(); }
 
   RelocData& append(Relocation& pRelocation);
+  Relocation& remove(Relocation& pRelocation);
 
   reference              front ()       { return m_Relocations.front();  }
   const_reference        front () const { return m_Relocations.front();  }
@@ -87,6 +90,18 @@ public:
   reverse_iterator       rbegin()       { return m_Relocations.rbegin(); }
   const_reverse_iterator rend  () const { return m_Relocations.rend();   }
   reverse_iterator       rend  ()       { return m_Relocations.rend();   }
+
+  template<class Comparator> void sort(Comparator pComparator) {
+    /* FIXME: use llvm::iplist::sort */
+    std::list<Relocation*> relocs;
+    for (iterator it = begin(), ie = end(); it != ie; ++it)
+      relocs.push_back(it);
+    relocs.sort(pComparator);
+    m_Relocations.clear();
+    for (std::list<Relocation*>::iterator it = relocs.begin(),
+      ie = relocs.end(); it != ie; ++it)
+      m_Relocations.push_back(*it);
+  }
 
 private:
   RelocationListType m_Relocations;

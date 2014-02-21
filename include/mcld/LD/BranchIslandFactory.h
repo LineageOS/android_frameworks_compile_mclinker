@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_LD_BRANCH_ISLAND_FACTORY_H
-#define MCLD_LD_BRANCH_ISLAND_FACTORY_H
+#ifndef MCLD_LD_BRANCHISLANDFACTORY_H
+#define MCLD_LD_BRANCHISLANDFACTORY_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
@@ -20,6 +20,7 @@ namespace mcld
 {
 
 class Fragment;
+class Module;
 
 /** \class BranchIslandFactory
  *  \brief
@@ -36,6 +37,10 @@ public:
                       uint64_t pMaxIslandSize = 65536U);
 
   ~BranchIslandFactory();
+
+  /// group - group fragments and create islands when needed
+  /// @param pSectionData - the SectionData holds fragments need to be grouped
+  void group(Module& pModule);
 
   /// produce - produce a island for the given fragment
   /// @param pFragment - the fragment needs a branch island

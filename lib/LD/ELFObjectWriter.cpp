@@ -10,23 +10,24 @@
 
 #include <mcld/Module.h>
 #include <mcld/LinkerConfig.h>
+#include <mcld/LinkerScript.h>
 #include <mcld/Target/GNULDBackend.h>
-#include <mcld/Support/MemoryArea.h>
-#include <mcld/Support/MemoryRegion.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/ADT/SizeTraits.h>
-#include <mcld/Fragment/FragmentLinker.h>
 #include <mcld/Fragment/AlignFragment.h>
 #include <mcld/Fragment/FillFragment.h>
 #include <mcld/Fragment/RegionFragment.h>
 #include <mcld/Fragment/Stub.h>
 #include <mcld/Fragment/NullFragment.h>
+#include <mcld/LD/LDSymbol.h>
 #include <mcld/LD/LDSection.h>
 #include <mcld/LD/SectionData.h>
 #include <mcld/LD/ELFSegment.h>
 #include <mcld/LD/ELFSegmentFactory.h>
 #include <mcld/LD/RelocData.h>
 #include <mcld/LD/EhFrame.h>
+#include <mcld/LD/ELFFileFormat.h>
+#include <mcld/Target/GNUInfo.h>
 
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/system_error.h>
@@ -50,9 +51,10 @@ ELFObjectWriter::~ELFObjectWriter()
 {
 }
 
-void ELFObjectWriter::writeSection(MemoryArea& pOutput, LDSection *section)
+void ELFObjectWriter::writeSection(Module& pModule,
+                                   FileOutputBuffer& pOutput, LDSection *section)
 {
-  MemoryRegion* region;
+  MemoryRegion region;
   // Request output region
   switch (section->kind()) {
   case LDFileFormat::Note:
@@ -66,10 +68,8 @@ void ELFObjectWriter::writeSection(MemoryArea& pOutput, LDSection *section)
   case LDFileFormat::GCCExceptTable:
   case LDFileFormat::EhFrame: {
     region = pOutput.request(section->offset(), section->size());
-    if (NULL == region) {
-      llvm::report_fatal_error(llvm::Twine("cannot get enough memory region for output section `") +
-                               llvm::Twine(section->name()) +
-                               llvm::Twine("'.\n"));
+    if (region.size() == 0) {
+      return;
     }
     break;
   }
@@ -94,19 +94,22 @@ void ELFObjectWriter::writeSection(MemoryArea& pOutput, LDSection *section)
   // Write out sections with data
   switch(section->kind()) {
   case LDFileFormat::GCCExceptTable:
-  case LDFileFormat::EhFrame:
   case LDFileFormat::Regular:
   case LDFileFormat::Debug:
   case LDFileFormat::Note:
-    // FIXME: if optimization of exception handling sections is enabled,
-    // then we should emit these sections by the other way.
-    emitSectionData(*section, *region);
+    emitSectionData(*section, region);
+    break;
+  case LDFileFormat::EhFrame:
+    emitEhFrame(pModule, *section->getEhFrame(), region);
     break;
   case LDFileFormat::Relocation:
-    emitRelocation(m_Config, *section, *region);
+    // sort relocation for the benefit of the dynamic linker.
+    target().sortRelocation(*section);
+
+    emitRelocation(m_Config, *section, region);
     break;
   case LDFileFormat::Target:
-    target().emitSectionData(*section, *region);
+    target().emitSectionData(*section, region);
     break;
   default:
     llvm_unreachable("invalid section kind");
@@ -114,7 +117,7 @@ void ELFObjectWriter::writeSection(MemoryArea& pOutput, LDSection *section)
 }
 
 llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
-                                              MemoryArea& pOutput)
+                                              FileOutputBuffer& pOutput)
 {
   bool is_dynobj = m_Config.codeGenType() == LinkerConfig::DynObj;
   bool is_exec = m_Config.codeGenType() == LinkerConfig::Exec;
@@ -144,17 +147,17 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
     ELFSegmentFactory::iterator seg, segEnd = target().elfSegmentTable().end();
 
     for (seg = target().elfSegmentTable().begin(); seg != segEnd; ++seg) {
-      if (llvm::ELF::PT_LOAD == (*seg).type()) {
-        ELFSegment::sect_iterator sect, sectEnd = (*seg).end();
-        for (sect = (*seg).begin(); sect != sectEnd; ++sect)
-          writeSection(pOutput, *sect);
+      if (llvm::ELF::PT_LOAD == (*seg)->type()) {
+        ELFSegment::iterator sect, sectEnd = (*seg)->end();
+        for (sect = (*seg)->begin(); sect != sectEnd; ++sect)
+          writeSection(pModule, pOutput, *sect);
       }
     }
   } else {
     // Write out regular ELF sections
     Module::iterator sect, sectEnd = pModule.end();
     for (sect = pModule.begin(); sect != sectEnd; ++sect)
-      writeSection(pOutput, *sect);
+      writeSection(pModule, pOutput, *sect);
 
     emitShStrTab(target().getOutputFormat()->getShStrTab(), pModule, pOutput);
 
@@ -180,23 +183,37 @@ llvm::error_code ELFObjectWriter::writeObject(Module& pModule,
       return make_error_code(errc::not_supported);
   }
 
-  pOutput.clear();
   return llvm::make_error_code(llvm::errc::success);
+}
+
+// getOutputSize - count the final output size
+size_t ELFObjectWriter::getOutputSize(const Module& pModule) const
+{
+  if (m_Config.targets().is32Bits()) {
+    return getLastStartOffset<32>(pModule) +
+           sizeof(ELFSizeTraits<32>::Shdr) * pModule.size();
+  } else if (m_Config.targets().is64Bits()) {
+    return getLastStartOffset<64>(pModule) +
+           sizeof(ELFSizeTraits<64>::Shdr) * pModule.size();
+  } else {
+    assert(0 && "Invalid ELF Class");
+    return 0;
+  }
 }
 
 // writeELFHeader - emit ElfXX_Ehdr
 template<size_t SIZE>
 void ELFObjectWriter::writeELFHeader(const LinkerConfig& pConfig,
                                      const Module& pModule,
-                                     MemoryArea& pOutput) const
+                                     FileOutputBuffer& pOutput) const
 {
   typedef typename ELFSizeTraits<SIZE>::Ehdr ElfXX_Ehdr;
   typedef typename ELFSizeTraits<SIZE>::Shdr ElfXX_Shdr;
   typedef typename ELFSizeTraits<SIZE>::Phdr ElfXX_Phdr;
 
   // ELF header must start from 0x0
-  MemoryRegion *region = pOutput.request(0, sizeof(ElfXX_Ehdr));
-  ElfXX_Ehdr* header = (ElfXX_Ehdr*)region->start();
+  MemoryRegion region = pOutput.request(0, sizeof(ElfXX_Ehdr));
+  ElfXX_Ehdr* header = (ElfXX_Ehdr*)region.begin();
 
   memcpy(header->e_ident, ElfMagic, EI_MAG3+1);
 
@@ -235,7 +252,7 @@ void ELFObjectWriter::writeELFHeader(const LinkerConfig& pConfig,
   header->e_flags     = target().getInfo().flags();
   header->e_ehsize    = sizeof(ElfXX_Ehdr);
   header->e_phentsize = sizeof(ElfXX_Phdr);
-  header->e_phnum     = target().numOfSegments();
+  header->e_phnum     = target().elfSegmentTable().size();
   header->e_shentsize = sizeof(ElfXX_Shdr);
   header->e_shnum     = pModule.size();
   header->e_shstrndx  = pModule.getSection(".shstrtab")->index();
@@ -245,15 +262,10 @@ void ELFObjectWriter::writeELFHeader(const LinkerConfig& pConfig,
 uint64_t ELFObjectWriter::getEntryPoint(const LinkerConfig& pConfig,
                                         const Module& pModule) const
 {
-  llvm::StringRef entry_name;
-  if (pConfig.options().hasEntry())
-    entry_name = pConfig.options().entry();
-  else
-    entry_name = target().getInfo().entry();
-
+  llvm::StringRef entry_name = target().getEntry(pModule);
   uint64_t result = 0x0;
 
-  bool issue_warning = (pConfig.options().hasEntry() &&
+  bool issue_warning = (pModule.getScript().hasEntry() &&
                         LinkerConfig::Object != pConfig.codeGenType() &&
                         LinkerConfig::DynObj != pConfig.codeGenType());
 
@@ -290,16 +302,16 @@ uint64_t ELFObjectWriter::getEntryPoint(const LinkerConfig& pConfig,
 template<size_t SIZE>
 void ELFObjectWriter::emitSectionHeader(const Module& pModule,
                                         const LinkerConfig& pConfig,
-                                        MemoryArea& pOutput) const
+                                        FileOutputBuffer& pOutput) const
 {
   typedef typename ELFSizeTraits<SIZE>::Shdr ElfXX_Shdr;
 
   // emit section header
   unsigned int sectNum = pModule.size();
   unsigned int header_size = sizeof(ElfXX_Shdr) * sectNum;
-  MemoryRegion* region = pOutput.request(getLastStartOffset<SIZE>(pModule),
-                                         header_size);
-  ElfXX_Shdr* shdr = (ElfXX_Shdr*)region->start();
+  MemoryRegion region = pOutput.request(getLastStartOffset<SIZE>(pModule),
+                                        header_size);
+  ElfXX_Shdr* shdr = (ElfXX_Shdr*)region.begin();
 
   // Iterate the SectionTable in LDContext
   unsigned int sectIdx = 0;
@@ -324,7 +336,7 @@ void ELFObjectWriter::emitSectionHeader(const Module& pModule,
 
 // emitProgramHeader - emit ElfXX_Phdr
 template<size_t SIZE>
-void ELFObjectWriter::emitProgramHeader(MemoryArea& pOutput) const
+void ELFObjectWriter::emitProgramHeader(FileOutputBuffer& pOutput) const
 {
   typedef typename ELFSizeTraits<SIZE>::Ehdr ElfXX_Ehdr;
   typedef typename ELFSizeTraits<SIZE>::Phdr ElfXX_Phdr;
@@ -334,24 +346,24 @@ void ELFObjectWriter::emitProgramHeader(MemoryArea& pOutput) const
   start_offset = sizeof(ElfXX_Ehdr);
   phdr_size = sizeof(ElfXX_Phdr);
   // Program header must start directly after ELF header
-  MemoryRegion *region = pOutput.request(start_offset,
-                                         target().numOfSegments() * phdr_size);
+  MemoryRegion region = pOutput.request(start_offset,
+      target().elfSegmentTable().size() * phdr_size);
 
-  ElfXX_Phdr* phdr = (ElfXX_Phdr*)region->start();
+  ElfXX_Phdr* phdr = (ElfXX_Phdr*)region.begin();
 
   // Iterate the elf segment table in GNULDBackend
   size_t index = 0;
   ELFSegmentFactory::const_iterator seg = target().elfSegmentTable().begin(),
                                  segEnd = target().elfSegmentTable().end();
   for (; seg != segEnd; ++seg, ++index) {
-    phdr[index].p_type   = (*seg).type();
-    phdr[index].p_flags  = (*seg).flag();
-    phdr[index].p_offset = (*seg).offset();
-    phdr[index].p_vaddr  = (*seg).vaddr();
-    phdr[index].p_paddr  = (*seg).paddr();
-    phdr[index].p_filesz = (*seg).filesz();
-    phdr[index].p_memsz  = (*seg).memsz();
-    phdr[index].p_align  = (*seg).align();
+    phdr[index].p_type   = (*seg)->type();
+    phdr[index].p_flags  = (*seg)->flag();
+    phdr[index].p_offset = (*seg)->offset();
+    phdr[index].p_vaddr  = (*seg)->vaddr();
+    phdr[index].p_paddr  = (*seg)->paddr();
+    phdr[index].p_filesz = (*seg)->filesz();
+    phdr[index].p_memsz  = (*seg)->memsz();
+    phdr[index].p_align  = (*seg)->align();
   }
 }
 
@@ -359,11 +371,11 @@ void ELFObjectWriter::emitProgramHeader(MemoryArea& pOutput) const
 void
 ELFObjectWriter::emitShStrTab(const LDSection& pShStrTab,
                               const Module& pModule,
-                              MemoryArea& pOutput)
+                              FileOutputBuffer& pOutput)
 {
   // write out data
-  MemoryRegion* region = pOutput.request(pShStrTab.offset(), pShStrTab.size());
-  unsigned char* data = region->start();
+  MemoryRegion region = pOutput.request(pShStrTab.offset(), pShStrTab.size());
+  char* data = (char*)region.begin();
   size_t shstrsize = 0;
   Module::const_iterator section, sectEnd = pModule.end();
   for (section = pModule.begin(); section != sectEnd; ++section) {
@@ -392,6 +404,50 @@ ELFObjectWriter::emitSectionData(const LDSection& pSection,
       break;
   }
   emitSectionData(*sd, pRegion);
+}
+
+/// emitEhFrame
+void ELFObjectWriter::emitEhFrame(Module& pModule,
+                                  EhFrame& pFrame, MemoryRegion& pRegion) const
+{
+  emitSectionData(*pFrame.getSectionData(), pRegion);
+
+  // Patch FDE field (offset to CIE)
+  for (EhFrame::cie_iterator i = pFrame.cie_begin(), e = pFrame.cie_end();
+       i != e; ++i) {
+    EhFrame::CIE& cie = **i;
+    for (EhFrame::fde_iterator fi = cie.begin(), fe = cie.end();
+         fi != fe; ++fi) {
+      EhFrame::FDE& fde = **fi;
+      if (fde.getRecordType() == EhFrame::RECORD_GENERATED) {
+        // Patch PLT offset
+        LDSection* plt_sect = pModule.getSection(".plt");
+        assert (plt_sect && "We have no plt but have corresponding eh_frame?");
+        uint64_t plt_offset = plt_sect->offset();
+        // FDE entry for PLT is always 32-bit
+        uint64_t fde_offset = pFrame.getSection().offset() + fde.getOffset() +
+                              EhFrame::getDataStartOffset<32>();
+        int32_t offset = fde_offset - plt_offset;
+        if (plt_offset < fde_offset)
+          offset = -offset;
+        memcpy(pRegion.begin() + fde.getOffset() +
+                                 EhFrame::getDataStartOffset<32>(),
+                                 &offset, 4);
+        uint32_t size = plt_sect->size();
+        memcpy(pRegion.begin() + fde.getOffset() +
+                                 EhFrame::getDataStartOffset<32>() + 4,
+                                 &size, 4);
+      }
+      uint64_t fde_cie_ptr_offset = fde.getOffset() +
+                                    EhFrame::getDataStartOffset<32>() -
+                                    /*ID*/4;
+      uint64_t cie_start_offset = cie.getOffset();
+      int32_t offset = fde_cie_ptr_offset - cie_start_offset;
+      if (fde_cie_ptr_offset < cie_start_offset)
+        offset = -offset;
+      memcpy(pRegion.begin() + fde_cie_ptr_offset, &offset, 4);
+    } // for loop fde_iterator
+  } // for loop cie_iterator
 }
 
 /// emitRelocation
@@ -435,34 +491,36 @@ void ELFObjectWriter::emitRel(const LinkerConfig& pConfig,
   typedef typename ELFSizeTraits<SIZE>::Addr ElfXX_Addr;
   typedef typename ELFSizeTraits<SIZE>::Word ElfXX_Word;
 
-  ElfXX_Rel* rel = reinterpret_cast<ElfXX_Rel*>(pRegion.start());
+  ElfXX_Rel* rel = reinterpret_cast<ElfXX_Rel*>(pRegion.begin());
 
   const Relocation* relocation = 0;
   const FragmentRef* frag_ref = 0;
 
   for (RelocData::const_iterator it = pRelocData.begin(),
        ie = pRelocData.end(); it != ie; ++it, ++rel) {
+    ElfXX_Addr r_offset = 0;
+    ElfXX_Word r_sym = 0;
 
     relocation = &(llvm::cast<Relocation>(*it));
     frag_ref = &(relocation->targetRef());
 
     if(LinkerConfig::DynObj == pConfig.codeGenType() ||
        LinkerConfig::Exec == pConfig.codeGenType()) {
-      rel->r_offset = static_cast<ElfXX_Addr>(
+      r_offset = static_cast<ElfXX_Addr>(
                       frag_ref->frag()->getParent()->getSection().addr() +
                       frag_ref->getOutputOffset());
     }
     else {
-      rel->r_offset = static_cast<ElfXX_Addr>(frag_ref->getOutputOffset());
+      r_offset = static_cast<ElfXX_Addr>(frag_ref->getOutputOffset());
     }
-    ElfXX_Word Index;
+
     if( relocation->symInfo() == NULL )
-      Index = 0;
+      r_sym = 0;
     else
-      Index = static_cast<ElfXX_Word>(
+      r_sym = static_cast<ElfXX_Word>(
               target().getSymbolIdx(relocation->symInfo()->outSymbol()));
 
-    rel->setSymbolAndType(Index, relocation->type());
+    target().emitRelocation(*rel, relocation->type(), r_sym, r_offset);
   }
 }
 
@@ -476,36 +534,37 @@ void ELFObjectWriter::emitRela(const LinkerConfig& pConfig,
   typedef typename ELFSizeTraits<SIZE>::Addr ElfXX_Addr;
   typedef typename ELFSizeTraits<SIZE>::Word ElfXX_Word;
 
-  ElfXX_Rela* rel = reinterpret_cast<ElfXX_Rela*>(pRegion.start());
+  ElfXX_Rela* rel = reinterpret_cast<ElfXX_Rela*>(pRegion.begin());
 
   const Relocation* relocation = 0;
   const FragmentRef* frag_ref = 0;
 
   for (RelocData::const_iterator it = pRelocData.begin(),
        ie = pRelocData.end(); it != ie; ++it, ++rel) {
+    ElfXX_Addr r_offset = 0;
+    ElfXX_Word r_sym = 0;
 
     relocation = &(llvm::cast<Relocation>(*it));
     frag_ref = &(relocation->targetRef());
 
     if(LinkerConfig::DynObj == pConfig.codeGenType() ||
        LinkerConfig::Exec == pConfig.codeGenType()) {
-      rel->r_offset = static_cast<ElfXX_Addr>(
+      r_offset = static_cast<ElfXX_Addr>(
                       frag_ref->frag()->getParent()->getSection().addr() +
                       frag_ref->getOutputOffset());
     }
     else {
-      rel->r_offset = static_cast<ElfXX_Addr>(frag_ref->getOutputOffset());
+      r_offset = static_cast<ElfXX_Addr>(frag_ref->getOutputOffset());
     }
 
-    ElfXX_Word Index;
     if( relocation->symInfo() == NULL )
-      Index = 0;
+      r_sym = 0;
     else
-      Index = static_cast<ElfXX_Word>(
+      r_sym = static_cast<ElfXX_Word>(
               target().getSymbolIdx(relocation->symInfo()->outSymbol()));
 
-    rel->setSymbolAndType(Index, relocation->type());
-    rel->r_addend = relocation->addend();
+    target().emitRelocation(*rel, relocation->type(),
+                            r_sym, r_offset, relocation->addend());
   }
 }
 
@@ -532,6 +591,12 @@ uint64_t ELFObjectWriter::getSectEntrySize(const LDSection& pSection) const
     return sizeof(ElfXX_Word);
   if (llvm::ELF::SHT_DYNAMIC == pSection.type())
     return sizeof(ElfXX_Dyn);
+  // FIXME: We should get the entsize from input since the size of each
+  // character is specified in the section header's sh_entsize field.
+  // For example, traditional string is 0x1, UCS-2 is 0x2, ... and so on.
+  // Ref: http://www.sco.com/developers/gabi/2003-12-17/ch4.sheader.html
+  if (pSection.flag() & llvm::ELF::SHF_STRINGS)
+    return 0x1;
   return 0x0;
 }
 
@@ -607,8 +672,8 @@ void ELFObjectWriter::emitSectionData(const SectionData& pSD,
     switch(fragIter->getKind()) {
       case Fragment::Region: {
         const RegionFragment& region_frag = llvm::cast<RegionFragment>(*fragIter);
-        const uint8_t* from = region_frag.getRegion().start();
-        memcpy(pRegion.getBuffer(cur_offset), from, size);
+        const char* from = region_frag.getRegion().begin();
+        memcpy(pRegion.begin() + cur_offset, from, size);
         break;
       }
       case Fragment::Alignment: {
@@ -617,7 +682,7 @@ void ELFObjectWriter::emitSectionData(const SectionData& pSD,
         uint64_t count = size / align_frag.getValueSize();
         switch (align_frag.getValueSize()) {
           case 1u:
-            std::memset(pRegion.getBuffer(cur_offset),
+            std::memset(pRegion.begin() + cur_offset,
                         align_frag.getValue(),
                         count);
             break;
@@ -638,7 +703,7 @@ void ELFObjectWriter::emitSectionData(const SectionData& pSD,
 
         uint64_t num_tiles = fill_frag.size() / fill_frag.getValueSize();
         for (uint64_t i = 0; i != num_tiles; ++i) {
-          std::memset(pRegion.getBuffer(cur_offset),
+          std::memset(pRegion.begin() + cur_offset,
                       fill_frag.getValue(),
                       fill_frag.getValueSize());
         }
@@ -646,7 +711,7 @@ void ELFObjectWriter::emitSectionData(const SectionData& pSD,
       }
       case Fragment::Stub: {
         const Stub& stub_frag = llvm::cast<Stub>(*fragIter);
-        memcpy(pRegion.getBuffer(cur_offset), stub_frag.getContent(), size);
+        memcpy(pRegion.begin() + cur_offset, stub_frag.getContent(), size);
         break;
       }
       case Fragment::Null: {

@@ -36,6 +36,7 @@ GroupReader::~GroupReader()
 }
 
 bool GroupReader::readGroup(Module::input_iterator pRoot,
+                            Module::input_iterator pEnd,
                             InputBuilder& pBuilder,
                             const LinkerConfig& pConfig)
 {
@@ -50,12 +51,8 @@ bool GroupReader::readGroup(Module::input_iterator pRoot,
 
   Module::input_iterator input = --pRoot;
 
-  // Since the end of a sub-tree is the same node to the end of whole tree, we
-  // take the end of the whole input tree for conventience.
-  Module::input_iterator input_end = m_Module.input_end();
-
   // first time read the sub-tree
-  while (input != input_end) {
+  while (input != pEnd) {
     // already got type - for example, bitcode or external OIR (object
     // intermediate representation)
     if ((*input)->type() == Input::Script ||
@@ -75,25 +72,26 @@ bool GroupReader::readGroup(Module::input_iterator pRoot,
       continue;
     }
 
+    bool doContinue = false;
     // is an archive
-    if (m_ArchiveReader.isMyFormat(**input)) {
+    if (m_ArchiveReader.isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Archive);
       // record the Archive used by each archive node
       Archive* ar = new Archive(**input, pBuilder);
       ArchiveListEntry* entry = new ArchiveListEntry(*ar, input);
       ar_list.push_back(entry);
       // read archive
-      m_ArchiveReader.readArchive(*ar);
+      m_ArchiveReader.readArchive(pConfig, *ar);
       cur_obj_cnt += ar->numOfObjectMember();
     }
     // read input as a binary file
-    else if (pConfig.options().isBinaryInput()) {
+    else if (doContinue && m_BinaryReader.isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Object);
       m_BinaryReader.readBinary(**input);
       m_Module.getObjectList().push_back(*input);
     }
     // is a relocatable object file
-    else if (m_ObjectReader.isMyFormat(**input)) {
+    else if (doContinue && m_ObjectReader.isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Object);
       m_ObjectReader.readHeader(**input);
       m_ObjectReader.readSections(**input);
@@ -103,15 +101,15 @@ bool GroupReader::readGroup(Module::input_iterator pRoot,
       ++non_ar_obj_cnt;
     }
     // is a shared object file
-    else if (m_DynObjReader.isMyFormat(**input)) {
+    else if (doContinue && m_DynObjReader.isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::DynObj);
       m_DynObjReader.readHeader(**input);
       m_DynObjReader.readSymbols(**input);
       m_Module.getLibraryList().push_back(*input);
     }
     else {
-      fatal(diag::err_unrecognized_input_file) << (*input)->path()
-                                               << pConfig.targets().triple().str();
+      warning(diag::warn_unrecognized_input_file) << (*input)->path()
+        << pConfig.targets().triple().str();
     }
     ++input;
   }
@@ -128,7 +126,7 @@ bool GroupReader::readGroup(Module::input_iterator pRoot,
       // if --whole-archive is given to this archive, no need to read it again
       if ( ar.getARFile().attribute()->isWholeArchive())
         continue;
-      m_ArchiveReader.readArchive(ar);
+      m_ArchiveReader.readArchive(pConfig, ar);
       cur_obj_cnt += ar.numOfObjectMember();
     }
   }

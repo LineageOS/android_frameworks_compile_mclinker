@@ -6,13 +6,14 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_SYMBOL_RESOLVER_H
-#define MCLD_SYMBOL_RESOLVER_H
+#ifndef MCLD_LD_RESOLVER_H
+#define MCLD_LD_RESOLVER_H
 #ifdef ENABLE_UNITTEST
 #include <gtest.h>
 #endif
 #include <string>
 #include <utility>
+#include <mcld/LD/LDSymbol.h>
 
 namespace mcld
 {
@@ -59,7 +60,7 @@ public:
   /// @param pNew the symbol which is used to replace pOld
   virtual bool resolve(ResolveInfo & __restrict__ pOld,
                        const ResolveInfo & __restrict__ pNew,
-                       bool &pOverride) const = 0;
+                       bool &pOverride, LDSymbol::ValueType pValue) const = 0;
 
   /// resolveAgain - Can override by derived classes.
   /// @return the pointer to resolved ResolveInfo

@@ -6,7 +6,7 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#include <mcld/Target/TargetMachine.h>
+#include <mcld/Support/Target.h>
 #include <mcld/Support/TargetRegistry.h>
 
 namespace mcld {
@@ -15,7 +15,7 @@ mcld::Target TheHexagonTarget;
 
 extern "C" void MCLDInitializeHexagonLDTargetInfo() {
   // register into mcld::TargetRegistry
-  mcld::RegisterTarget X(TheHexagonTarget, "hexagon");
+  mcld::RegisterTarget<llvm::Triple::hexagon> X(TheHexagonTarget, "hexagon");
 }
 
 } // namespace of mcld
