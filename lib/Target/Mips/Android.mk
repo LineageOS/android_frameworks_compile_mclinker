@@ -5,13 +5,9 @@ mcld_mips_target_SRC_FILES := \
   MipsELFDynamic.cpp  \
   MipsELFMCLinker.cpp  \
   MipsEmulation.cpp \
-  MipsGNUInfo.cpp \
   MipsGOT.cpp \
-  MipsGOTPLT.cpp \
-  MipsLA25Stub.cpp \
   MipsLDBackend.cpp \
   MipsMCLinker.cpp \
-  MipsPLT.cpp \
   MipsRelocator.cpp \
   MipsTargetMachine.cpp
 
