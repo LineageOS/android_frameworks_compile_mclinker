@@ -15,7 +15,6 @@ subdirs := \
   lib/LD \
   lib/MC \
   lib/Object \
-  lib/Script \
   lib/Support \
   lib/Target
 
