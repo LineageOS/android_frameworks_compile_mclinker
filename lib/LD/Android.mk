@@ -9,6 +9,7 @@ mcld_ld_SRC_FILES := \
   ArchiveReader.cpp \
   BranchIsland.cpp  \
   BranchIslandFactory.cpp  \
+  BinaryReader.cpp \
   DWARFLineInfo.cpp \
   Diagnostic.cpp  \
   DiagnosticEngine.cpp  \
@@ -22,6 +23,7 @@ mcld_ld_SRC_FILES := \
   EhFrame.cpp \
   EhFrameHdr.cpp  \
   EhFrameReader.cpp  \
+  GarbageCollection.cpp \
   GroupReader.cpp \
   LDContext.cpp \
   LDFileFormat.cpp  \

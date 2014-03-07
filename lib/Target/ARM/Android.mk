@@ -2,6 +2,7 @@ LOCAL_PATH:= $(call my-dir)
 
 mcld_arm_target_SRC_FILES := \
   ARMDiagnostic.cpp \
+  ARMELFAttributeData.cpp \
   ARMELFDynamic.cpp \
   ARMELFMCLinker.cpp \
   ARMEmulation.cpp \
