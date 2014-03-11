@@ -139,8 +139,15 @@ public:
 	virtual int yywrap();
 
 protected:
-	virtual int LexerInput( char* buf, int max_size );
-	virtual void LexerOutput( const char* buf, int size );
+// BEGIN android-modified: work around flex differences on Darwin and Linux
+#if !defined(DARWIN_FLEX)
+        virtual int LexerInput( char* buf, int max_size );
+        virtual void LexerOutput( const char* buf, int size );
+#else
+        virtual size_t LexerInput( char* buf, size_t max_size );
+        virtual void LexerOutput( const char* buf, size_t size );
+#endif
+// END android-modified
 	virtual void LexerError( const char* msg );
 
 	void yyunput( int c, char* buf_ptr );
