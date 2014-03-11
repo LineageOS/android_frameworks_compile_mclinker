@@ -6,14 +6,18 @@ LOCAL_CFLAGS := \
 
 LOCAL_CPPFLAGS := \
   $(LOCAL_CPPFLAGS) \
-  -Wall \
-  -Wno-unused-parameter \
-  -Werror
+  -Wall
 
 ifeq ($(MCLD_ENABLE_ASSERTION),true)
   LOCAL_CPPFLAGS += \
     -D_DEBUG \
     -UNDEBUG
+endif
+
+LOCAL_CLANG := true
+
+ifeq ($(HOST_OS),darwin)
+LOCAL_CFLAGS += -DDARWIN_FLEX=1
 endif
 
 LOCAL_C_INCLUDES := \
