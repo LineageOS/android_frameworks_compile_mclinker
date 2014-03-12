@@ -23,6 +23,10 @@ ifeq ($(MCLD_ENABLE_ASSERTION),true)
     -UNDEBUG
 endif
 
+ifeq ($(HOST_OS),darwin)
+LOCAL_CFLAGS += -DDARWIN_FLEX=1
+endif
+
 # Make sure bionic is first so we can include system headers.
 LOCAL_C_INCLUDES := \
   bionic \
