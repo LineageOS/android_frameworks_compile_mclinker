@@ -6,6 +6,8 @@ LOCAL_CFLAGS := \
 
 LOCAL_CPPFLAGS := \
   $(LOCAL_CPPFLAGS) \
+  -Wno-unused-private-field \
+  -Wno-unused-const-variable \
   -Wall
 
 ifeq ($(MCLD_ENABLE_ASSERTION),true)
