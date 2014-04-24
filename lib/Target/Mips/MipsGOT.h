@@ -6,8 +6,8 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-#ifndef MCLD_MIPS_GOT_H
-#define MCLD_MIPS_GOT_H
+#ifndef TARGET_MIPS_MIPSGOT_H
+#define TARGET_MIPS_MIPSGOT_H
 #include <map>
 #include <vector>
 
@@ -79,7 +79,7 @@ public:
 
   bool hasMultipleGOT() const;
 
-  /// Create GOT entries and reserve dynrel entries. 
+  /// Create GOT entries and reserve dynrel entries.
   void finalizeScanning(OutputRelocSection& pRelDyn);
 
   /// Compare two symbols to define order in the .dynsym.

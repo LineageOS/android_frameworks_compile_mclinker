@@ -42,7 +42,7 @@ void UniqueGCFactoryBaseTest::TearDown()
 // Testcases
 //
 TEST_F( UniqueGCFactoryBaseTest, number_constructor ) {
-	ContextFactory *contextFactory = new ContextFactory(10); 
+	ContextFactory *contextFactory = new ContextFactory(10);
 	contextFactory->produce("/");
 	contextFactory->produce("ab/c");
 	ASSERT_TRUE( 2 == contextFactory->size());
@@ -50,7 +50,7 @@ TEST_F( UniqueGCFactoryBaseTest, number_constructor ) {
 }
 
 TEST_F( UniqueGCFactoryBaseTest, unique_produce ) {
-	ContextFactory *contextFactory = new ContextFactory(10); 
+	ContextFactory *contextFactory = new ContextFactory(10);
 	LDContext* context1 = contextFactory->produce("/");
 	contextFactory->produce("ab/c");
 	ASSERT_TRUE( 2 == contextFactory->size());
@@ -60,7 +60,7 @@ TEST_F( UniqueGCFactoryBaseTest, unique_produce ) {
 }
 
 TEST_F( UniqueGCFactoryBaseTest, unique_produce2 ) {
-	ContextFactory *contextFactory = new ContextFactory(10); 
+	ContextFactory *contextFactory = new ContextFactory(10);
 	LDContext* context1 = contextFactory->produce("abc/def");
 	contextFactory->produce("ab/c");
 	ASSERT_TRUE( 2 == contextFactory->size());
@@ -72,7 +72,7 @@ TEST_F( UniqueGCFactoryBaseTest, unique_produce2 ) {
 TEST_F( UniqueGCFactoryBaseTest, iterator )
 {
         sys::fs::Path path1(TOPDIR), path2(TOPDIR);
-	path1.append("unittests/test1.txt");
+	path1.append("unittests/test.txt");
 	path2.append("unittests/test2.txt");
 
 	MemoryAreaFactory* memFactory = new MemoryAreaFactory(10);
@@ -81,7 +81,7 @@ TEST_F( UniqueGCFactoryBaseTest, iterator )
 	ASSERT_NE( area1, area2);
 
 	MemoryArea* area3 = memFactory->produce(path1, FileHandle::ReadOnly);
-	
+
 	ASSERT_EQ(area1, area3);
 	ASSERT_FALSE( memFactory->empty());
 	ASSERT_TRUE( 2 == memFactory->size());
