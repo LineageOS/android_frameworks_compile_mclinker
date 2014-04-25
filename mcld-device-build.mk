@@ -30,7 +30,8 @@ endif
 # Make sure bionic is first so we can include system headers.
 LOCAL_C_INCLUDES := \
   bionic \
-  external/stlport/stlport \
+  external/libcxx/include \
+  external/libcxxabi/include \
   $(MCLD_ROOT_PATH)/include \
   $(LLVM_ROOT_PATH) \
   $(LLVM_ROOT_PATH)/include \
