@@ -24,6 +24,11 @@ subdirs += \
   lib/Target/ARM \
   lib/Target/ARM/TargetInfo
 
+# AArch64 Code Generation Libraries
+subdirs += \
+  lib/Target/AArch64 \
+  lib/Target/AArch64/TargetInfo
+
 # MIPS Code Generation Libraries
 subdirs += \
   lib/Target/Mips \

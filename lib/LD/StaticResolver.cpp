@@ -10,6 +10,8 @@
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/Support/MsgHandling.h>
 
+#include <cxxabi.h>
+
 using namespace mcld;
 
 //==========================
@@ -118,7 +120,7 @@ bool StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
         // We've seen a common symbol and now we see a definition.  The
         // definition overrides.
         //
-	// NOTE: m_Mesg uses 'name' instead of `name' for being compatible to GNU ld.
+        // NOTE: m_Mesg uses 'name' instead of `name' for being compatible to GNU ld.
         ignore(diag::redefine_common) << old->name();
         old->override(pNew);
         pOverride = true;
@@ -169,6 +171,9 @@ bool StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
       }
       /* Fall through */
       case MDEF: {       /* multiple definition error.  */
+        int status;
+        char* demangled_name = abi::__cxa_demangle(pNew.name(), NULL, NULL,
+                                                   &status);
         if (pOld.isDefine() && pNew.isDefine() &&
             pOld.isAbsolute() && pNew.isAbsolute() &&
             (pOld.desc() == pNew.desc() || pOld.desc() == ResolveInfo::NoType ||
@@ -178,12 +183,21 @@ bool StaticResolver::resolve(ResolveInfo& __restrict__ pOld,
             old->override(pNew);
             break;
           } else {
-            error(diag::multiple_absolute_definitions) << pNew.name()
-              << pOld.outSymbol()->value() << pValue;
+            if (demangled_name != NULL) {
+              error(diag::multiple_absolute_definitions) << demangled_name
+                << pOld.outSymbol()->value() << pValue;
+            } else {
+              error(diag::multiple_absolute_definitions) << pNew.name()
+                << pOld.outSymbol()->value() << pValue;
+            }
             break;
           }
         }
-        error(diag::multiple_definitions) << pNew.name();
+        if (demangled_name != NULL) {
+          error(diag::multiple_definitions) << demangled_name;
+        } else {
+          error(diag::multiple_definitions) << pNew.name();
+        }
         break;
       }
       case REFC: {       /* Mark indirect symbol referenced and then CYCLE.  */

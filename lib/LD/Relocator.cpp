@@ -16,7 +16,7 @@
 #include <mcld/LD/SectionData.h>
 #include <mcld/Support/MsgHandling.h>
 #include <mcld/Module.h>
-#if HAVE_CXXABI_H
+#ifdef HAVE_CXXABI_H
 #include <cxxabi.h>
 #endif
 #include <sstream>
@@ -27,7 +27,7 @@ using namespace mcld;
 // Helper functions
 //===----------------------------------------------------------------------===//
 std::string demangleSymbol(const std::string& mangled_name) {
-#if HAVE_CXXABI_H
+#ifdef HAVE_CXXABI_H
   // __cxa_demangle needs manually handle the memory release, so we wrap
   // it into this helper function.
   size_t output_leng;
