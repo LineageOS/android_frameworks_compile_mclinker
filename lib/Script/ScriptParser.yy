@@ -38,7 +38,11 @@ using namespace mcld;
 
 %require "2.4"
 %skeleton "glr.cc"
+/*
+ * BEGIN android-removed: prevent bison from generating the header in current directory
 %defines "ScriptParser.h"
+ * END android-removed
+ */
 %debug
 %error-verbose
 %define namespace "mcld"
