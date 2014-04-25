@@ -1,5 +1,7 @@
 include $(LLVM_HOST_BUILD_MK)
 
+include external/libcxx/libcxx.mk
+
 LOCAL_CFLAGS := \
   -include $(MCLD_ROOT_PATH)/include/mcld/Config/Config.h \
   $(LOCAL_CFLAGS)
@@ -27,6 +29,7 @@ LOCAL_C_INCLUDES := \
   $(LLVM_ROOT_PATH) \
   $(LLVM_ROOT_PATH)/include \
   $(LLVM_ROOT_PATH)/host/include \
+  external/libcxx/include \
   $(LOCAL_C_INCLUDES)
 
 LOCAL_IS_HOST_MODULE := true
