@@ -62,7 +62,7 @@ public:
 
   /// MergeSection - merge the pInput section to mcld::Module.
   /// This function moves all fragments in pInputSection to the corresponding
-  /// output section of mcld::Module. 
+  /// output section of mcld::Module.
   ///
   /// @see SectionMap
   /// @param [in] pInputSection The merged input section.
@@ -75,6 +75,10 @@ public:
 
   /// UpdateSectionAlign - update alignment for input section
   static void UpdateSectionAlign(LDSection& pTo, const LDSection& pFrom);
+
+  /// UpdateSectionAlign - update alignment for the section
+  static void UpdateSectionAlign(LDSection& pSection,
+                                 uint32_t pAlignConstraint);
 
 /// @}
 /// @name Fragment Methods
