@@ -39,6 +39,7 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(mcld_script_SRC_FILES)
 LOCAL_MODULE:= libmcldScript
 LOCAL_C_INCLUDES := $(MCLD_ROOT_PATH)/include/mcld/Script
+LOCAL_CFLAGS := -Wno-deprecated-register
 
 LOCAL_MODULE_TAGS := optional
 
@@ -52,6 +53,7 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := $(mcld_script_SRC_FILES)
 LOCAL_MODULE:= libmcldScript
 LOCAL_C_INCLUDES := $(MCLD_ROOT_PATH)/include/mcld/Script
+LOCAL_CFLAGS := -Wno-deprecated-register
 
 LOCAL_MODULE_TAGS := optional
 
