@@ -11,6 +11,7 @@
 #include "HexagonLDBackend.h"
 
 #include <llvm/Support/ELF.h>
+#include <llvm/Support/MathExtras.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/LDSymbol.h>
 #include <mcld/Fragment/Relocation.h>
@@ -32,7 +33,7 @@ const uint32_t HexagonAbsoluteStub::TEMPLATE[] = {
 };
 
 #define FITS_IN_NBITS(D, B) \
-    ((int64_t) abs (D) < (~(~(int64_t) 0 << ((B) - 1)) & -(4 * 4)))
+    ( llvm::abs64(D) < (~(~(int64_t) 0 << ((B) - 1)) & -(4 * 4)))
 
 HexagonAbsoluteStub::HexagonAbsoluteStub(bool pIsOutputPIC)
  : Stub(), m_Name("HexagonTrampoline"), m_pData(NULL), m_Size(0x0)
@@ -45,9 +46,9 @@ HexagonAbsoluteStub::HexagonAbsoluteStub(bool pIsOutputPIC)
 
 /// for doClone
 HexagonAbsoluteStub::HexagonAbsoluteStub(const uint32_t* pData,
-                           size_t pSize,
-                           const_fixup_iterator pBegin,
-                           const_fixup_iterator pEnd)
+                                         size_t pSize,
+                                         const_fixup_iterator pBegin,
+                                         const_fixup_iterator pEnd)
  : Stub(), m_Name("AbsVeneer"), m_pData(pData), m_Size(pSize)
 {
   for (const_fixup_iterator it = pBegin, ie = pEnd; it != ie; ++it)
@@ -59,8 +60,8 @@ HexagonAbsoluteStub::~HexagonAbsoluteStub()
 }
 
 bool HexagonAbsoluteStub::isMyDuty(const class Relocation& pReloc,
-                            uint64_t pSource,
-                            uint64_t pTargetSymValue) const
+                                   uint64_t pSource,
+                                   uint64_t pTargetSymValue) const
 {
   int nbits = 0;
   switch (pReloc.type()) {

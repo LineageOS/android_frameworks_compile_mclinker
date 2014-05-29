@@ -8,9 +8,6 @@
 //===----------------------------------------------------------------------===//
 #ifndef MCLD_GENERALOPTIONS_H
 #define MCLD_GENERALOPTIONS_H
-#ifdef ENABLE_UNITTEST
-#include <gtest.h>
-#endif
 #include <string>
 #include <vector>
 #include <mcld/Support/RealPath.h>
@@ -350,7 +347,6 @@ private:
   };
 
 private:
-  Input* m_pDefaultBitcode;
   std::string m_DefaultLDScript;
   std::string m_Dyld;
   std::string m_SOName;

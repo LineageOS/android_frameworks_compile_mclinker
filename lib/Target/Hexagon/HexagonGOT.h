@@ -8,9 +8,6 @@
 //===----------------------------------------------------------------------===//
 #ifndef TARGET_HEXAGON_HEXAGONGOT_H
 #define TARGET_HEXAGON_HEXAGONGOT_H
-#ifdef ENABLE_UNITTEST
-#include <gtest.h>
-#endif
 
 #include <mcld/Target/GOT.h>
 
@@ -42,9 +39,6 @@ public:
   ~HexagonGOT();
 
   HexagonGOTEntry* create();
-
-private:
-  HexagonGOTEntry* m_pLast; ///< the last consumed entry
 };
 
 } // namespace of mcld
