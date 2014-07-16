@@ -8,10 +8,11 @@
 //===----------------------------------------------------------------------===//
 #ifndef MCLD_GENERALOPTIONS_H
 #define MCLD_GENERALOPTIONS_H
-#include <string>
-#include <vector>
 #include <mcld/Support/RealPath.h>
 #include <mcld/Support/FileSystem.h>
+#include <string>
+#include <vector>
+#include <set>
 
 namespace mcld {
 
@@ -39,6 +40,12 @@ public:
     Both    = 0x3
   };
 
+  enum ICF {
+    ICF_None,
+    ICF_All,
+    ICF_Safe
+  };
+
   typedef std::vector<std::string> RpathList;
   typedef RpathList::iterator rpath_iterator;
   typedef RpathList::const_iterator const_rpath_iterator;
@@ -50,6 +57,12 @@ public:
   typedef std::vector<std::string> AuxiliaryList;
   typedef AuxiliaryList::iterator aux_iterator;
   typedef AuxiliaryList::const_iterator const_aux_iterator;
+
+  typedef std::vector<std::string> UndefSymList;
+  typedef UndefSymList::iterator undef_sym_iterator;
+  typedef UndefSymList::const_iterator const_undef_sym_iterator;
+
+  typedef std::set<std::string> ExcludeLIBS;
 
 public:
   GeneralOptions();
@@ -284,6 +297,13 @@ public:
   bool GCSections() const
   { return m_bGCSections; }
 
+  // --print-gc-sections
+  void setPrintGCSections(bool pEnable = true)
+  { m_bPrintGCSections = pEnable; }
+
+  bool getPrintGCSections() const
+  { return m_bPrintGCSections; }
+
   // --ld-generated-unwind-info
   void setGenUnwindInfo(bool pEnable = true)
   { m_bGenUnwindInfo = pEnable; }
@@ -303,6 +323,21 @@ public:
   void setHashStyle(unsigned int pStyle)
   { m_HashStyle = pStyle; }
 
+  ICF getICFMode() const { return m_ICF; }
+
+  void setICFMode(ICF pMode)
+  { m_ICF = pMode; }
+
+  size_t getICFIterations() const { return m_ICFIterations; }
+
+  void setICFIterations(size_t pNum)
+  { m_ICFIterations = pNum; }
+
+  bool printICFSections() const { return m_bPrintICFSections; }
+
+  void setPrintICFSections(bool pPrintICFSections)
+  { m_bPrintICFSections = pPrintICFSections; }
+
   // -----  link-in rpath  ----- //
   const RpathList& getRpathList() const { return m_RpathList; }
   RpathList&       getRpathList()       { return m_RpathList; }
@@ -321,6 +356,20 @@ public:
   const_script_iterator script_end  () const { return m_ScriptList.end();   }
   script_iterator       script_end  ()       { return m_ScriptList.end();   }
 
+  // -----  -u/--undefined, undefined symbols ----- //
+  const UndefSymList& getUndefSymList() const { return m_UndefSymList; }
+  UndefSymList&       getUndefSymList()       { return m_UndefSymList; }
+
+  const_undef_sym_iterator undef_sym_begin() const
+  { return m_UndefSymList.begin(); }
+  undef_sym_iterator undef_sym_begin()
+  { return m_UndefSymList.begin(); }
+
+  const_undef_sym_iterator undef_sym_end() const
+  { return m_UndefSymList.end(); }
+  undef_sym_iterator undef_sym_end()
+  { return m_UndefSymList.end(); }
+
   // -----  filter and auxiliary filter  ----- //
   void setFilter(const std::string& pFilter)
   { m_Filter = pFilter; }
@@ -338,6 +387,13 @@ public:
   aux_iterator       aux_begin()       { return m_AuxiliaryList.begin(); }
   const_aux_iterator aux_end  () const { return m_AuxiliaryList.end();   }
   aux_iterator       aux_end  ()       { return m_AuxiliaryList.end();   }
+
+  // -----  exclude libs  ----- //
+  ExcludeLIBS& excludeLIBS()
+  { return m_ExcludeLIBS; }
+
+  bool isInExcludeLIBS(const Input& pInput) const;
+
 
 private:
   enum status {
@@ -389,14 +445,20 @@ private:
   bool m_bPrintMap: 1; // --print-map
   bool m_bWarnMismatch: 1; // --no-warn-mismatch
   bool m_bGCSections: 1; // --gc-sections
+  bool m_bPrintGCSections:1; // --print-gc-sections
   bool m_bGenUnwindInfo: 1; // --ld-generated-unwind-info
+  bool m_bPrintICFSections: 1; // --print-icf-sections
+  ICF m_ICF;
+  size_t m_ICFIterations;
   uint32_t m_GPSize; // -G, --gpsize
   StripSymbolMode m_StripSymbols;
   RpathList m_RpathList;
   ScriptList m_ScriptList;
+  UndefSymList m_UndefSymList; // -u [symbol], --undefined [symbol]
   unsigned int m_HashStyle;
   std::string m_Filter;
   AuxiliaryList m_AuxiliaryList;
+  ExcludeLIBS m_ExcludeLIBS;
 };
 
 } // namespace of mcld

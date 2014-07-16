@@ -143,6 +143,21 @@ void MipsGNULDBackend::initTargetSymbols(IRBuilder& pBuilder, Module& pModule)
                    0x0,  // value
                    FragmentRef::Null(), // FragRef
                    ResolveInfo::Default);
+  pBuilder.AddSymbol<IRBuilder::AsReferred, IRBuilder::Unresolve>(
+                   "_gp",
+                   ResolveInfo::NoType,
+                   ResolveInfo::Define,
+                   ResolveInfo::Absolute,
+                   0x0,  // size
+                   0x0,  // value
+                   FragmentRef::Null(), // FragRef
+                   ResolveInfo::Default);
+}
+
+const Relocator* MipsGNULDBackend::getRelocator() const
+{
+  assert(NULL != m_pRelocator);
+  return m_pRelocator;
 }
 
 Relocator* MipsGNULDBackend::getRelocator()

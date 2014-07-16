@@ -28,8 +28,6 @@
 #include <mcld/Fragment/Relocation.h>
 #include <mcld/Fragment/FragmentRef.h>
 
-#include <llvm/ADT/OwningPtr.h>
-
 #include <cassert>
 
 using namespace mcld;
@@ -96,7 +94,12 @@ bool Linker::normalize(Module& pModule, IRBuilder& pBuilder)
   if (!Diagnose())
     return false;
 
-  // 4. - normalize the input tree
+  // 4.a - add undefined symbols
+  //   before reading the inputs, we should add undefined symbols set by -u to
+  //   ensure that correspoding objects (e.g. in an archive) will be included
+  m_pObjLinker->addUndefinedSymbols();
+
+  // 4.b - normalize the input tree
   //   read out sections and symbol/string tables (from the files) and
   //   set them in Module. When reading out the symbol, resolve their symbols
   //   immediately and set their ResolveInfo (i.e., Symbol Resolution).
@@ -204,7 +207,6 @@ bool Linker::layout()
   assert(NULL != m_pConfig && NULL != m_pObjLinker);
 
   // 10. - add standard symbols, target-dependent symbols and script symbols
-  // m_pObjLinker->addUndefSymbols();
   if (!m_pObjLinker->addStandardSymbols() ||
       !m_pObjLinker->addTargetSymbols() ||
       !m_pObjLinker->addScriptSymbols())
@@ -280,7 +282,7 @@ bool Linker::emit(const Module& pModule, const std::string& pPath)
     return false;
   }
 
-  llvm::OwningPtr<FileOutputBuffer> output;
+  std::unique_ptr<FileOutputBuffer> output;
   FileOutputBuffer::create(file,
                            m_pObjLinker->getWriter()->getOutputSize(pModule),
                            output);
@@ -295,7 +297,7 @@ bool Linker::emit(const Module& pModule, int pFileDescriptor)
   FileHandle file;
   file.delegate(pFileDescriptor);
 
-  llvm::OwningPtr<FileOutputBuffer> output;
+  std::unique_ptr<FileOutputBuffer> output;
   FileOutputBuffer::create(file,
                            m_pObjLinker->getWriter()->getOutputSize(pModule),
                            output);
