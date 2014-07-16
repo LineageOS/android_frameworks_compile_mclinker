@@ -12,11 +12,13 @@
 namespace {
 
 // Not supprted yet {
-llvm::cl::opt<std::string> ArgForceUndefined("u",
+llvm::cl::list<std::string> ArgForceUndefined("u",
+  llvm::cl::ZeroOrMore,
   llvm::cl::desc("Force symbol to be undefined in the output file"),
   llvm::cl::value_desc("symbol"));
 
 llvm::cl::alias ArgForceUndefinedAlias("undefined",
+  llvm::cl::ZeroOrMore,
   llvm::cl::desc("alias for -u"),
   llvm::cl::aliasopt(ArgForceUndefined));
 
@@ -63,6 +65,11 @@ bool SymbolOptions::parse(LinkerConfig& pConfig)
 {
   // set -d
   pConfig.options().setDefineCommon(m_DefineCommon);
+
+  // set -u/--undefined symbols
+  llvm::cl::list<std::string>::iterator usym, usymEnd = m_ForceUndefined.end();
+  for (usym = m_ForceUndefined.begin(); usym != usymEnd; ++usym)
+    pConfig.options().getUndefSymList().push_back(*usym);
 
   return true;
 }

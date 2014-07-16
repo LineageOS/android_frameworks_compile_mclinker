@@ -72,6 +72,12 @@ bool HexagonLDBackend::initRelocator()
   return true;
 }
 
+const Relocator* HexagonLDBackend::getRelocator() const
+{
+  assert(NULL != m_pRelocator);
+  return m_pRelocator;
+}
+
 Relocator* HexagonLDBackend::getRelocator()
 {
   assert(NULL != m_pRelocator);
@@ -553,7 +559,9 @@ bool HexagonLDBackend::initTargetStubs()
 bool HexagonLDBackend::initBRIslandFactory()
 {
   if (NULL == m_pBRIslandFactory) {
-    m_pBRIslandFactory = new BranchIslandFactory(maxBranchOffset(), 0);
+    m_pBRIslandFactory = new BranchIslandFactory(maxFwdBranchOffset(),
+                                                 maxBwdBranchOffset(),
+                                                 0);
   }
   return true;
 }

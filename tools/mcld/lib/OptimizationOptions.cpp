@@ -13,7 +13,6 @@
 
 namespace {
 
-// Not supported yet
 bool ArgGCSections;
 
 llvm::cl::opt<bool, true> ArgGCSectionsFlag("gc-sections",
@@ -26,6 +25,20 @@ llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoGCSectionsFlag("no-gc-sect
   llvm::cl::ZeroOrMore,
   llvm::cl::location(ArgGCSections),
   llvm::cl::desc("disable garbage collection of unused input sections."),
+  llvm::cl::init(false));
+
+bool ArgPrintGCSections;
+
+llvm::cl::opt<bool, true> ArgPrintGCSectionsFlag("print-gc-sections",
+  llvm::cl::ZeroOrMore,
+  llvm::cl::location(ArgPrintGCSections),
+  llvm::cl::desc("List all sections removed by garbage collection."),
+  llvm::cl::init(false));
+
+llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoPrintGCSectionsFlag("no-print-gc-sections",
+  llvm::cl::ZeroOrMore,
+  llvm::cl::location(ArgPrintGCSections),
+  llvm::cl::desc("disable --print-gc-sections"),
   llvm::cl::init(false));
 
 bool ArgGenUnwindInfo;
@@ -47,18 +60,26 @@ ArgGenUnwindInfoFlag("ld-generated-unwind-info",
                      llvm::cl::init(true),
                      llvm::cl::ValueDisallowed);
 
-llvm::cl::opt<mcld::OptimizationOptions::ICF> ArgICF("icf",
+llvm::cl::opt<mcld::GeneralOptions::ICF> ArgICF("icf",
   llvm::cl::ZeroOrMore,
   llvm::cl::desc("Identical Code Folding"),
-  llvm::cl::init(mcld::OptimizationOptions::ICF_None),
+  llvm::cl::init(mcld::GeneralOptions::ICF_None),
   llvm::cl::values(
-    clEnumValN(mcld::OptimizationOptions::ICF_None, "none",
+    clEnumValN(mcld::GeneralOptions::ICF_None, "none",
       "do not perform cold folding"),
-    clEnumValN(mcld::OptimizationOptions::ICF_All, "all",
+    clEnumValN(mcld::GeneralOptions::ICF_All, "all",
       "always preform cold folding"),
-    clEnumValN(mcld::OptimizationOptions::ICF_Safe, "safe",
+    clEnumValN(mcld::GeneralOptions::ICF_Safe, "safe",
       "Folds those whose pointers are definitely not taken."),
     clEnumValEnd));
+
+llvm::cl::opt<unsigned> ArgICFIterations("icf-iterations",
+  llvm::cl::desc("Number of iterations to do ICF."),
+  llvm::cl::init(2));
+
+llvm::cl::opt<bool> ArgPrintICFSections("print-icf-sections",
+  llvm::cl::desc("Print the folded identical sections."),
+  llvm::cl::init(false));
 
 llvm::cl::opt<char> ArgOptLevel("O",
   llvm::cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
@@ -84,8 +105,11 @@ using namespace mcld;
 //===----------------------------------------------------------------------===//
 OptimizationOptions::OptimizationOptions()
   : m_GCSections(ArgGCSections),
+    m_PrintGCSections(ArgPrintGCSections),
     m_GenUnwindInfo(ArgGenUnwindInfo),
     m_ICF(ArgICF),
+    m_ICFIterations(ArgICFIterations),
+    m_PrintICFSections(ArgPrintICFSections),
     m_OptLevel(ArgOptLevel),
     m_Plugin(ArgPlugin),
     m_PluginOpt(ArgPluginOpt) {
@@ -97,19 +121,17 @@ bool OptimizationOptions::parse(LinkerConfig& pConfig)
   if (m_GCSections)
     pConfig.options().setGCSections();
 
+  // set --print-gc-sections
+  if (m_PrintGCSections)
+    pConfig.options().setPrintGCSections();
+
   // set --ld-generated-unwind-info (or not)
   pConfig.options().setGenUnwindInfo(m_GenUnwindInfo);
 
   // set --icf [mode]
-  switch (m_ICF) {
-    case ICF_None:
-      break;
-    case ICF_All:
-    case ICF_Safe:
-    default:
-      warning(mcld::diag::warn_unsupported_option) << m_ICF.ArgStr;
-      break;
-  }
+  pConfig.options().setICFMode(m_ICF);
+  pConfig.options().setICFIterations(m_ICFIterations);
+  pConfig.options().setPrintICFSections(m_PrintICFSections);
 
   return true;
 }

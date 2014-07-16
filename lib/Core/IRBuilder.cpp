@@ -62,8 +62,12 @@ LDFileFormat::Kind GetELFSectionKind(uint32_t pType, const char* pName,
   case llvm::ELF::SHT_INIT_ARRAY:
   case llvm::ELF::SHT_FINI_ARRAY:
   case llvm::ELF::SHT_PREINIT_ARRAY:
-  case llvm::ELF::SHT_PROGBITS:
-    return LDFileFormat::Regular;
+  case llvm::ELF::SHT_PROGBITS: {
+    if ((pFlag & llvm::ELF::SHF_EXECINSTR) != 0)
+      return LDFileFormat::TEXT;
+    else
+      return LDFileFormat::DATA;
+  }
   case llvm::ELF::SHT_SYMTAB:
   case llvm::ELF::SHT_DYNSYM:
   case llvm::ELF::SHT_STRTAB:
@@ -421,6 +425,13 @@ LDSymbol* IRBuilder::AddSymbol(Input& pInput,
                                                 script.renameMap().find(pName);
     if (script.renameMap().end() != renameSym)
       name = renameSym.getEntry()->value();
+  }
+
+  // Fix up the visibility if object has no export set.
+  if (pInput.noExport() && (pDesc != ResolveInfo::Undefined)) {
+    if ((pVis == ResolveInfo::Default) || (pVis == ResolveInfo::Protected)) {
+      pVis = ResolveInfo::Hidden;
+    }
   }
 
   switch (pInput.type()) {

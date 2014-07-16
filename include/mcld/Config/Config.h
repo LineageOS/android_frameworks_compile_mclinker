@@ -27,11 +27,14 @@
 #define MCLD_DEFAULT_TARGET_TRIPLE "x86_64-unknown-linux-gnu"
 
 /* MCLINKER version */
-#define MCLD_VERSION "2.3.0.RC-WhiteStone"
+#define MCLD_VERSION "2.9.0.dev-"
+
+/* Name of package */
+#define PACKAGE "mclinker"
 
 
 /* Version number of package */
-#define VERSION "WhiteStone"
+#define VERSION "dev"
 
 
 #define MCLD_REGION_CHUNK_SIZE 32
