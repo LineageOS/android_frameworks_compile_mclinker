@@ -55,8 +55,8 @@ public:
   bool initRelocator();
 
   /// getRelocator - return relocator.
+  const Relocator* getRelocator() const;
   Relocator* getRelocator();
-
 
   /// doPreLayout - Backend can do any needed modification before layout
   void doPreLayout(IRBuilder& pBuilder);
@@ -126,12 +126,17 @@ public:
   /// readSection - read target dependent sections
   bool readSection(Input& pInput, SectionData& pSD);
 
+  /// mayHaveUnsafeFunctionPointerAccess - check if the section may have unsafe
+  /// function pointer access
+  bool mayHaveUnsafeFunctionPointerAccess(const LDSection& pSection) const;
+
 private:
   void defineGOTSymbol(IRBuilder& pBuilder);
 
-  /// maxBranchOffset
-  /// FIXME: if we can handle arm attributes, we may refine this!
-  uint64_t maxBranchOffset() { return THM_MAX_FWD_BRANCH_OFFSET; }
+  /// maxFwdBranchOffset
+  int64_t maxFwdBranchOffset();
+  /// maxBwdBranchOffset
+  int64_t maxBwdBranchOffset();
 
   /// mayRelax - Backends should override this function if they need relaxation
   bool mayRelax() { return true; }

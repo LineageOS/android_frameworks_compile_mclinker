@@ -141,16 +141,15 @@ bool DiagnosticInfos::process(DiagnosticEngine& pEngine) const
           else
             severity = DiagnosticEngine::Ignore;
           break;
-        case LinkerConfig::Exec:
-          if (m_Config.options().isNoUndefined())
-            severity = DiagnosticEngine::Error;
-          else
-            severity = DiagnosticEngine::Ignore;
-          break;
         default:
           severity = DiagnosticEngine::Error;
           break;
       }
+      break;
+    }
+    case diag::debug_print_gc_sections: {
+      if (!m_Config.options().getPrintGCSections())
+        severity = DiagnosticEngine::Ignore;
       break;
     }
     default:

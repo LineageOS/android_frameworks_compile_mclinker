@@ -18,6 +18,7 @@
 #include <mcld/LinkerConfig.h>
 #include <mcld/LinkerScript.h>
 #include <mcld/Module.h>
+#include <mcld/Support/MsgHandling.h>
 #include <mcld/Target/TargetLDBackend.h>
 
 #include <llvm/Support/Casting.h>
@@ -63,7 +64,8 @@ static bool shouldKeep(const std::string& pName)
 /// shouldProcessGC - check if the section kind is handled in GC
 static bool mayProcessGC(const LDSection& pSection)
 {
-  if (pSection.kind() == LDFileFormat::Regular ||
+  if (pSection.kind() == LDFileFormat::TEXT ||
+      pSection.kind() == LDFileFormat::DATA ||
       pSection.kind() == LDFileFormat::BSS ||
       pSection.kind() == LDFileFormat::GCCExceptTable)
     return true;
@@ -270,6 +272,24 @@ void GarbageCollection::getEntrySections(SectionVecTy& pEntry)
       pEntry.push_back(sect);
     }
   }
+
+  // symbols set by -u should not be garbage collected. Set them entries.
+  GeneralOptions::const_undef_sym_iterator usym;
+  GeneralOptions::const_undef_sym_iterator usymEnd =
+                                             m_Config.options().undef_sym_end();
+  for (usym = m_Config.options().undef_sym_begin(); usym != usymEnd; ++usym) {
+    LDSymbol* sym = m_Module.getNamePool().findSymbol(*usym);
+    assert(sym);
+    ResolveInfo* info = sym->resolveInfo();
+    assert(info);
+    if (!info->isDefine() || !sym->hasFragRef())
+      continue;
+    // only the symbols defined in the concerned sections can be entries
+    const LDSection* sect = &sym->fragRef()->frag()->getParent()->getSection();
+    if (!mayProcessGC(*sect))
+      continue;
+    pEntry.push_back(sect);
+  }
 }
 
 void GarbageCollection::findReferencedSections(SectionVecTy& pEntry)
@@ -323,8 +343,11 @@ void GarbageCollection::stripSections()
       if (!mayProcessGC(*section))
         continue;
 
-      if (m_ReferencedSections.find(section) == m_ReferencedSections.end())
+      if (m_ReferencedSections.find(section) == m_ReferencedSections.end()) {
         section->setKind(LDFileFormat::Ignore);
+        debug(diag::debug_print_gc_sections) << section->name()
+                                             << (*obj)->name();
+      }
     }
   }
 

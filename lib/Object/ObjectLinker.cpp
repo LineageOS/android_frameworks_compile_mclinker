@@ -22,6 +22,7 @@
 #include <mcld/LD/GroupReader.h>
 #include <mcld/LD/BinaryReader.h>
 #include <mcld/LD/GarbageCollection.h>
+#include <mcld/LD/IdenticalCodeFolding.h>
 #include <mcld/LD/ObjectWriter.h>
 #include <mcld/LD/ResolveInfo.h>
 #include <mcld/LD/RelocData.h>
@@ -42,6 +43,7 @@
 
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Host.h>
+#include <system_error>
 
 using namespace llvm;
 using namespace mcld;
@@ -111,6 +113,37 @@ bool ObjectLinker::initStdSections()
   return true;
 }
 
+void ObjectLinker::addUndefinedSymbols()
+{
+  // Add the symbol set by -u as an undefind global symbol into symbol pool
+  GeneralOptions::const_undef_sym_iterator usym;
+  GeneralOptions::const_undef_sym_iterator usymEnd =
+                                             m_Config.options().undef_sym_end();
+  for (usym = m_Config.options().undef_sym_begin(); usym != usymEnd; ++usym) {
+    Resolver::Result result;
+    m_pModule->getNamePool().insertSymbol(*usym, // name
+                                          false, // isDyn
+                                          ResolveInfo::NoType,
+                                          ResolveInfo::Undefined,
+                                          ResolveInfo::Global,
+                                          0x0, // size
+                                          0x0, // value
+                                          ResolveInfo::Default,
+                                          NULL,
+                                          result);
+
+    LDSymbol* output_sym = result.info->outSymbol();
+    bool has_output_sym = (NULL != output_sym);
+
+    // create the output symbol if it dose not have one
+    if (!result.existent || !has_output_sym) {
+      output_sym = LDSymbol::Create(*result.info);
+      result.info->setSymPtr(output_sym);
+      output_sym->setFragmentRef(FragmentRef::Null());
+    }
+  }
+}
+
 void ObjectLinker::normalize()
 {
   // -----  set up inputs  ----- //
@@ -165,6 +198,9 @@ void ObjectLinker::normalize()
     // is an archive
     else if (doContinue && getArchiveReader()->isMyFormat(**input, doContinue)) {
       (*input)->setType(Input::Archive);
+      if (m_Config.options().isInExcludeLIBS(**input)) {
+        (*input)->setNoExport();
+      }
       Archive archive(**input, m_pBuilder->getInputBuilder());
       getArchiveReader()->readArchive(m_Config, archive);
       if(archive.numOfObjectMember() > 0) {
@@ -236,6 +272,12 @@ void ObjectLinker::dataStrippingOpt()
     GarbageCollection GC(m_Config, m_LDBackend, *m_pModule);
     GC.run();
   }
+
+  // Identical code folding
+  if (m_Config.options().getICFMode() != GeneralOptions::ICF_None) {
+    IdenticalCodeFolding icf(m_Config, m_LDBackend, *m_pModule);
+    icf.foldIdenticalCode();
+  }
   return;
 }
 
@@ -267,6 +309,7 @@ bool ObjectLinker::mergeSections()
     for (sect = (*obj)->context()->sectBegin(); sect != sectEnd; ++sect) {
       switch ((*sect)->kind()) {
         // Some *INPUT sections should not be merged.
+        case LDFileFormat::Folded:
         case LDFileFormat::Ignore:
         case LDFileFormat::Null:
         case LDFileFormat::NamePool:
@@ -278,7 +321,8 @@ bool ObjectLinker::mergeSections()
           if (!(*sect)->hasRelocData())
             continue; // skip
 
-          if ((*sect)->getLink()->kind() == LDFileFormat::Ignore)
+          if ((*sect)->getLink()->kind() == LDFileFormat::Ignore ||
+              (*sect)->getLink()->kind() == LDFileFormat::Folded)
             (*sect)->setKind(LDFileFormat::Ignore);
           break;
         }
@@ -741,7 +785,7 @@ bool ObjectLinker::relocation()
 /// emitOutput - emit the output file.
 bool ObjectLinker::emitOutput(FileOutputBuffer& pOutput)
 {
-  return llvm::errc::success == getWriter()->writeObject(*m_pModule, pOutput);
+  return std::error_code() == getWriter()->writeObject(*m_pModule, pOutput);
 }
 
 
