@@ -141,10 +141,6 @@ public:
 protected:
 	virtual int LexerInput( char* buf, int max_size );
 	virtual void LexerOutput( const char* buf, int size );
-	/* BEGIN ANDROID WAR - Mac builds use size_t until we switch to prebuilts */
-	virtual size_t LexerInput( char* buf, size_t max_size );
-	virtual void LexerOutput( const char* buf, size_t size );
-	/* END ANDROID WAR */
 	virtual void LexerError( const char* msg );
 
 	void yyunput( int c, char* buf_ptr );

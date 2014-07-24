@@ -19,6 +19,8 @@
 
 #include <llvm/Support/ELF.h>
 
+#include <cstdint>
+
 namespace mcld {
 
 class Module;
@@ -258,8 +260,8 @@ public:
                          bool pSymHasPLT,
                          bool isAbsReloc) const;
 
-  /// isSymbolPreemtible - whether the symbol can be preemted by other
-  /// link unit
+  /// isSymbolPreemptible - whether the symbol can be preemted by other link
+  /// units
   /// @ref Google gold linker, symtab.h:551
   bool isSymbolPreemptible(const ResolveInfo& pSym) const;
 
@@ -309,9 +311,13 @@ public:
   /// getStubFactory
   StubFactory*         getStubFactory()     { return m_pStubFactory; }
 
-  /// maxBranchOffset - return the max (forward) branch offset of the backend.
+  /// maxFwdBranchOffset - return the max forward branch offset of the backend.
   /// Target can override this function if needed.
-  virtual uint64_t maxBranchOffset() { return (uint64_t)-1; }
+  virtual int64_t maxFwdBranchOffset() { return INT64_MAX; }
+
+  /// maxBwdBranchOffset - return the max backward branch offset of the backend.
+  /// Target can override this function if needed.
+  virtual int64_t maxBwdBranchOffset() { return 0; }
 
   /// checkAndSetHasTextRel - check pSection flag to set HasTextRel
   void checkAndSetHasTextRel(const LDSection& pSection);
@@ -329,6 +335,10 @@ public:
 
   /// attribute - the attribute section data.
   const ELFAttribute& attribute() const { return *m_pAttribute; }
+
+  /// mayHaveUnsafeFunctionPointerAccess - check if the section may have unsafe
+  /// function pointer access
+  bool mayHaveUnsafeFunctionPointerAccess(const LDSection& pSection) const;
 
 protected:
   /// getRelEntrySize - the size in BYTE of rel type relocation
