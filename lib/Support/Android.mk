@@ -2,6 +2,7 @@ LOCAL_PATH:= $(call my-dir)
 
 mcld_support_SRC_FILES := \
   CommandLine.cpp \
+  Demangle.cpp \
   Directory.cpp \
   FileHandle.cpp \
   FileOutputBuffer.cpp \
