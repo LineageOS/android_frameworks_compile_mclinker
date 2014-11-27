@@ -16,8 +16,7 @@ mcld_support_SRC_FILES := \
   RealPath.cpp \
   SystemUtils.cpp \
   Target.cpp \
-  TargetRegistry.cpp \
-  ToolOutputFile.cpp
+  TargetRegistry.cpp
 
 # For the host
 # =====================================================
