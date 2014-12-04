@@ -4,14 +4,11 @@ mcld_arm_target_SRC_FILES := \
   ARMDiagnostic.cpp \
   ARMELFAttributeData.cpp \
   ARMELFDynamic.cpp \
-  ARMELFMCLinker.cpp \
   ARMEmulation.cpp \
   ARMGOT.cpp  \
   ARMLDBackend.cpp  \
-  ARMMCLinker.cpp  \
   ARMPLT.cpp  \
   ARMRelocator.cpp  \
-  ARMTargetMachine.cpp \
   ARMToARMStub.cpp \
   ARMToTHMStub.cpp \
   THMToARMStub.cpp \

@@ -10,9 +10,9 @@
 %{
 /* C/C++ Declarations */
 
-#include <mcld/Script/ScriptScanner.h>
-#include <mcld/Script/ScriptFile.h>
-#include <mcld/Support/MsgHandling.h>
+#include "mcld/Script/ScriptScanner.h"
+#include "mcld/Script/ScriptFile.h"
+#include "mcld/Support/MsgHandling.h"
 #include <llvm/ADT/StringRef.h>
 #include <string>
 
@@ -375,7 +375,7 @@ void ScriptScanner::popLexState()
   }
 }
 
-} /* namespace of mcld */
+} /* namespace mcld */
 
 #ifdef yylex
 #undef yylex
