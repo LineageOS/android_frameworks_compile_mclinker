@@ -38,5 +38,8 @@ subdirs += \
   lib/Target/X86 \
   lib/Target/X86/TargetInfo
 
+# mcld executable
+subdirs += tools/mcld
+
 include $(MCLD_ROOT_PATH)/mcld.mk
 include $(addprefix $(LOCAL_PATH)/,$(addsuffix /Android.mk, $(subdirs)))

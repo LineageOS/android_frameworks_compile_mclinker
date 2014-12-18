@@ -16,6 +16,7 @@ mcld_ld_SRC_FILES := \
   DiagnosticInfos.cpp \
   DiagnosticLineInfo.cpp  \
   DiagnosticPrinter.cpp \
+  DebugString.cpp \
   DynObjReader.cpp  \
   ELFBinaryReader.cpp  \
   ELFSegment.cpp  \
@@ -31,6 +32,7 @@ mcld_ld_SRC_FILES := \
   LDReader.cpp  \
   LDSection.cpp \
   LDSymbol.cpp  \
+  MergedStringTable.cpp \
   MsgHandler.cpp  \
   NamePool.cpp  \
   ObjectWriter.cpp  \
