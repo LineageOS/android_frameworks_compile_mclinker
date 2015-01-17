@@ -62,7 +62,7 @@ ifeq ($(TARGET_ARCH), arm64)
                                   $(MCLD_ARM_LIBS)
 endif
 
-ifeq ($(TARGET_ARCH), mips)
+ifneq (, $(findstring mips,$(TARGET_ARCH)))
   LOCAL_WHOLE_STATIC_LIBRARIES += $(MCLD_MIPS_LIBS)
 endif
 
