@@ -5,6 +5,7 @@ mcld_arm_target_SRC_FILES := \
   ARMELFAttributeData.cpp \
   ARMELFDynamic.cpp \
   ARMEmulation.cpp \
+  ARMException.cpp \
   ARMGOT.cpp  \
   ARMLDBackend.cpp  \
   ARMPLT.cpp  \
