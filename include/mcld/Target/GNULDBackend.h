@@ -372,7 +372,7 @@ class GNULDBackend : public TargetLDBackend {
                     size_t pStrtabsize,
                     size_t pSymtabIdx);
 
- private:
+ protected:
   /// createProgramHdrs - base on output sections to create the program headers
   void createProgramHdrs(Module& pModule);
 
@@ -425,7 +425,7 @@ class GNULDBackend : public TargetLDBackend {
   virtual const ELFDynamic& dynamic() const = 0;
 
   /// relax - the relaxation pass
-  bool relax(Module& pModule, IRBuilder& pBuilder);
+  virtual bool relax(Module& pModule, IRBuilder& pBuilder);
 
   /// mayRelax - Backends should override this function if they need relaxation
   virtual bool mayRelax() { return false; }
@@ -473,7 +473,7 @@ class GNULDBackend : public TargetLDBackend {
   // for -z combreloc
   struct RelocCompare {
     explicit RelocCompare(const GNULDBackend& pBackend) : m_Backend(pBackend) {}
-    bool operator()(const Relocation* X, const Relocation* Y) const;
+    bool operator()(const Relocation& X, const Relocation& Y) const;
 
    private:
     const GNULDBackend& m_Backend;

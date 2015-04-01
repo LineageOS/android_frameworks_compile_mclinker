@@ -19,24 +19,30 @@ FileOutputBuffer::FileOutputBuffer(llvm::sys::fs::mapped_file_region* pRegion,
 
 FileOutputBuffer::~FileOutputBuffer() {
   // Unmap buffer, letting OS flush dirty pages to file on disk.
-  m_pRegion.reset(0);
+  m_pRegion.reset();
 }
 
-std::error_code FileOutputBuffer::create(
-    FileHandle& pFileHandle,
-    size_t pSize,
-    std::unique_ptr<FileOutputBuffer>& pResult) {
+std::error_code
+FileOutputBuffer::create(FileHandle& pFileHandle,
+                         size_t pSize,
+                         std::unique_ptr<FileOutputBuffer>& pResult) {
   std::error_code ec;
+
+  // Resize the file before mapping the file region.
+  ec = llvm::sys::fs::resize_file(pFileHandle.handler(), pSize);
+  if (ec)
+    return ec;
+
   std::unique_ptr<llvm::sys::fs::mapped_file_region> mapped_file(
       new llvm::sys::fs::mapped_file_region(pFileHandle.handler(),
-          false, llvm::sys::fs::mapped_file_region::readwrite, pSize, 0, ec));
-
+          llvm::sys::fs::mapped_file_region::readwrite, pSize, 0, ec));
   if (ec)
     return ec;
 
   pResult.reset(new FileOutputBuffer(mapped_file.get(), pFileHandle));
   if (pResult)
     mapped_file.release();
+
   return std::error_code();
 }
 
