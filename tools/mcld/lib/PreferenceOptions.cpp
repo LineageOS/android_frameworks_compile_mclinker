@@ -66,7 +66,7 @@ llvm::cl::opt<int> ArgMaxWarnNum(
     llvm::cl::desc("limits the maximum number of warnings."));
 
 llvm::cl::opt<mcld::PreferenceOptions::Color> ArgColor(
-    "color",
+    "colormc",
     llvm::cl::value_desc("When"),
     llvm::cl::desc("Surround the result strings with the marker"),
     llvm::cl::init(mcld::PreferenceOptions::COLOR_Auto),
