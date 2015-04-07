@@ -23,7 +23,7 @@ namespace cl {
 //===----------------------------------------------------------------------===//
 // SearchDirParser
 //===----------------------------------------------------------------------===//
-class SearchDirParser : public basic_parser<std::string> {
+class SearchDirParser final : public basic_parser<std::string> {
  public:
   explicit SearchDirParser(Option &O) : basic_parser(O) { }
 
@@ -43,6 +43,7 @@ class SearchDirParser : public basic_parser<std::string> {
   void anchor();
 };
 
+#if 0
 //===----------------------------------------------------------------------===//
 // FalseParser
 //===----------------------------------------------------------------------===//
@@ -58,12 +59,13 @@ class FalseParser : public parser<bool> {
     return false;
   }
 };
+#endif
 
 //===----------------------------------------------------------------------===//
 // parser<mcld::sys::fs::Path>
 //===----------------------------------------------------------------------===//
 template <>
-class parser<mcld::sys::fs::Path> : public basic_parser<mcld::sys::fs::Path> {
+class parser<mcld::sys::fs::Path> final : public basic_parser<mcld::sys::fs::Path> {
  public:
   explicit parser(Option &O) : basic_parser(O) { }
 
@@ -84,7 +86,7 @@ class parser<mcld::sys::fs::Path> : public basic_parser<mcld::sys::fs::Path> {
 // parser<mcld::ZOption>
 //===----------------------------------------------------------------------===//
 template <>
-class parser<mcld::ZOption> : public basic_parser<mcld::ZOption> {
+class parser<mcld::ZOption> final : public basic_parser<mcld::ZOption> {
  public:
   explicit parser(Option &O) : basic_parser(O) { }
 

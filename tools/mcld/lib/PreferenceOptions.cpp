@@ -93,7 +93,7 @@ llvm::cl::alias ArgPrintMapAlias("print-map",
 
 bool ArgFatalWarnings;
 
-llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoFatalWarnings(
+llvm::cl::opt<bool, true> ArgNoFatalWarnings(
     "no-fatal-warnings",
     llvm::cl::location(ArgFatalWarnings),
     llvm::cl::desc("do not turn warnings into errors"),
