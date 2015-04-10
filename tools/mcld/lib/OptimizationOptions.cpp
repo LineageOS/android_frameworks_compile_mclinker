@@ -22,7 +22,7 @@ llvm::cl::opt<bool, true> ArgGCSectionsFlag(
     llvm::cl::desc("Enable garbage collection of unused input sections."),
     llvm::cl::init(false));
 
-llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoGCSectionsFlag(
+llvm::cl::opt<bool, true> ArgNoGCSectionsFlag(
     "no-gc-sections",
     llvm::cl::ZeroOrMore,
     llvm::cl::location(ArgGCSections),
@@ -38,7 +38,7 @@ llvm::cl::opt<bool, true> ArgPrintGCSectionsFlag(
     llvm::cl::desc("List all sections removed by garbage collection."),
     llvm::cl::init(false));
 
-llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoPrintGCSectionsFlag(
+llvm::cl::opt<bool, true> ArgNoPrintGCSectionsFlag(
     "no-print-gc-sections",
     llvm::cl::ZeroOrMore,
     llvm::cl::location(ArgPrintGCSections),
@@ -47,7 +47,7 @@ llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoPrintGCSectionsFlag(
 
 bool ArgGenUnwindInfo;
 
-llvm::cl::opt<bool, true, llvm::cl::FalseParser> ArgNoGenUnwindInfoFlag(
+llvm::cl::opt<bool, true> ArgNoGenUnwindInfoFlag(
     "no-ld-generated-unwind-info",
     llvm::cl::ZeroOrMore,
     llvm::cl::location(ArgGenUnwindInfo),
