@@ -8,17 +8,7 @@ LOCAL_MODULE_TAGS := optional
 MCLD_C_INCLUDES := $(LOCAL_PATH)/include
 
 MCLD_SRC_FILES := \
-  main.cpp \
-  lib/DynamicSectionOptions.cpp \
-  lib/OptimizationOptions.cpp \
-  lib/OutputFormatOptions.cpp \
-  lib/PositionalOptions.cpp \
-  lib/PreferenceOptions.cpp \
-  lib/ScriptOptions.cpp \
-  lib/SearchPathOptions.cpp \
-  lib/SymbolOptions.cpp \
-  lib/TargetControlOptions.cpp \
-  lib/TripleOptions.cpp
+  Main.cpp
 
 
 MCLD_WHOLE_STATIC_LIBRARIES := \
@@ -43,9 +33,10 @@ MCLD_X86_LIBS := libmcldX86Target libmcldX86Info
 
 MCLD_MODULE:= ld.mc
 
-# Executable the device
+# Executable for the device
 # =====================================================
 include $(CLEAR_VARS)
+include $(CLEAR_TBLGEN_VARS)
 
 LOCAL_C_INCLUDES := $(MCLD_C_INCLUDES)
 LOCAL_SRC_FILES := $(MCLD_SRC_FILES)
@@ -77,12 +68,21 @@ endif
 LOCAL_SHARED_LIBRARIES := $(MCLD_SHARED_LIBRARIES) libz
 
 LOCAL_MODULE := $(MCLD_MODULE)
+LOCAL_MODULE_CLASS := EXECUTABLES
+
+# Build Options.inc from Options.td for the device
+intermediates := $(call local-generated-sources-dir)
+LOCAL_GENERATED_SOURCES += $(intermediates)/Options.inc
+$(intermediates)/Options.inc: $(LOCAL_PATH)/Options.td $(LLVM_ROOT_PATH)/include/llvm/Option/OptParser.td $(LLVM_TBLGEN)
+	$(call transform-device-td-to-out,opt-parser-defs)
+
 include $(MCLD_DEVICE_BUILD_MK)
 include $(BUILD_EXECUTABLE)
 
-# Executable the host
+# Executable for the host
 # =====================================================
 include $(CLEAR_VARS)
+include $(CLEAR_TBLGEN_VARS)
 
 LOCAL_C_INCLUDES := $(MCLD_C_INCLUDES)
 LOCAL_SRC_FILES := $(MCLD_SRC_FILES)
@@ -98,5 +98,14 @@ LOCAL_WHOLE_STATIC_LIBRARIES += $(MCLD_ARM_LIBS) \
 LOCAL_SHARED_LIBRARIES := $(MCLD_SHARED_LIBRARIES) libz-host
 
 LOCAL_MODULE := $(MCLD_MODULE)
+LOCAL_MODULE_CLASS := EXECUTABLES
+LOCAL_IS_HOST_MODULE := true
+
+# Build Options.inc from Options.td for the host
+intermediates := $(call local-generated-sources-dir)
+LOCAL_GENERATED_SOURCES += $(intermediates)/Options.inc
+$(intermediates)/Options.inc: $(LOCAL_PATH)/Options.td $(LLVM_ROOT_PATH)/include/llvm/Option/OptParser.td $(LLVM_TBLGEN)
+	$(call transform-host-td-to-out,opt-parser-defs)
+
 include $(MCLD_HOST_BUILD_MK)
 include $(BUILD_HOST_EXECUTABLE)
