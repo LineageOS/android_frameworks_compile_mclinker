@@ -60,6 +60,10 @@ endif
 # Add x86 libraries for both x86 and x86_64 targets
 ifneq (, $(findstring x86,$(TARGET_ARCH)))
   LOCAL_WHOLE_STATIC_LIBRARIES += $(MCLD_X86_LIBS)
+ifeq ($(BUILD_ARM_FOR_X86),true)
+  LOCAL_WHOLE_STATIC_LIBRARIES += $(MCLD_ARM_LIBS) \
+                                  $(MCLD_AARCH64_LIBS)
+endif
 endif
 
 
